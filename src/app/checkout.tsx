@@ -2,23 +2,28 @@ import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { AppHeader } from "@/components/AppHeader";
-import { Button, Card, Empty, Input, Screen, colors, styles, useResponsive } from "@/components/ui";
+import { Button, Card, Empty, Input, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
 import { CybersourceUnifiedCheckout } from "@/components/CybersourceUnifiedCheckout";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
 import { config } from "@/lib/config";
 import { groupCartItems } from "@/lib/cartDisplay";
-import { formatMoney } from "@/lib/format";
+import { formatMoney, minutesSeconds } from "@/lib/format";
+import { profileService } from "@/services/auth";
 import { checkoutService } from "@/services/checkout";
 import type { CheckoutSubmitRequest } from "@/types";
 
 type PaymentMethod = CheckoutSubmitRequest["payment_method"];
+type BillingInfoPayload = Record<string, unknown>;
 
 const paymentOptions: Array<{ id: PaymentMethod; title: string; detail: string }> = [
   { id: "blue", title: "Blue Wallet", detail: "Redirect to Blue to complete payment." },
   { id: "cybersource", title: "Credit / Debit Card", detail: "Visa and Mastercard secure checkout." },
 ];
+const LEBANON_DIAL_CODE = "+961";
+const CHECKOUT_COUNTRY_CODE = "LB";
+const CHECKOUT_COUNTRY_LABEL = "Lebanon";
 
 function getCheckoutOrigin() {
   if (Platform.OS === "web" && typeof window !== "undefined") return window.location.origin;
@@ -32,25 +37,57 @@ function readCaptureContext(payload: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function formatLebanonPhone(value: string) {
+  const digitsOnly = value.replace(/\D/g, "");
+  const localDigits = (digitsOnly.startsWith("961") ? digitsOnly.slice(3) : digitsOnly).slice(0, 8);
+  const part1 = localDigits.slice(0, 2);
+  const part2 = localDigits.slice(2, 5);
+  const part3 = localDigits.slice(5, 8);
+
+  return `${LEBANON_DIAL_CODE}${part1 ? ` ${part1}` : ""}${part2 ? ` ${part2}` : ""}${part3 ? ` ${part3}` : ""}`;
+}
+
+function isCompleteLebanonPhone(value: string) {
+  return /^\+961\s\d{2}\s\d{3}\s\d{3}$/.test(value);
+}
+
+function isRecord(value: unknown): value is BillingInfoPayload {
+  return typeof value === "object" && value !== null;
+}
+
+function billingString(value: unknown) {
+  return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+}
+
+function unwrapBillingInfo(payload: unknown): BillingInfoPayload {
+  if (!isRecord(payload)) return {};
+  if (isRecord(payload.data)) return payload.data;
+  if (isRecord(payload.billing)) return payload.billing;
+  if (isRecord(payload.billing_info)) return payload.billing_info;
+  return payload;
+}
+
 export default function CheckoutScreen() {
   const cart = useCart();
   const auth = useAuth();
   const responsive = useResponsive();
+  const theme = useTheme();
   const toast = useToast();
   const [name, setName] = useState(auth.user?.name ?? "");
   const [email, setEmail] = useState(auth.user?.email ?? "");
-  const [phone, setPhone] = useState("");
-  const [country, setCountry] = useState("LB");
+  const [phone, setPhone] = useState(LEBANON_DIAL_CODE);
   const [holderNames, setHolderNames] = useState<Record<string, string>>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("blue");
   const [captureContext, setCaptureContext] = useState<string | null>(null);
   const [captureLoading, setCaptureLoading] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [billingInfoLoading, setBillingInfoLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const captureCalledRef = useRef(false);
   const captureSessionRef = useRef<string | null>(null);
   const groupedItems = groupCartItems(cart.items);
   const isCheckoutLocked = loading;
+  const isWide = responsive.width >= 920;
 
   const ticketSlots = useMemo(
     () => cart.items.flatMap((item) => {
@@ -104,6 +141,39 @@ export default function CheckoutScreen() {
     void loadCaptureContext(sessionId);
   }, [cart.sessionId, loadCaptureContext]);
 
+  useEffect(() => {
+    if (!auth.isReady || !auth.isAuthenticated) return;
+
+    let cancelled = false;
+    setBillingInfoLoading(true);
+
+    profileService.billingInfo()
+      .then((payload) => {
+        if (cancelled) return;
+        const data = unwrapBillingInfo(payload);
+        const nextName = billingString(data.name || data.full_name);
+        const nextEmail = billingString(data.email);
+        const nextPhone = billingString(data.phone);
+
+        if (nextName) setName(nextName);
+        else if (auth.user?.name) setName(auth.user.name);
+        if (nextEmail) setEmail(nextEmail);
+        else if (auth.user?.email) setEmail(auth.user.email);
+        if (nextPhone) setPhone(formatLebanonPhone(nextPhone));
+      })
+      .catch(() => {
+        if (auth.user?.name) setName(auth.user.name);
+        if (auth.user?.email) setEmail(auth.user.email);
+      })
+      .finally(() => {
+        if (!cancelled) setBillingInfoLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.isAuthenticated, auth.isReady, auth.user?.email, auth.user?.name]);
+
   const goHomeAndDismissRoutes = () => {
     const resetRouter = router as typeof router & { dismissAll?: () => void };
     resetRouter.dismissAll?.();
@@ -156,7 +226,7 @@ export default function CheckoutScreen() {
 
       const response = await checkoutService.submit({
         checkout_session_id: cart.sessionId,
-        billing: { name, email, phone, country },
+        billing: { name, email, phone, country: CHECKOUT_COUNTRY_CODE },
         tickets_by_match: ticketsByMatch,
         payment_method: paymentMethod,
         ...(transientToken ? { payment: { transient_token: transientToken } } : {}),
@@ -204,113 +274,234 @@ export default function CheckoutScreen() {
     });
   };
 
+  const renderOrderSummary = () => (
+    <Card>
+      <View style={styles.row}>
+        <Text style={styles.h2}>Order summary</Text>
+        <Text style={local.timer}>{minutesSeconds(cart.secondsLeft)}</Text>
+      </View>
+      <Text style={styles.muted}>{ticketSlots.length} ticket holder{ticketSlots.length === 1 ? "" : "s"}</Text>
+      {groupedItems.map((item) => (
+        <View key={item.key} style={[local.summaryItem, { borderTopColor: theme.colors.line }]}>
+          <View style={{ flex: 1 }}>
+            <Text numberOfLines={1} style={[local.summaryTitle, { color: theme.colors.ink }]}>{item.zone_name ?? "Ticket"}</Text>
+            <Text numberOfLines={1} style={styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
+            <Text style={styles.muted}>{item.seats.length ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}` : `Qty ${item.quantity}`}</Text>
+          </View>
+          <Text style={[local.summaryPrice, { color: theme.colors.ink }]}>{formatMoney(item.subtotal, item.currency)}</Text>
+        </View>
+      ))}
+      <View style={[local.summaryTotal, { borderTopColor: theme.colors.line }]}>
+        <Text style={styles.h2}>Total</Text>
+        <Text style={styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
+      </View>
+    </Card>
+  );
+
+  const renderPaymentMethod = () => (
+    <Card>
+      <Text style={styles.h2}>Payment method</Text>
+      <Text style={styles.muted}>Choose how you want to pay.</Text>
+      <View style={local.paymentGrid}>
+        {paymentOptions.map((option) => {
+          const active = paymentMethod === option.id;
+          return (
+            <Pressable
+              key={option.id}
+              disabled={isCheckoutLocked}
+              onPress={() => setPaymentMethod(option.id)}
+              style={[
+                local.paymentOption,
+                { backgroundColor: theme.colors.panel, borderColor: theme.colors.line },
+                active && local.paymentOptionActive,
+                isCheckoutLocked && local.lockedControl,
+              ]}
+            >
+              <View style={[local.paymentIcon, { backgroundColor: theme.colors.panelSoft }, active && local.paymentIconActive]}>
+                {option.id === "blue" ? <WalletGlyph active={active} /> : <CardGlyph active={active} />}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[local.paymentTitle, { color: theme.colors.ink }]}>{option.title}</Text>
+                <Text style={styles.muted}>{option.detail}</Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </Card>
+  );
+
+  const renderPaymentActions = () => (
+    <Card>
+      <Text style={styles.h2}>Payment</Text>
+      <View style={[local.paymentNotice, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
+        <Text style={[local.paymentNoticeText, { color: theme.colors.secondary }]}>
+          {paymentMethod === "cybersource"
+            ? captureLoading
+              ? "Preparing secure card checkout..."
+              : captureError
+                ? captureError
+                : captureContext
+                  ? "Secure card checkout is prepared."
+                  : "Card checkout is not ready yet."
+            : "You will be redirected to Blue Wallet to complete payment."}
+        </Text>
+      </View>
+      {paymentMethod === "cybersource" && captureError ? (
+        <Button title="Retry card setup" variant="secondary" disabled={isCheckoutLocked || captureLoading} onPress={() => cart.sessionId && void loadCaptureContext(cart.sessionId, true)} />
+      ) : null}
+      {paymentMethod === "cybersource" && captureContext && !isCheckoutLocked ? (
+        <CybersourceUnifiedCheckout
+          captureContext={captureContext}
+          onSuccess={handleCardSuccess}
+          onError={handleCardError}
+        />
+      ) : null}
+      {paymentMethod === "blue" ? (
+        <Button title={loading ? "Submitting..." : "Confirm and pay"} disabled={loading || !name || !email || !isCompleteLebanonPhone(phone) || !ticketSlots.length} onPress={() => void submit()} />
+      ) : loading ? (
+        <Text style={styles.muted}>Confirming your order...</Text>
+      ) : null}
+      {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null}
+    </Card>
+  );
+
   return (
     <Screen>
       <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <AppHeader title="Checkout" subtitle={cart.items.length ? "Review and pay securely" : "No active reservation"} />
+        <AppHeader title="Checkout" subtitle={cart.items.length ? "Review and pay securely" : "No active reservation"} hideCart />
         <ScrollView contentContainerStyle={{ gap: 12, paddingBottom: 28 }}>
           {!cart.items.length ? (
             <Empty title="Nothing to checkout" detail="Your reserved tickets will appear here." />
           ) : (
-            <>
-              <Card>
-                <Text style={styles.h2}>Order summary</Text>
-                <Text style={styles.muted}>{ticketSlots.length} ticket holder{ticketSlots.length === 1 ? "" : "s"}</Text>
-                {groupedItems.map((item) => (
-                  <View key={item.key} style={local.summaryItem}>
-                    <View style={{ flex: 1 }}>
-                      <Text numberOfLines={1} style={local.summaryTitle}>{item.zone_name ?? "Ticket"}</Text>
-                      <Text numberOfLines={1} style={styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
-                      <Text style={styles.muted}>{item.seats.length ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}` : `Qty ${item.quantity}`}</Text>
-                    </View>
-                    <Text style={local.summaryPrice}>{formatMoney(item.subtotal, item.currency)}</Text>
+            <View style={[local.checkoutLayout, isWide && local.checkoutLayoutWide]}>
+              <View style={[local.checkoutMain, isWide && local.checkoutMainWide]}>
+                <Card>
+                  <View style={styles.row}>
+                    <Text style={styles.h2}>Billing</Text>
+                    {billingInfoLoading ? <Text style={styles.muted}>Loading saved info...</Text> : null}
                   </View>
-                ))}
-                <View style={styles.row}>
-                  <Text style={styles.h2}>Total</Text>
-                  <Text style={styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
-                </View>
-              </Card>
-
-              <Card>
-                <Text style={styles.h2}>Billing</Text>
-                <Input label="Name" value={name} onChangeText={setName} autoCapitalize="words" editable={!isCheckoutLocked} />
-                <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!isCheckoutLocked} />
-                <Input label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" editable={!isCheckoutLocked} />
-                <Input label="Country" value={country} onChangeText={setCountry} autoCapitalize="characters" editable={!isCheckoutLocked} />
-              </Card>
-
-              <Card>
-                <Text style={styles.h2}>Ticket holders</Text>
-                <Text style={styles.muted}>Name printed on each ticket.</Text>
-                {ticketSlots.map((slot) => (
+                  <Input label="Name" value={name} onChangeText={setName} autoCapitalize="words" editable={!isCheckoutLocked} />
+                  <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!isCheckoutLocked} />
                   <Input
-                    key={slot.key}
-                    label={slot.label}
-                    value={holderNames[slot.key] ?? ""}
-                    onChangeText={(value) => setHolderNames((current) => ({ ...current, [slot.key]: value }))}
-                    autoCapitalize="words"
+                    label="Phone"
+                    value={phone}
+                    onChangeText={(value) => setPhone(formatLebanonPhone(value))}
+                    onFocus={() => {
+                      if (!phone.startsWith(LEBANON_DIAL_CODE)) setPhone(LEBANON_DIAL_CODE);
+                    }}
+                    keyboardType="phone-pad"
+                    textContentType="telephoneNumber"
+                    placeholder="+961 XX XXX XXX"
                     editable={!isCheckoutLocked}
                   />
-                ))}
-              </Card>
+                  <Input label="Country" value={CHECKOUT_COUNTRY_LABEL} editable={false} />
+                </Card>
 
-              <Card>
-                <Text style={styles.h2}>Payment method</Text>
-                <Text style={styles.muted}>Choose how you want to pay.</Text>
-                <View style={local.paymentGrid}>
-                  {paymentOptions.map((option) => {
-                    const active = paymentMethod === option.id;
-                    return (
-                      <Pressable
-                        key={option.id}
-                        disabled={isCheckoutLocked}
-                        onPress={() => setPaymentMethod(option.id)}
-                        style={[local.paymentOption, active && local.paymentOptionActive, isCheckoutLocked && local.lockedControl]}
-                      >
-                        <View style={[local.paymentIcon, active && local.paymentIconActive]}>
-                          {option.id === "blue" ? <WalletGlyph active={active} /> : <CardGlyph active={active} />}
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={local.paymentTitle}>{option.title}</Text>
-                          <Text style={styles.muted}>{option.detail}</Text>
-                        </View>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-                <View style={local.paymentNotice}>
-                  <Text style={local.paymentNoticeText}>
-                    {paymentMethod === "cybersource"
-                      ? captureLoading
-                        ? "Preparing secure card checkout..."
-                        : captureError
-                          ? captureError
-                          : captureContext
-                            ? "Secure card checkout is prepared."
-                            : "Card checkout is not ready yet."
-                      : "You will be redirected to Blue Wallet to complete payment."}
-                  </Text>
-                </View>
-                {paymentMethod === "cybersource" && captureError ? (
-                  <Button title="Retry card setup" variant="secondary" disabled={isCheckoutLocked || captureLoading} onPress={() => cart.sessionId && void loadCaptureContext(cart.sessionId, true)} />
-                ) : null}
-                {paymentMethod === "cybersource" && captureContext && !isCheckoutLocked ? (
-                  <CybersourceUnifiedCheckout
-                    captureContext={captureContext}
-                    onSuccess={handleCardSuccess}
-                    onError={handleCardError}
-                  />
-                ) : null}
-              </Card>
+                <Card>
+                  <Text style={styles.h2}>Ticket holders</Text>
+                  <Text style={styles.muted}>Name printed on each ticket.</Text>
+                  {ticketSlots.map((slot) => (
+                    <Input
+                      key={slot.key}
+                      label={slot.label}
+                      value={holderNames[slot.key] ?? ""}
+                      onChangeText={(value) => setHolderNames((current) => ({ ...current, [slot.key]: value }))}
+                      autoCapitalize="words"
+                      editable={!isCheckoutLocked}
+                    />
+                  ))}
+                </Card>
 
-              {paymentMethod === "blue" ? (
-                <Button title={loading ? "Submitting..." : "Confirm and pay"} disabled={loading || !name || !email || !phone || !ticketSlots.length} onPress={() => void submit()} />
-              ) : loading ? (
-                <Text style={styles.muted}>Confirming your order...</Text>
-              ) : null}
-              {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null}
-            </>
+                <Card>
+                  <Text style={styles.h2}>Payment method</Text>
+                  <Text style={styles.muted}>Choose how you want to pay.</Text>
+                  <View style={local.paymentGrid}>
+                    {paymentOptions.map((option) => {
+                      const active = paymentMethod === option.id;
+                      return (
+                        <Pressable
+                          key={option.id}
+                          disabled={isCheckoutLocked}
+                          onPress={() => setPaymentMethod(option.id)}
+                          style={[
+                            local.paymentOption,
+                            { backgroundColor: theme.colors.panel, borderColor: theme.colors.line },
+                            active && local.paymentOptionActive,
+                            isCheckoutLocked && local.lockedControl,
+                          ]}
+                        >
+                          <View style={[local.paymentIcon, { backgroundColor: theme.colors.panelSoft }, active && local.paymentIconActive]}>
+                            {option.id === "blue" ? <WalletGlyph active={active} /> : <CardGlyph active={active} />}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[local.paymentTitle, { color: theme.colors.ink }]}>{option.title}</Text>
+                            <Text style={styles.muted}>{option.detail}</Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </Card>
+              </View>
+
+              <View style={[local.checkoutAside, isWide && local.checkoutAsideWide]}>
+                <Card>
+                  <View style={styles.row}>
+                    <Text style={styles.h2}>Order summary</Text>
+                    <Text style={local.timer}>{minutesSeconds(cart.secondsLeft)}</Text>
+                  </View>
+                  <Text style={styles.muted}>{ticketSlots.length} ticket holder{ticketSlots.length === 1 ? "" : "s"}</Text>
+                  {groupedItems.map((item) => (
+                    <View key={item.key} style={[local.summaryItem, { borderTopColor: theme.colors.line }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text numberOfLines={1} style={[local.summaryTitle, { color: theme.colors.ink }]}>{item.zone_name ?? "Ticket"}</Text>
+                        <Text numberOfLines={1} style={styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
+                        <Text style={styles.muted}>{item.seats.length ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}` : `Qty ${item.quantity}`}</Text>
+                      </View>
+                      <Text style={[local.summaryPrice, { color: theme.colors.ink }]}>{formatMoney(item.subtotal, item.currency)}</Text>
+                    </View>
+                  ))}
+                  <View style={[local.summaryTotal, { borderTopColor: theme.colors.line }]}>
+                    <Text style={styles.h2}>Total</Text>
+                    <Text style={styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
+                  </View>
+                </Card>
+
+                <Card>
+                  <Text style={styles.h2}>Payment</Text>
+                  <View style={[local.paymentNotice, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
+                    <Text style={[local.paymentNoticeText, { color: theme.colors.secondary }]}>
+                      {paymentMethod === "cybersource"
+                        ? captureLoading
+                          ? "Preparing secure card checkout..."
+                          : captureError
+                            ? captureError
+                            : captureContext
+                              ? "Secure card checkout is prepared."
+                              : "Card checkout is not ready yet."
+                        : "You will be redirected to Blue Wallet to complete payment."}
+                    </Text>
+                  </View>
+                  {paymentMethod === "cybersource" && captureError ? (
+                    <Button title="Retry card setup" variant="secondary" disabled={isCheckoutLocked || captureLoading} onPress={() => cart.sessionId && void loadCaptureContext(cart.sessionId, true)} />
+                  ) : null}
+                  {paymentMethod === "cybersource" && captureContext && !isCheckoutLocked ? (
+                    <CybersourceUnifiedCheckout
+                      captureContext={captureContext}
+                      onSuccess={handleCardSuccess}
+                      onError={handleCardError}
+                    />
+                  ) : null}
+                  {paymentMethod === "blue" ? (
+                    <Button title={loading ? "Submitting..." : "Confirm and pay"} disabled={loading || !name || !email || !isCompleteLebanonPhone(phone) || !ticketSlots.length} onPress={() => void submit()} />
+                  ) : loading ? (
+                    <Text style={styles.muted}>Confirming your order...</Text>
+                  ) : null}
+                  {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null}
+                </Card>
+              </View>
+            </View>
           )}
         </ScrollView>
       </View>
@@ -329,6 +520,23 @@ export default function CheckoutScreen() {
 
 const local = {
   shell: { flex: 1, alignSelf: "center" as const },
+  checkoutLayout: { gap: 12 },
+  checkoutLayoutWide: {
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+  },
+  checkoutMain: { gap: 12 },
+  checkoutMainWide: {
+    flex: 1,
+    minWidth: 0,
+  },
+  checkoutAside: { gap: 12 },
+  checkoutAsideWide: {
+    width: 350,
+    position: "sticky" as any,
+    top: 0,
+  },
+  timer: { color: colors.primary, fontSize: 13, fontWeight: "900" as const },
   summaryItem: {
     flexDirection: "row" as const,
     alignItems: "flex-start" as const,
@@ -336,6 +544,14 @@ const local = {
     borderTopWidth: 1,
     borderTopColor: colors.line,
     paddingTop: 10,
+  },
+  summaryTotal: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    paddingTop: 12,
   },
   summaryTitle: { color: colors.ink, fontSize: 14, fontWeight: "900" as const },
   summaryPrice: { color: colors.ink, fontSize: 13, fontWeight: "900" as const },
@@ -397,18 +613,24 @@ const local = {
 };
 
 function WalletGlyph({ active }: { active: boolean }) {
+  const theme = useTheme();
+  const glyphColor = active ? "#FFFFFF" : theme.colors.ink;
+
   return (
-    <View style={[localGlyph.wallet, active && localGlyph.activeBorder]}>
-      <View style={[localGlyph.walletLine, active && localGlyph.activeFill]} />
+    <View style={[localGlyph.wallet, { borderColor: glyphColor }]}>
+      <View style={[localGlyph.walletLine, { backgroundColor: glyphColor }]} />
     </View>
   );
 }
 
 function CardGlyph({ active }: { active: boolean }) {
+  const theme = useTheme();
+  const glyphColor = active ? "#FFFFFF" : theme.colors.ink;
+
   return (
-    <View style={[localGlyph.card, active && localGlyph.activeBorder]}>
-      <View style={[localGlyph.cardStripe, active && localGlyph.activeFill]} />
-      <View style={[localGlyph.cardDot, active && localGlyph.activeFill]} />
+    <View style={[localGlyph.card, { borderColor: glyphColor }]}>
+      <View style={[localGlyph.cardStripe, { backgroundColor: glyphColor }]} />
+      <View style={[localGlyph.cardDot, { backgroundColor: glyphColor }]} />
     </View>
   );
 }

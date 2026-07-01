@@ -18,20 +18,27 @@ async function forward(request: Request) {
   const upstream = await fetch(upstreamUrl, {
     method,
     headers: {
-      Accept: "application/json",
-      "Content-Type": request.headers.get("Content-Type") ?? "application/json",
+      Accept: request.headers.get("Accept") ?? "application/json",
+      ...(hasBody ? { "Content-Type": request.headers.get("Content-Type") ?? "application/json" } : {}),
       password: apiPassword,
       ...(request.headers.get("Authorization") ? { Authorization: request.headers.get("Authorization")! } : {}),
     },
     body: hasBody ? await request.text() : undefined,
   });
 
-  const body = await upstream.text();
+  const contentType = upstream.headers.get("Content-Type") ?? "application/json";
+  const body = contentType.includes("application/pdf") || contentType.includes("application/octet-stream")
+    ? upstream.body
+    : await upstream.text();
+  const headers = new Headers({
+    "Content-Type": contentType,
+  });
+  const disposition = upstream.headers.get("Content-Disposition");
+  if (disposition) headers.set("Content-Disposition", disposition);
+
   return new Response(body, {
     status: upstream.status,
-    headers: {
-      "Content-Type": upstream.headers.get("Content-Type") ?? "application/json",
-    },
+    headers,
   });
 }
 

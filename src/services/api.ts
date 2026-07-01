@@ -3,6 +3,8 @@ import { storage } from "@/lib/storage";
 import { Platform } from "react-native";
 
 const TOKEN_KEY = "lfa_portal_token";
+type UnauthenticatedListener = () => void;
+const unauthenticatedListeners = new Set<UnauthenticatedListener>();
 
 export class ApiError extends Error {
   status: number;
@@ -27,6 +29,17 @@ export async function clearToken() {
   await storage.remove(TOKEN_KEY);
 }
 
+export function onUnauthenticated(listener: UnauthenticatedListener) {
+  unauthenticatedListeners.add(listener);
+  return () => {
+    unauthenticatedListeners.delete(listener);
+  };
+}
+
+export function notifyUnauthenticated() {
+  unauthenticatedListeners.forEach((listener) => listener());
+}
+
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getToken();
   const controller = new AbortController();
@@ -49,7 +62,10 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) await clearToken();
+      if (response.status === 401 || response.status === 403) {
+        await clearToken();
+        notifyUnauthenticated();
+      }
       const message = body?.message ?? body?.error ?? `Request failed with ${response.status}`;
       throw new ApiError(message, response.status, body);
     }

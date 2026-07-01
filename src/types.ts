@@ -11,6 +11,7 @@ export type ApiStadium = {
   name: string;
   location?: string;
   map_image?: string | null;
+  mapImageUrl?: string | null;
   slug?: string;
   zones?: ApiZone[];
 };

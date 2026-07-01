@@ -1,4 +1,6 @@
-import { apiRequest, clearToken, setToken, unwrapData } from "@/services/api";
+import { Platform } from "react-native";
+import { config } from "@/lib/config";
+import { apiRequest, clearToken, getToken, notifyUnauthenticated, setToken, unwrapData } from "@/services/api";
 import { storage } from "@/lib/storage";
 import type { User } from "@/types";
 
@@ -63,6 +65,11 @@ export const authService = {
     await clearToken();
     await storage.remove(USER_KEY);
   },
+
+  async clearSession() {
+    await clearToken();
+    await storage.remove(USER_KEY);
+  },
 };
 
 export const profileService = {
@@ -80,5 +87,29 @@ export const profileService = {
   },
   async ticket(ticketCode: string | number) {
     return unwrapData(await apiRequest(`/portal/tickets/${encodeURIComponent(String(ticketCode))}`)) as Record<string, unknown>;
+  },
+  async orderPdf(orderId: string | number) {
+    const token = await getToken();
+    const encodedId = encodeURIComponent(String(orderId));
+    const url = Platform.OS === "web" ? `/api/portal/orders/${encodedId}/pdf` : `${config.apiBaseUrl}/portal/orders/${encodedId}/pdf`;
+
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/pdf,application/octet-stream,*/*",
+        ...(Platform.OS !== "web" && config.apiPassword ? { password: config.apiPassword } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) {
+        await clearToken();
+        notifyUnauthenticated();
+      }
+      throw new Error(body?.message ?? body?.error ?? "Failed to download PDF.");
+    }
+
+    return response;
   },
 };

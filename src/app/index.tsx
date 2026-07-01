@@ -1,17 +1,22 @@
-import { Link, router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Image, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { Card, Empty, Loading, Screen, colors, styles, useResponsive } from "@/components/ui";
+import { Image, Pressable, RefreshControl, ScrollView, Text, View, type DimensionValue } from "react-native";
+import { HeaderActions } from "@/components/HeaderActions";
+import { Card, Empty, Loading, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
-import { groupCartItems } from "@/lib/cartDisplay";
-import { formatDate, formatMoney, formatTime, minutesSeconds } from "@/lib/format";
+import { storageUrl } from "@/lib/config";
+import { formatDate, formatTime } from "@/lib/format";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, FilterOption, MatchFilters } from "@/types";
 
 export default function Index() {
   const responsive = useResponsive();
+  const theme = useTheme();
+  const matchColumns = responsive.width >= 1120 ? 3 : responsive.width >= 720 ? 2 : 1;
+  const gridGap = 12;
+  const matchCardWidth: DimensionValue = matchColumns === 1 ? "100%" : (responsive.contentWidth - gridGap * (matchColumns - 1)) / matchColumns;
   const [matches, setMatches] = useState<ApiMatch[]>([]);
   const [filters, setFilters] = useState<{ teams: FilterOption[]; stadiums: FilterOption[] }>({ teams: [], stadiums: [] });
   const [selected, setSelected] = useState<MatchFilters>({});
@@ -21,7 +26,10 @@ export default function Index() {
   const cart = useCart();
   const auth = useAuth();
   const toast = useToast();
-  const groupedCartItems = groupCartItems(cart.items);
+  const logout = async () => {
+    await auth.logout();
+    router.replace("/");
+  };
 
   const load = async (forceRefresh = false) => {
     setError(null);
@@ -55,40 +63,26 @@ export default function Index() {
       <View style={[local.shell, { width: responsive.contentWidth }]}>
       <View style={local.header}>
         <View style={local.brandRow}>
-          <View style={local.logoBox}>
+          <View style={[local.logoBox, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
             <Image source={require("../../assets/images/lfa-logo.png")} style={local.logo} resizeMode="contain" />
           </View>
           <View style={local.brandText}>
-            <Text style={local.brandName}>Lebanon FA</Text>
+            <Text style={[local.brandName, { color: theme.colors.ink }]}>Lebanon FA</Text>
             <Text style={styles.muted}>Official fixture feed</Text>
           </View>
         </View>
-        <Link href={auth.isAuthenticated ? "/profile" : "/auth"} asChild>
-          <Pressable style={local.accountButton}>
-            <Text style={local.accountText}>{auth.isAuthenticated ? "Profile" : "Login"}</Text>
-          </Pressable>
-        </Link>
+        <HeaderActions
+          onLogout={logout}
+        />
       </View>
 
       <View style={local.hero}>
         <View>
           <Text style={styles.sectionLabel}>Scheduled Matches</Text>
-          <Text style={local.heroTitle}>Browse upcoming fixtures</Text>
+          <Text style={[local.heroTitle, { color: theme.colors.ink }]}>Browse upcoming fixtures</Text>
           <Text style={styles.muted}>Secure official LFA tickets in a few taps.</Text>
         </View>
       </View>
-
-      {groupedCartItems.length ? (
-        <Pressable onPress={() => router.push("/cart")}>
-          <Card>
-            <View style={styles.row}>
-              <Text style={styles.h2}>{groupedCartItems.length} ticket item{groupedCartItems.length > 1 ? "s" : ""}</Text>
-              <Text style={{ color: colors.primary, fontWeight: "700" }}>{minutesSeconds(cart.secondsLeft)}</Text>
-            </View>
-            <Text style={styles.muted}>{formatMoney(cart.total, cart.currency)} reserved in cart</Text>
-          </Card>
-        </Pressable>
-      ) : null}
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -97,11 +91,11 @@ export default function Index() {
       >
         {error ? <Empty title="Could not load matches" detail={error} /> : null}
 
-        <View style={local.filterPanel}>
+        <View style={[local.filterPanel, { backgroundColor: theme.isDark ? "rgba(23,32,51,0.72)" : "rgba(255,255,255,0.72)", borderColor: theme.colors.line }]}>
           <View style={local.filterHeader}>
             <View>
-              <Text style={local.listHeaderText}>Fixtures</Text>
-              <Text style={local.resultCount}>{matches.length} match{matches.length === 1 ? "" : "es"}</Text>
+              <Text style={[local.listHeaderText, { color: theme.colors.ink }]}>Fixtures</Text>
+              <Text style={[local.resultCount, { color: theme.colors.muted }]}>{matches.length} match{matches.length === 1 ? "" : "es"}</Text>
             </View>
             {(selected.team || selected.stadium) ? (
               <Pressable onPress={() => setSelected({})} style={local.clearButton}>
@@ -125,7 +119,13 @@ export default function Index() {
           </ChipRow>
         </View>
 
-        {matches.length ? matches.map((match) => <MatchCard key={match.id} match={match} />) : !error ? <Empty title="No scheduled matches" detail="Try clearing filters or pulling to refresh." /> : null}
+        {matches.length ? (
+          <View style={local.matchGrid}>
+            {matches.map((match) => (
+              <MatchCard key={match.id} match={match} width={matchCardWidth} />
+            ))}
+          </View>
+        ) : !error ? <Empty title="No scheduled matches" detail="Try clearing filters or pulling to refresh." /> : null}
       </ScrollView>
       </View>
     </Screen>
@@ -133,17 +133,28 @@ export default function Index() {
 }
 
 function FilterChip({ title, active, onPress }: { title: string; active: boolean; onPress: () => void }) {
+  const theme = useTheme();
+
   return (
-    <Pressable onPress={onPress} style={[local.filterChip, active && local.filterChipActive]}>
-      <Text numberOfLines={1} style={[local.filterChipText, active && local.filterChipTextActive]}>{title}</Text>
+    <Pressable
+      onPress={onPress}
+      style={[
+        local.filterChip,
+        { backgroundColor: theme.colors.panel, borderColor: theme.colors.line },
+        active && local.filterChipActive,
+      ]}
+    >
+      <Text numberOfLines={1} style={[local.filterChipText, { color: theme.colors.ink }, active && local.filterChipTextActive]}>{title}</Text>
     </Pressable>
   );
 }
 
 function ChipRow({ label, children }: { label: string; children: React.ReactNode }) {
+  const theme = useTheme();
+
   return (
     <View style={local.filterRow}>
-      <Text style={local.filterLabel}>{label}</Text>
+      <Text style={[local.filterLabel, { color: theme.colors.muted }]}>{label}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={local.filterChips}>
         {children}
       </ScrollView>
@@ -151,24 +162,25 @@ function ChipRow({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function MatchCard({ match }: { match: ApiMatch }) {
+function MatchCard({ match, width }: { match: ApiMatch; width: DimensionValue }) {
+  const theme = useTheme();
   const homeShort = match.home_team?.short_name ?? match.home_team?.name?.slice(0, 3).toUpperCase() ?? "H";
   const awayShort = match.away_team?.short_name ?? match.away_team?.name?.slice(0, 3).toUpperCase() ?? "A";
 
   return (
-    <Pressable onPress={() => router.push({ pathname: "/match/[id]", params: { id: String(match.id) } })}>
+    <Pressable style={[local.matchCardWrap, { width }]} onPress={() => router.push({ pathname: "/match/[id]", params: { id: String(match.id) } })}>
       <Card>
-        <View style={local.competitionBar}>
+        <View style={[local.competitionBar, { borderBottomColor: theme.colors.line }]}>
           <Text style={styles.sectionLabel}>Lebanese Premier League</Text>
           <View style={styles.badge}><Text style={styles.badgeText}>{match.status ?? "scheduled"}</Text></View>
         </View>
         <View style={local.teamsRow}>
-          <TeamPill name={match.home_team?.name ?? "Home"} shortName={homeShort} />
+          <TeamPill name={match.home_team?.name ?? "Home"} shortName={homeShort} logoUrl={storageUrl(match.home_team?.logo)} />
           <View style={local.vsBlock}>
-            <View style={local.vsCircle}><Text style={local.vsText}>VS</Text></View>
+            <View style={[local.vsCircle, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}><Text style={[local.vsText, { color: theme.colors.muted }]}>VS</Text></View>
             <Text style={local.timeText}>{formatTime(match.kickoff_at)}</Text>
           </View>
-          <TeamPill name={match.away_team?.name ?? "Away"} shortName={awayShort} />
+          <TeamPill name={match.away_team?.name ?? "Away"} shortName={awayShort} logoUrl={storageUrl(match.away_team?.logo)} />
         </View>
         <View style={styles.row}>
           <View>
@@ -182,11 +194,19 @@ function MatchCard({ match }: { match: ApiMatch }) {
   );
 }
 
-function TeamPill({ name, shortName }: { name: string; shortName: string }) {
+function TeamPill({ name, shortName, logoUrl }: { name: string; shortName: string; logoUrl?: string }) {
+  const theme = useTheme();
+
   return (
     <View style={local.team}>
-      <View style={local.teamLogo}><Text style={local.teamLogoText}>{shortName}</Text></View>
-      <Text numberOfLines={2} style={local.teamName}>{name}</Text>
+      <View style={[local.teamLogo, { backgroundColor: theme.isDark ? "#F8FAFC" : theme.colors.panelSoft, borderColor: theme.colors.line }]}>
+        {logoUrl ? (
+          <Image source={{ uri: logoUrl }} style={local.teamLogoImage} resizeMode="contain" />
+        ) : (
+          <Text style={local.teamLogoText}>{shortName}</Text>
+        )}
+      </View>
+      <Text numberOfLines={2} style={[local.teamName, { color: theme.colors.secondary }]}>{name}</Text>
     </View>
   );
 }
@@ -214,17 +234,6 @@ const local = {
   },
   logo: { width: 38, height: 38 },
   brandName: { color: colors.ink, fontSize: 18, fontWeight: "900" as const },
-  accountButton: {
-    minHeight: 40,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-    paddingHorizontal: 14,
-  },
-  accountText: { color: colors.ink, fontSize: 13, fontWeight: "800" as const },
   hero: {
     gap: 6,
     paddingVertical: 8,
@@ -237,6 +246,16 @@ const local = {
     borderRadius: 18,
     padding: 10,
     gap: 8,
+  },
+  matchGrid: {
+    width: "100%" as const,
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+    gap: 12,
+    alignItems: "stretch" as const,
+  },
+  matchCardWrap: {
+    minWidth: 0,
   },
   filterHeader: {
     flexDirection: "row" as const,
@@ -281,7 +300,9 @@ const local = {
     borderColor: colors.line,
     alignItems: "center" as const,
     justifyContent: "center" as const,
+    overflow: "hidden" as const,
   },
+  teamLogoImage: { width: 46, height: 46 },
   teamLogoText: { color: colors.primary, fontSize: 14, fontWeight: "900" as const },
   teamName: { color: colors.ink, fontSize: 12, fontWeight: "900" as const, textAlign: "center" as const, minHeight: 32 },
   vsBlock: { width: 54, alignItems: "center" as const, gap: 5 },

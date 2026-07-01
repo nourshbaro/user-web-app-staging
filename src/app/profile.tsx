@@ -1,21 +1,29 @@
 import { Stack, router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Button, Empty, Loading, Screen, colors } from "@/components/ui";
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, type DimensionValue } from "react-native";
+import { AppHeader } from "@/components/AppHeader";
+import { Button, Empty, Loading, Screen, colors, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { formatMoney } from "@/lib/format";
 import { profileService } from "@/services/auth";
 import type { Order } from "@/types";
 
 type PortalItem = Record<string, any>;
-type DetailState = { type: "order" | "ticket"; title: string; item: PortalItem } | null;
+type DetailState = { type: "order" | "ticket"; title: string; item: PortalItem; pdfId?: string } | null;
 
 export default function ProfileScreen() {
   const auth = useAuth();
+  const responsive = useResponsive();
+  const theme = useTheme();
+  const profileColumns = responsive.width >= 760 ? 2 : 1;
+  const profileGap = 14;
+  const panelWidth: DimensionValue = profileColumns === 1 ? "100%" : (responsive.contentWidth - profileGap * (profileColumns - 1)) / profileColumns;
+  const heroWidth: DimensionValue = "100%";
   const [orders, setOrders] = useState<Order[]>([]);
   const [tickets, setTickets] = useState<PortalItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [detail, setDetail] = useState<DetailState>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,17 +46,11 @@ export default function ProfileScreen() {
     void auth.refreshAuth().then(load);
   }, [auth.isAuthenticated]));
 
-  const goBack = () => {
-    if (router.canGoBack()) router.back();
-    else router.replace("/");
-  };
-
   const logout = async () => {
     setDetail(null);
     setOrders([]);
     setTickets([]);
     await auth.logout();
-    router.dismissAll();
     router.replace("/");
   };
 
@@ -59,7 +61,7 @@ export default function ProfileScreen() {
     setError(null);
     try {
       const item = await profileService.order(id);
-      setDetail({ type: "order", title: `Order ${displayValue(order, ["order_code", "order_number", "id"], `#${id}`)}`, item });
+      setDetail({ type: "order", title: `Order ${displayValue(order, ["order_code", "order_number", "id"], `#${id}`)}`, item, pdfId: String(id) });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load order details.");
     } finally {
@@ -74,11 +76,41 @@ export default function ProfileScreen() {
     setError(null);
     try {
       const item = await profileService.ticket(code);
-      setDetail({ type: "ticket", title: `Ticket ${code}`, item });
+      const pdfId = displayValue(item, ["order_code", "order_number", "order_id"], displayValue(ticket, ["order_code", "order_number", "order_id"], ""));
+      setDetail({ type: "ticket", title: `Ticket ${code}`, item, pdfId });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load ticket details.");
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const downloadPdf = async (orderId?: string) => {
+    if (!orderId) {
+      setError("Order number is required to download the PDF.");
+      return;
+    }
+
+    if (Platform.OS !== "web") {
+      setError("PDF download is available from the web app.");
+      return;
+    }
+
+    setDownloadingPdf(true);
+    setError(null);
+    try {
+      const response = await profileService.orderPdf(orderId);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `order-${orderId}.pdf`;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download PDF.");
+    } finally {
+      setDownloadingPdf(false);
     }
   };
 
@@ -87,13 +119,9 @@ export default function ProfileScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ title: "Profile" }} />
-      <ScrollView style={local.scroll} contentContainerStyle={local.content} showsVerticalScrollIndicator={false}>
-        <View style={local.topBar}>
-          <Pressable onPress={goBack} style={({ pressed }) => [local.backButton, pressed && local.pressed]}>
-            <Text style={local.backIcon}>‹</Text>
-            <Text style={local.backText}>Back</Text>
-          </Pressable>
-        </View>
+      <View style={[local.shell, { width: responsive.contentWidth }]}>
+        <AppHeader title="Profile" subtitle="Orders and tickets" />
+        <ScrollView style={local.scroll} contentContainerStyle={local.content} showsVerticalScrollIndicator={false}>
 
         {!auth.isAuthenticated ? (
           <View style={local.guestWrap}>
@@ -102,97 +130,126 @@ export default function ProfileScreen() {
           </View>
         ) : (
           <>
-            <View style={local.heroCard}>
-              <View style={local.heroTop}>
-                <View style={local.identity}>
-                  <View style={local.avatar}>
-                    <Text style={local.avatarText}>{initials(auth.user?.name ?? auth.user?.email)}</Text>
-                  </View>
-                  <View style={local.identityText}>
-                    <Text style={local.eyebrow}>My account</Text>
-                    <Text style={local.title} numberOfLines={1}>{auth.user?.name ?? "Supporter"}</Text>
-                  </View>
-                </View>
-                <Pressable onPress={() => void logout()} style={({ pressed }) => [local.logoutButton, pressed && local.pressed]}>
-                  <Text style={local.logoutText}>Logout</Text>
-                </Pressable>
-              </View>
-
-              <Text style={local.email} numberOfLines={1}>{auth.user?.email}</Text>
-
-              <View style={local.statGrid}>
-                <View style={local.statBox}>
-                  <Text style={local.statValue}>{orders.length}</Text>
-                  <Text style={local.statLabel}>Orders</Text>
-                </View>
-                <View style={local.statDivider} />
-                <View style={local.statBox}>
-                  <Text style={local.statValue}>{tickets.length}</Text>
-                  <Text style={local.statLabel}>Tickets</Text>
-                </View>
-              </View>
-            </View>
-
-            {loading ? <View style={local.inlineLoader}><ActivityIndicator color={colors.primary} /></View> : null}
-            {detailLoading ? <Text style={local.loadingText}>Loading details...</Text> : null}
-            {error ? <Empty title="Profile error" detail={error} /> : null}
-
-            <View style={local.sectionCard}>
-              <View style={local.sectionHeader}>
-                <Text style={local.sectionTitle}>Orders</Text>
-                <View style={local.countPill}><Text style={local.countText}>{orders.length}</Text></View>
-              </View>
-              {orders.length ? orders.map((order) => (
-                <Pressable key={order.id} onPress={() => void openOrder(order as Order & PortalItem)} style={({ pressed }) => [local.listRow, pressed && local.rowPressed]}>
-                  <View style={local.rowMain}>
-                    <View style={local.rowTitleLine}>
-                      <Text style={local.rowTitle}>Order {displayValue(order as PortalItem, ["order_code", "order_number", "id"], `#${order.id}`)}</Text>
-                      <Text style={local.chevron}>›</Text>
+            <View style={local.profileGrid}>
+              <View style={[local.profilePanel, { width: heroWidth }]}>
+                <View style={[local.heroCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+                  <View style={local.heroTop}>
+                    <View style={local.identity}>
+                      <View
+                        style={[
+                          local.avatar,
+                          {
+                            backgroundColor: theme.isDark ? "#F8FAFC" : theme.colors.ink,
+                            borderColor: theme.isDark ? "rgba(255,255,255,0.14)" : theme.colors.line,
+                          },
+                        ]}
+                      >
+                        <Text style={[local.avatarText, { color: theme.isDark ? "#0F172A" : "#FFFFFF" }]}>
+                          {initials(auth.user?.name ?? auth.user?.email)}
+                        </Text>
+                      </View>
+                      <View style={local.identityText}>
+                        <Text style={local.eyebrow}>My account</Text>
+                        <Text style={[local.title, { color: theme.colors.ink }]} numberOfLines={1}>{auth.user?.name ?? "Supporter"}</Text>
+                      </View>
                     </View>
-                    <Text style={local.rowMeta}>{formatMoney(order.total, order.currency ?? "USD")}</Text>
-                    <Text style={local.rowSubMeta}>{displayValue(order as PortalItem, ["created_at", "date", "paid_at"], "Date unavailable")}</Text>
+                    <Pressable onPress={() => void logout()} style={({ pressed }) => [local.logoutButton, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }, pressed && local.pressed]}>
+                      <Text style={[local.logoutText, { color: theme.colors.ink }]}>Logout</Text>
+                    </Pressable>
                   </View>
-                  <View style={local.statusPill}>
-                    <Text style={local.statusText}>{order.status ?? "Pending"}</Text>
-                  </View>
-                </Pressable>
-              )) : <Text style={local.emptyText}>No orders yet.</Text>}
-            </View>
 
-            <View style={local.sectionCard}>
-              <View style={local.sectionHeader}>
-                <Text style={local.sectionTitle}>Tickets</Text>
-                <View style={local.countPill}><Text style={local.countText}>{tickets.length}</Text></View>
-              </View>
-              {tickets.length ? tickets.slice(0, 10).map((ticket, index) => (
-                <Pressable key={ticket.id ?? ticket.ticket_code ?? index} onPress={() => void openTicket(ticket)} style={({ pressed }) => [local.listRow, pressed && local.rowPressed]}>
-                  <View style={local.rowMain}>
-                    <View style={local.rowTitleLine}>
-                      <Text style={local.rowTitle}>{displayValue(ticket, ["ticket_code", "code"], `Ticket ${index + 1}`)}</Text>
-                      <Text style={local.chevron}>›</Text>
+                  <Text style={[local.email, { color: theme.colors.secondary }]} numberOfLines={1}>{auth.user?.email}</Text>
+
+                  <View style={[local.statGrid, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
+                    <View style={local.statBox}>
+                      <Text style={[local.statValue, { color: theme.colors.ink }]}>{orders.length}</Text>
+                      <Text style={[local.statLabel, { color: theme.colors.muted }]}>Orders</Text>
                     </View>
-                    <Text style={local.rowMeta}>{ticket.match_title ?? ticket.match?.name ?? ticket.holder_name ?? "Match ticket"}</Text>
-                    <Text style={local.rowSubMeta}>{ticket.zone?.name ?? ticket.seat?.label ?? ticket.order_code ?? "Tap for details"}</Text>
+                    <View style={[local.statDivider, { backgroundColor: theme.colors.line }]} />
+                    <View style={local.statBox}>
+                      <Text style={[local.statValue, { color: theme.colors.ink }]}>{tickets.length}</Text>
+                      <Text style={[local.statLabel, { color: theme.colors.muted }]}>Tickets</Text>
+                    </View>
                   </View>
-                  <View style={local.ticketPill}>
-                    <Text style={local.ticketText}>{ticket.status ?? "Active"}</Text>
+                </View>
+              </View>
+
+              {loading ? <View style={local.fullWidth}><View style={local.inlineLoader}><ActivityIndicator color={colors.primary} /></View></View> : null}
+              {detailLoading ? <Text style={[local.loadingText, local.fullWidth]}>Loading details...</Text> : null}
+              {error ? <View style={local.fullWidth}><Empty title="Profile error" detail={error} /></View> : null}
+
+              <View style={[local.profilePanel, { width: panelWidth }]}>
+                <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+                  <View style={local.sectionHeader}>
+                    <Text style={[local.sectionTitle, { color: theme.colors.ink }]}>Orders</Text>
+                    <View style={local.countPill}><Text style={local.countText}>{orders.length}</Text></View>
                   </View>
-                </Pressable>
-              )) : <Text style={local.emptyText}>No tickets yet.</Text>}
+                  {orders.length ? orders.map((order) => (
+                    <Pressable key={order.id} onPress={() => void openOrder(order as Order & PortalItem)} style={({ pressed }) => [local.listRow, { borderTopColor: theme.colors.line }, pressed && local.rowPressed]}>
+                      <View style={local.rowMain}>
+                        <View style={local.rowTitleLine}>
+                          <Text style={[local.rowTitle, { color: theme.colors.ink }]}>Order {displayValue(order as PortalItem, ["order_code", "order_number", "id"], `#${order.id}`)}</Text>
+                        </View>
+                        <Text style={[local.rowMeta, { color: theme.colors.secondary }]}>{formatMoney(order.total, order.currency ?? "USD")}</Text>
+                        <Text style={[local.rowSubMeta, { color: theme.colors.muted }]}>Paid {formatDateValue(displayValue(order as PortalItem, ["paid_at"], ""))}</Text>
+                      </View>
+                      <View style={local.rowSide}>
+                        <View style={local.viewPill}><Text style={local.viewPillText}>View</Text></View>
+                        <StatusPill status={order.status ?? "Pending"} />
+                      </View>
+                    </Pressable>
+                  )) : <Text style={[local.emptyText, { borderTopColor: theme.colors.line, color: theme.colors.muted }]}>No orders yet.</Text>}
+                </View>
+              </View>
+
+              <View style={[local.profilePanel, { width: panelWidth }]}>
+                <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+                  <View style={local.sectionHeader}>
+                    <Text style={[local.sectionTitle, { color: theme.colors.ink }]}>Tickets</Text>
+                    <View style={local.countPill}><Text style={local.countText}>{tickets.length}</Text></View>
+                  </View>
+                  {tickets.length ? tickets.slice(0, 10).map((ticket, index) => (
+                    <Pressable key={ticket.id ?? ticket.ticket_code ?? index} onPress={() => void openTicket(ticket)} style={({ pressed }) => [local.listRow, { borderTopColor: theme.colors.line }, pressed && local.rowPressed]}>
+                      <View style={local.rowMain}>
+                        <View style={local.rowTitleLine}>
+                          <Text style={[local.rowTitle, { color: theme.colors.ink }]}>{displayValue(ticket, ["ticket_code", "code"], `Ticket ${index + 1}`)}</Text>
+                        </View>
+                        <Text style={[local.rowMeta, { color: theme.colors.secondary }]}>{ticket.match_title ?? ticket.match?.name ?? ticket.holder_name ?? "Match ticket"}</Text>
+                        <Text style={[local.rowSubMeta, { color: theme.colors.muted }]}>{ticket.zone?.name ?? ticket.seat?.label ?? ticket.order_code ?? "Tap for details"}</Text>
+                      </View>
+                      <View style={local.rowSide}>
+                        <View style={local.viewPill}><Text style={local.viewPillText}>View</Text></View>
+                        <StatusPill status={ticket.status ?? "Active"} />
+                      </View>
+                    </Pressable>
+                  )) : <Text style={[local.emptyText, { borderTopColor: theme.colors.line, color: theme.colors.muted }]}>No tickets yet.</Text>}
+                </View>
+              </View>
             </View>
           </>
         )}
-      </ScrollView>
+        </ScrollView>
+      </View>
 
-      <DetailModal detail={detail} onClose={() => setDetail(null)} />
+      <DetailModal detail={detail} downloadingPdf={downloadingPdf} onClose={() => setDetail(null)} onDownloadPdf={downloadPdf} />
     </Screen>
   );
 }
 
-function DetailModal({ detail, onClose }: { detail: DetailState; onClose: () => void }) {
+function DetailModal({
+  detail,
+  downloadingPdf,
+  onClose,
+  onDownloadPdf,
+}: {
+  detail: DetailState;
+  downloadingPdf: boolean;
+  onClose: () => void;
+  onDownloadPdf: (orderId?: string) => void;
+}) {
   const item = detail?.item;
   const normalized = detail?.type === "order" && isRecord(item?.order) ? item.order : item;
-  const entries = normalized ? Object.entries(normalized).filter(([, value]) => value !== null && value !== undefined && value !== "") : [];
+  const entries = normalized ? Object.entries(normalized).filter(([key, value]) => shouldShowDetailField(key, value)) : [];
   const items = Array.isArray(item?.items) ? item.items.filter(isRecord) : [];
   const tickets = Array.isArray(item?.tickets) ? item.tickets.filter(isRecord) : [];
 
@@ -205,14 +262,27 @@ function DetailModal({ detail, onClose }: { detail: DetailState; onClose: () => 
               <Text style={local.modalEyebrow}>{detail?.type === "order" ? "Order details" : "Ticket details"}</Text>
               <Text style={local.modalTitle} numberOfLines={2}>{detail?.title}</Text>
             </View>
-            <Pressable onPress={onClose} style={({ pressed }) => [local.closeButton, pressed && local.pressed]}>
-              <Text style={local.closeText}>Close</Text>
-            </Pressable>
+            <View style={local.modalActions}>
+              {detail?.type === "order" && detail.pdfId ? (
+                <Pressable
+                  onPress={() => onDownloadPdf(detail.pdfId)}
+                  disabled={downloadingPdf}
+                  style={({ pressed }) => [local.pdfButton, pressed && local.pressed, downloadingPdf && local.buttonDisabled]}
+                >
+                  <Text style={local.pdfText}>{downloadingPdf ? "Downloading" : "PDF"}</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={onClose} style={({ pressed }) => [local.closeButton, pressed && local.pressed]}>
+                <Text style={local.closeText}>Close</Text>
+              </Pressable>
+            </View>
           </View>
 
           <ScrollView contentContainerStyle={local.detailContent} showsVerticalScrollIndicator={false}>
+            {detail?.type === "ticket" && typeof item?.qr_image === "string" ? <QrImage value={item.qr_image} /> : null}
+
             {entries.map(([key, value]) => (
-              <DetailField key={key} label={labelize(key)} value={value} />
+              <DetailField key={key} fieldKey={key} label={labelize(key)} value={value} />
             ))}
 
             {items.length ? (
@@ -235,8 +305,20 @@ function DetailModal({ detail, onClose }: { detail: DetailState; onClose: () => 
   );
 }
 
-function DetailField({ label, value }: { label: string; value: unknown }) {
+function StatusPill({ status }: { status: string }) {
+  const tone = statusTone(status);
+  return (
+    <View style={[local.statusPill, tone === "success" && local.statusPillSuccess, tone === "warning" && local.statusPillWarning]}>
+      <Text style={[local.statusText, tone === "success" && local.statusTextSuccess, tone === "warning" && local.statusTextWarning]}>
+        {status}
+      </Text>
+    </View>
+  );
+}
+
+function DetailField({ fieldKey, label, value }: { fieldKey: string; label: string; value: unknown }) {
   if (Array.isArray(value)) return null;
+  if (label.toLowerCase() === "qr image" && typeof value === "string") return <QrImage value={value} />;
   if (isRecord(value)) {
     return (
       <View style={local.detailGroup}>
@@ -249,20 +331,40 @@ function DetailField({ label, value }: { label: string; value: unknown }) {
   return (
     <View style={local.detailField}>
       <Text style={local.detailLabel}>{label}</Text>
-      <Text style={local.detailValue}>{formatDetailValue(value)}</Text>
+      <Text style={local.detailValue}>{formatDetailValue(value, fieldKey)}</Text>
     </View>
   );
 }
 
 function NestedCard({ item }: { item: PortalItem }) {
+  const hasQr = typeof item.qr_image === "string";
+
   return (
     <View style={local.nestedCard}>
-      {Object.entries(item).filter(([, value]) => value !== null && value !== undefined && value !== "").slice(0, 8).map(([key, value]) => (
+      {hasQr ? <QrImage value={item.qr_image} compact /> : null}
+      {Object.entries(item).filter(([key, value]) => shouldShowDetailField(key, value)).slice(0, 8).map(([key, value]) => (
         <View key={key} style={local.nestedRow}>
           <Text style={local.nestedLabel}>{labelize(key)}</Text>
-          <Text style={local.nestedValue}>{isRecord(value) || Array.isArray(value) ? summarizeValue(value) : formatDetailValue(value)}</Text>
+          <Text style={local.nestedValue}>{isRecord(value) || Array.isArray(value) ? summarizeValue(value) : formatDetailValue(value, key)}</Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+function QrImage({ value, compact = false }: { value: string; compact?: boolean }) {
+  if (!value.startsWith("data:image/")) {
+    return (
+      <View style={local.qrEmpty}>
+        <Text style={local.qrEmptyText}>QR unavailable</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[local.qrWrap, compact && local.qrWrapCompact]}>
+      <Image source={{ uri: value }} style={[local.qrImage, compact && local.qrImageCompact]} resizeMode="contain" />
+      {!compact ? <Text style={local.qrCaption}>Ticket QR code</Text> : null}
     </View>
   );
 }
@@ -292,11 +394,47 @@ function labelize(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatDetailValue(value: unknown) {
+function formatDetailValue(value: unknown, key = "") {
   if (value === null || value === undefined || value === "") return "-";
+  if (key === "payment_method") return paymentMethodLabel(String(value));
+  if (isDateKey(key)) return formatDateValue(String(value));
   if (typeof value === "number") return String(value);
   if (typeof value === "boolean") return value ? "Yes" : "No";
   return String(value);
+}
+
+function paymentMethodLabel(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "cybersource") return "Credit / Debit Card";
+  if (normalized === "blue") return "Blue Wallet";
+  return value;
+}
+
+function statusTone(status: string) {
+  const normalized = status.trim().toLowerCase();
+  if (["paid", "valid", "active", "confirmed", "complete", "completed", "success"].includes(normalized)) return "success";
+  if (["pending", "processing", "reserved"].includes(normalized)) return "warning";
+  return "danger";
+}
+
+function isDateKey(key: string) {
+  const normalized = key.toLowerCase();
+  return normalized.endsWith("_at") || normalized.includes("date") || normalized.includes("time");
+}
+
+function shouldShowDetailField(key: string, value: unknown) {
+  return !["qr_image", "created_at", "id", "order_number", "order_code", "ticket_code", "code"].includes(key) && value !== null && value !== undefined && value !== "";
+}
+
+function formatDateValue(value: string) {
+  if (!value) return "Date unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
 }
 
 function summarizeValue(value: unknown) {
@@ -306,44 +444,35 @@ function summarizeValue(value: unknown) {
 }
 
 const local = StyleSheet.create({
+  shell: {
+    flex: 1,
+    alignSelf: "center",
+  },
   scroll: {
     width: "100%",
   },
   content: {
     alignSelf: "center",
     width: "100%",
-    maxWidth: 520,
     gap: 14,
     paddingBottom: 32,
     paddingTop: 4,
   },
-  topBar: {
-    alignItems: "flex-start",
-  },
-  backButton: {
-    minHeight: 40,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: "rgba(255,255,255,0.82)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 12,
-  },
-  backIcon: {
-    color: colors.ink,
-    fontSize: 24,
-    lineHeight: 25,
-    fontWeight: "800",
-  },
-  backText: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
   guestWrap: {
     gap: 12,
+  },
+  profileGrid: {
+    width: "100%",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 14,
+    alignItems: "flex-start",
+  },
+  profilePanel: {
+    minWidth: 0,
+  },
+  fullWidth: {
+    width: "100%",
   },
   heroCard: {
     overflow: "hidden",
@@ -376,6 +505,7 @@ const local = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 18,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.ink,
@@ -524,10 +654,15 @@ const local = StyleSheet.create({
     minWidth: 0,
     gap: 4,
   },
+  rowSide: {
+    width: 76,
+    alignItems: "flex-end",
+    justifyContent: "center",
+    gap: 8,
+  },
   rowTitleLine: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
   },
   rowTitle: {
     flex: 1,
@@ -535,11 +670,20 @@ const local = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
   },
-  chevron: {
+  viewPill: {
+    borderRadius: 999,
+    backgroundColor: "rgba(200,16,46,0.08)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    minWidth: 52,
+    alignItems: "center",
+  },
+  viewPillText: {
     color: colors.primary,
-    fontSize: 24,
-    lineHeight: 24,
+    fontSize: 11,
+    lineHeight: 14,
     fontWeight: "900",
+    textTransform: "uppercase",
   },
   rowMeta: {
     color: colors.secondary,
@@ -557,6 +701,14 @@ const local = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: "rgba(200,16,46,0.08)",
+    minWidth: 52,
+    alignItems: "center",
+  },
+  statusPillSuccess: {
+    backgroundColor: "rgba(0,122,61,0.11)",
+  },
+  statusPillWarning: {
+    backgroundColor: "rgba(200,168,75,0.16)",
   },
   statusText: {
     color: colors.primaryDark,
@@ -564,17 +716,11 @@ const local = StyleSheet.create({
     fontWeight: "900",
     textTransform: "uppercase",
   },
-  ticketPill: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "rgba(0,122,61,0.09)",
-  },
-  ticketText: {
+  statusTextSuccess: {
     color: colors.green,
-    fontSize: 11,
-    fontWeight: "900",
-    textTransform: "uppercase",
+  },
+  statusTextWarning: {
+    color: "#8A6A1D",
   },
   emptyText: {
     borderTopWidth: 1,
@@ -624,6 +770,27 @@ const local = StyleSheet.create({
     fontWeight: "900",
     lineHeight: 27,
   },
+  modalActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  pdfButton: {
+    minHeight: 38,
+    borderRadius: 13,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 13,
+  },
+  pdfText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  buttonDisabled: {
+    opacity: 0.58,
+  },
   closeButton: {
     minHeight: 38,
     borderRadius: 13,
@@ -664,6 +831,53 @@ const local = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "700",
+  },
+  qrWrap: {
+    alignItems: "center",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.panelSoft,
+    padding: 14,
+    gap: 8,
+  },
+  qrWrapCompact: {
+    alignSelf: "center",
+    padding: 10,
+    marginBottom: 4,
+  },
+  qrImage: {
+    width: 190,
+    height: 190,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+  },
+  qrImageCompact: {
+    width: 136,
+    height: 136,
+  },
+  qrCaption: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  qrEmpty: {
+    minHeight: 120,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: colors.line,
+    backgroundColor: colors.panelSoft,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 14,
+  },
+  qrEmptyText: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "800",
   },
   detailGroup: {
     gap: 9,

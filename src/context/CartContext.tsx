@@ -1,4 +1,6 @@
-import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
+import { router } from "expo-router";
+import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Keyboard } from "react-native";
 import { storage } from "@/lib/storage";
 import { cartService, getCartItems } from "@/services/cart";
 import type { AddCartRequest, CartItem } from "@/types";
@@ -22,6 +24,13 @@ type CartContextValue = {
 
 const CartContext = createContext<CartContextValue | null>(null);
 
+function dismissEverythingAndGoHome() {
+  Keyboard.dismiss();
+  const resetRouter = router as typeof router & { dismissAll?: () => void };
+  resetRouter.dismissAll?.();
+  router.replace("/");
+}
+
 export function CartProvider({ children }: PropsWithChildren) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<Date | null>(null);
@@ -30,25 +39,41 @@ export function CartProvider({ children }: PropsWithChildren) {
   const [currency, setCurrency] = useState("USD");
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [isLoading, setLoading] = useState(false);
+  const expiryHandledRef = useRef(false);
 
-  const applyCart = (response: Awaited<ReturnType<typeof cartService.get>>) => {
-    const nextItems = getCartItems(response.cart);
-    setItems(nextItems);
-    setTotal(Number(response.cart.total ?? 0));
-    setCurrency(response.cart.currency ?? "USD");
-    setExpiresAt(response.expires_at ? new Date(response.expires_at) : null);
-  };
-
-  const clearCart = async () => {
-    await storage.remove(SESSION_KEY);
+  const resetCartState = useCallback(() => {
     setSessionId(null);
     setExpiresAt(null);
     setItems([]);
     setTotal(0);
+    setCurrency("USD");
     setSecondsLeft(0);
-  };
+  }, []);
 
-  const refreshCart = async () => {
+  const applyCart = useCallback((response: Awaited<ReturnType<typeof cartService.get>>) => {
+    const nextItems = getCartItems(response.cart);
+    expiryHandledRef.current = false;
+    setItems(nextItems);
+    setTotal(Number(response.cart.total ?? 0));
+    setCurrency(response.cart.currency ?? "USD");
+    setExpiresAt(response.expires_at ? new Date(response.expires_at) : null);
+  }, []);
+
+  const clearCart = useCallback(async () => {
+    await storage.remove(SESSION_KEY);
+    expiryHandledRef.current = false;
+    resetCartState();
+  }, [resetCartState]);
+
+  const expireCart = useCallback(async () => {
+    if (expiryHandledRef.current) return;
+    expiryHandledRef.current = true;
+    await storage.remove(SESSION_KEY);
+    resetCartState();
+    dismissEverythingAndGoHome();
+  }, [resetCartState]);
+
+  const refreshCart = useCallback(async () => {
     if (!sessionId) return;
     try {
       const response = await cartService.get(sessionId);
@@ -61,7 +86,7 @@ export function CartProvider({ children }: PropsWithChildren) {
     } catch {
       await clearCart();
     }
-  };
+  }, [applyCart, clearCart, sessionId]);
 
   useEffect(() => {
     void storage.get(SESSION_KEY).then((stored) => {
@@ -71,7 +96,7 @@ export function CartProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     if (sessionId) void refreshCart();
-  }, [sessionId]);
+  }, [refreshCart, sessionId]);
 
   useEffect(() => {
     const tick = () => {
@@ -81,13 +106,13 @@ export function CartProvider({ children }: PropsWithChildren) {
       }
       const next = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
       setSecondsLeft(next);
-      if (next === 0) void clearCart();
+      if (next === 0) void expireCart();
     };
 
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [expiresAt]);
+  }, [expireCart, expiresAt]);
 
   const addItem = async (payload: Omit<AddCartRequest, "checkout_session_id">) => {
     setLoading(true);

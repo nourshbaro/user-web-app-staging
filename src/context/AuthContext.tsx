@@ -1,6 +1,8 @@
+import { router } from "expo-router";
 import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
+import { Keyboard } from "react-native";
 import { authService } from "@/services/auth";
-import { getToken } from "@/services/api";
+import { getToken, onUnauthenticated } from "@/services/api";
 import type { User } from "@/types";
 
 type AuthContextValue = {
@@ -27,6 +29,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     void refreshAuth();
+  }, []);
+
+  useEffect(() => {
+    return onUnauthenticated(() => {
+      Keyboard.dismiss();
+      void authService.clearSession();
+      setUser(null);
+      setTokenState(null);
+      const resetRouter = router as typeof router & { dismissAll?: () => void };
+      resetRouter.dismissAll?.();
+      router.replace("/");
+    });
   }, []);
 
   const logout = async () => {

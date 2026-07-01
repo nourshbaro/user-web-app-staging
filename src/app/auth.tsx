@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import { useState } from "react";
 import { Image, Pressable, ScrollView, Text, View } from "react-native";
-import { Button, Card, Input, Screen, colors, styles, useResponsive } from "@/components/ui";
+import { Button, Card, Input, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/services/api";
@@ -33,6 +33,7 @@ const getMessage = (payload: unknown, fallback: string) => {
 export default function AuthScreen() {
   const auth = useAuth();
   const responsive = useResponsive();
+  const theme = useTheme();
   const toast = useToast();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
@@ -141,78 +142,80 @@ export default function AuthScreen() {
     <Screen>
       <View style={[local.shell, { width: responsive.contentWidth }]}>
       <View style={local.header}>
-        <Pressable onPress={() => router.back()} style={local.backButton}>
-          <View style={local.backChevron} />
+        <Pressable onPress={() => router.back()} style={[local.backButton, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+          <View style={[local.backChevron, { borderColor: theme.colors.ink }]} />
         </Pressable>
         <View style={local.headerBrand}>
           <Image source={require("../../assets/images/lfa-logo.png")} style={local.logo} resizeMode="contain" />
-          <Text style={local.headerTitle}>Lebanon FA</Text>
+          <Text style={[local.headerTitle, { color: theme.colors.ink }]}>Lebanon FA</Text>
         </View>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingBottom: 28 }}>
-        <Card>
-          <Text style={styles.sectionLabel}>Lebanon FA Account</Text>
-          <Text style={local.title}>{title}</Text>
-          <Text style={styles.muted}>{detail}</Text>
-        </Card>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={local.scrollContent}>
+        <View style={local.authPanel}>
+          <Card>
+            <Text style={styles.sectionLabel}>Lebanon FA Account</Text>
+            <Text style={[local.title, { color: theme.colors.ink }]}>{title}</Text>
+            <Text style={styles.muted}>{detail}</Text>
+          </Card>
 
-        <Card>
-          {mode === "register" ? (
-            <Input label="Full name" value={name} onChangeText={setName} autoCapitalize="words" />
-          ) : null}
+          <Card>
+            {mode === "register" ? (
+              <Input label="Full name" value={name} onChangeText={setName} autoCapitalize="words" />
+            ) : null}
 
-          {mode !== "otp" ? (
-            <>
-              <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-              <Input label="Password" value={password} onChangeText={setPassword} secureTextEntry />
-              {mode === "register" ? (
-                <Input label="Confirm password" value={passwordConfirmation} onChangeText={setPasswordConfirmation} secureTextEntry />
-              ) : null}
-            </>
-          ) : (
-            <Input
-              label="6-digit OTP"
-              value={otp}
-              onChangeText={(value) => setOtp(value.replace(/\D/g, "").slice(0, 6))}
-              keyboardType="number-pad"
-              maxLength={6}
-              style={local.otpInput}
+            {mode !== "otp" ? (
+              <>
+                <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                <Input label="Password" value={password} onChangeText={setPassword} secureTextEntry />
+                {mode === "register" ? (
+                  <Input label="Confirm password" value={passwordConfirmation} onChangeText={setPasswordConfirmation} secureTextEntry />
+                ) : null}
+              </>
+            ) : (
+              <Input
+                label="6-digit OTP"
+                value={otp}
+                onChangeText={(value) => setOtp(value.replace(/\D/g, "").slice(0, 6))}
+                keyboardType="number-pad"
+                maxLength={6}
+                style={local.otpInput}
+              />
+            )}
+
+            {message ? <Text style={[local.message, { color: theme.colors.secondary }]}>{message}</Text> : null}
+
+            <Button
+              title={loading ? "Please wait..." : mode === "login" ? "Login" : mode === "register" ? "Register" : "Confirm email"}
+              disabled={
+                loading ||
+                (mode === "login" && (!email || !password)) ||
+                (mode === "register" && (!name || !email || !password || !passwordConfirmation)) ||
+                (mode === "otp" && (!pendingUserId || otp.length !== 6))
+              }
+              onPress={submit}
             />
+
+            {mode === "otp" ? (
+              <Button title={resending ? "Sending..." : "Resend OTP"} variant="secondary" disabled={resending || !pendingUserId} onPress={resendOtp} />
+            ) : null}
+          </Card>
+
+          {mode === "login" ? (
+            <Text style={[local.footerText, { color: theme.colors.secondary }]}>
+              Need an account? <Text style={local.footerLink} onPress={() => switchMode("register")}>Register</Text>
+            </Text>
+          ) : mode === "register" ? (
+            <Text style={[local.footerText, { color: theme.colors.secondary }]}>
+              Already have an account? <Text style={local.footerLink} onPress={() => switchMode("login")}>Login</Text>
+            </Text>
+          ) : (
+            <Text style={[local.footerText, { color: theme.colors.secondary }]}>
+              Already confirmed? <Text style={local.footerLink} onPress={() => switchMode("login")}>Login</Text>
+            </Text>
           )}
-
-          {message ? <Text style={local.message}>{message}</Text> : null}
-
-          <Button
-            title={loading ? "Please wait..." : mode === "login" ? "Login" : mode === "register" ? "Register" : "Confirm email"}
-            disabled={
-              loading ||
-              (mode === "login" && (!email || !password)) ||
-              (mode === "register" && (!name || !email || !password || !passwordConfirmation)) ||
-              (mode === "otp" && (!pendingUserId || otp.length !== 6))
-            }
-            onPress={submit}
-          />
-
-          {mode === "otp" ? (
-            <Button title={resending ? "Sending..." : "Resend OTP"} variant="secondary" disabled={resending || !pendingUserId} onPress={resendOtp} />
-          ) : null}
-        </Card>
-
-        {mode === "login" ? (
-          <Text style={local.footerText}>
-            Need an account? <Text style={local.footerLink} onPress={() => switchMode("register")}>Register</Text>
-          </Text>
-        ) : mode === "register" ? (
-          <Text style={local.footerText}>
-            Already have an account? <Text style={local.footerLink} onPress={() => switchMode("login")}>Login</Text>
-          </Text>
-        ) : (
-          <Text style={local.footerText}>
-            Already confirmed? <Text style={local.footerLink} onPress={() => switchMode("login")}>Login</Text>
-          </Text>
-        )}
+        </View>
       </ScrollView>
       </View>
     </Screen>
@@ -221,6 +224,17 @@ export default function AuthScreen() {
 
 const local = {
   shell: { flex: 1, alignSelf: "center" as const },
+  scrollContent: {
+    flexGrow: 1,
+    alignItems: "center" as const,
+    gap: 14,
+    paddingBottom: 28,
+  },
+  authPanel: {
+    width: "100%" as const,
+    maxWidth: 520,
+    gap: 14,
+  },
   header: {
     flexDirection: "row" as const,
     alignItems: "center" as const,

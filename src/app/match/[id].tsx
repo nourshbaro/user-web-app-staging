@@ -1,7 +1,7 @@
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, Text, View } from "react-native";
-import { Button, Card, Empty, Loading, Screen, colors, styles, useResponsive } from "@/components/ui";
+import { Button, Card, Empty, Loading, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
 import { AppHeader } from "@/components/AppHeader";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
@@ -144,7 +144,7 @@ export default function MatchDetail() {
   const canAdd = selectedZone && (!selectedZone.has_seats || selectedSeats.length > 0);
   const mapWidth = Math.min(responsive.contentWidth - 32, 560);
   const mapHeight = Math.round(mapWidth * MAP_VIEW_H / MAP_VIEW_W);
-  const seatMapSize = Math.min(responsive.contentWidth - 32, 420);
+  const seatMapSize = mapWidth;
 
   return (
     <Screen>
@@ -169,7 +169,7 @@ export default function MatchDetail() {
             <ZoneMap
               zones={zones}
               selectedZoneId={selectedZone?.id ?? null}
-              mapImageUrl={storageUrl(match.stadium?.map_image)}
+              mapImageUrl={storageUrl(match.stadium?.mapImageUrl ?? match.stadium?.map_image)}
               width={mapWidth}
               height={mapHeight}
               onSelectZone={setSelectedZone}
@@ -288,8 +288,10 @@ function ZoneMap({
   height: number;
   onSelectZone: (zone: ApiZone) => void;
 }) {
+  const theme = useTheme();
+
   return (
-    <View style={[local.mapFrame, { width, height }]}>
+    <View style={[local.mapFrame, { width, height, backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
       {mapImageUrl ? (
         <Image source={{ uri: mapImageUrl }} style={local.mapImage} resizeMode="contain" />
       ) : (
@@ -321,8 +323,11 @@ function ZoneMap({
       })}
       {zones.map((zone, index) => {
         const center = getZoneCentroid(zone);
-        const left = Math.max(6, Math.min(width - 82, (center.x / MAP_VIEW_W) * width - 38));
-        const top = Math.max(6, Math.min(height - 34, (center.y / MAP_VIEW_H) * height - 16));
+        const compact = width < 420;
+        const markerWidth = compact ? 56 : 74;
+        const markerHeight = compact ? 22 : 24;
+        const left = Math.max(6, Math.min(width - markerWidth - 6, (center.x / MAP_VIEW_W) * width - markerWidth / 2));
+        const top = Math.max(6, Math.min(height - markerHeight - 6, (center.y / MAP_VIEW_H) * height - markerHeight / 2));
         const active = zone.id === selectedZoneId;
         return (
           <Pressable
@@ -330,16 +335,35 @@ function ZoneMap({
             onPress={() => onSelectZone(zone)}
             style={[
               local.zoneMarker,
-              { left, top, borderColor: zoneColor(index), backgroundColor: active ? zoneColor(index) : "rgba(255,255,255,0.92)" },
+              {
+                left,
+                top,
+                width: markerWidth,
+                minHeight: markerHeight,
+                paddingHorizontal: compact ? 5 : 6,
+                borderColor: zoneColor(index),
+                backgroundColor: active ? zoneColor(index) : "rgba(255,255,255,0.92)",
+              },
             ]}
           >
-            <View style={[local.zoneMarkerDot, { backgroundColor: active ? "#FFFFFF" : zoneColor(index) }]} />
-            <Text numberOfLines={1} style={[local.zoneMarkerText, active && local.zoneMarkerTextActive]}>{zone.name}</Text>
+            <View style={[local.zoneMarkerDot, compact && local.zoneMarkerDotCompact, { backgroundColor: active ? "#FFFFFF" : zoneColor(index) }]} />
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={[local.zoneMarkerText, compact && local.zoneMarkerTextCompact, active && local.zoneMarkerTextActive]}
+            >
+              {compactZoneName(zone.name)}
+            </Text>
           </Pressable>
         );
       })}
     </View>
   );
+}
+
+function compactZoneName(value: string) {
+  const withoutTeam = value.replace(/\s*\([^)]*\)\s*/g, "").trim();
+  return withoutTeam || value;
 }
 
 function isSeatAvailable(seat: ApiSeat) {
@@ -368,6 +392,7 @@ function SeatMap({
   size: number;
   onToggleSeat: (seat: ApiSeat) => void;
 }) {
+  const theme = useTheme();
   const layout = useMemo(() => {
     if (!seats.length) return { seats: [] as Array<ApiSeat & { px: number; py: number }>, width: size, height: Math.round(size * 0.72) };
 
@@ -401,8 +426,8 @@ function SeatMap({
   }, [seats, size]);
 
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <View style={[local.seatMapFrame, { width: layout.width, height: layout.height }]}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={local.seatMapScroll} contentContainerStyle={local.seatMapScroller}>
+      <View style={[local.seatMapFrame, { width: layout.width, height: layout.height, backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
         <View style={local.pitchLabel}><Text style={local.pitchLabelText}>Pitch / Field</Text></View>
         {layout.seats.map((seat) => {
           const inCart = cartSeatIds.has(seat.id);
@@ -464,26 +489,24 @@ const local = {
   mapFallback: { flex: 1, alignItems: "center" as const, justifyContent: "center" as const },
   zoneMarker: {
     position: "absolute" as const,
-    minWidth: 78,
-    maxWidth: 116,
-    minHeight: 34,
     borderRadius: 999,
-    borderWidth: 2,
-    paddingHorizontal: 8,
+    borderWidth: 1.5,
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    gap: 5,
+    gap: 4,
     shadowColor: colors.ink,
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
   },
   zoneShape: {
     position: "absolute" as const,
     borderWidth: 1,
   },
-  zoneMarkerDot: { width: 8, height: 8, borderRadius: 4 },
-  zoneMarkerText: { flex: 1, color: colors.ink, fontSize: 10, fontWeight: "900" as const },
+  zoneMarkerDot: { width: 6, height: 6, borderRadius: 3 },
+  zoneMarkerDotCompact: { width: 5, height: 5, borderRadius: 3 },
+  zoneMarkerText: { flex: 1, minWidth: 0, color: colors.ink, fontSize: 8, fontWeight: "900" as const },
+  zoneMarkerTextCompact: { fontSize: 7 },
   zoneMarkerTextActive: { color: "#FFFFFF" },
   zoneChips: { gap: 8, paddingRight: 4 },
   zoneChip: {
@@ -499,12 +522,18 @@ const local = {
   zoneChipText: { color: colors.ink, fontSize: 12, fontWeight: "800" as const },
   zoneChipTextActive: { color: colors.primary },
   seatMapFrame: {
+    alignSelf: "center" as const,
     borderRadius: 18,
     borderWidth: 1,
     borderColor: colors.line,
     backgroundColor: colors.panelSoft,
     position: "relative" as const,
     overflow: "hidden" as const,
+  },
+  seatMapScroll: { width: "100%" as const },
+  seatMapScroller: {
+    flexGrow: 1,
+    justifyContent: "center" as const,
   },
   pitchLabel: {
     position: "absolute" as const,

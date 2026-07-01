@@ -3,20 +3,30 @@ import { StatusBar } from "expo-status-bar";
 import { AuthProvider } from "@/context/AuthContext";
 import { CartProvider } from "@/context/CartContext";
 import { ToastProvider } from "@/context/ToastContext";
-import { colors } from "@/components/ui";
+import { ThemeProvider, useTheme } from "@/components/ui";
 
 export default function RootLayout() {
+  return (
+    <ThemeProvider>
+      <AppProviders />
+    </ThemeProvider>
+  );
+}
+
+function AppProviders() {
+  const theme = useTheme();
+
   return (
     <AuthProvider>
       <CartProvider>
         <ToastProvider>
-          <StatusBar style="dark" />
+          <StatusBar style={theme.isDark ? "light" : "dark"} />
           <Stack
             screenOptions={{
-              headerStyle: { backgroundColor: colors.panel },
-              headerTintColor: colors.ink,
+              headerStyle: { backgroundColor: theme.colors.panel },
+              headerTintColor: theme.colors.ink,
               headerShadowVisible: false,
-              contentStyle: { backgroundColor: colors.bg },
+              contentStyle: { backgroundColor: theme.colors.bg },
             }}
           >
             <Stack.Screen name="index" options={{ headerShown: false }} />
