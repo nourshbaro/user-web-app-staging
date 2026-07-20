@@ -31,7 +31,7 @@ export default function CartScreen() {
   return (
     <Screen>
       <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <AppHeader title="Your cart" subtitle={groupedItems.length ? `${groupedItems.length} item${groupedItems.length > 1 ? "s" : ""} reserved` : "No active reservation"} hideCart />
+        <AppHeader title="Your cart" subtitle={groupedItems.length ? `${groupedItems.length} item${groupedItems.length > 1 ? "s" : ""} reserved` : "No active reservation"} showBack={false} hideCart />
         <ScrollView contentContainerStyle={{ gap: 12, paddingBottom: 28 }}>
           {groupedItems.length ? (
             <View style={[local.cartLayout, isWide && local.cartLayoutWide]}>

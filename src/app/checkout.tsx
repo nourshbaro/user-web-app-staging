@@ -22,6 +22,7 @@ const paymentOptions: Array<{ id: PaymentMethod; title: string; detail: string }
   { id: "cybersource", title: "Credit / Debit Card", detail: "Visa and Mastercard secure checkout." },
 ];
 const LEBANON_DIAL_CODE = "+961";
+const LEBANON_COUNTRY_DIGITS = "961";
 const CHECKOUT_COUNTRY_CODE = "LB";
 const CHECKOUT_COUNTRY_LABEL = "Lebanon";
 
@@ -39,6 +40,8 @@ function readCaptureContext(payload: unknown) {
 
 function formatLebanonPhone(value: string) {
   const digitsOnly = value.replace(/\D/g, "");
+  if (!digitsOnly || LEBANON_COUNTRY_DIGITS.startsWith(digitsOnly)) return LEBANON_DIAL_CODE;
+
   const localDigits = (digitsOnly.startsWith("961") ? digitsOnly.slice(3) : digitsOnly).slice(0, 8);
   const part1 = localDigits.slice(0, 2);
   const part2 = localDigits.slice(2, 5);
@@ -59,12 +62,31 @@ function billingString(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
 }
 
-function unwrapBillingInfo(payload: unknown): BillingInfoPayload {
+function billingField(data: unknown, keys: string[]) {
+  if (!isRecord(data)) return "";
+  for (const key of keys) {
+    const value = billingString(data[key]);
+    if (value) return value;
+  }
+  return "";
+}
+
+function unwrapBillingInfo(payload: unknown): BillingInfoPayload | null {
   if (!isRecord(payload)) return {};
   if (isRecord(payload.data)) return payload.data;
   if (isRecord(payload.billing)) return payload.billing;
   if (isRecord(payload.billing_info)) return payload.billing_info;
   return payload;
+}
+
+function readBillingInfo(payload: unknown) {
+  const data = unwrapBillingInfo(payload);
+
+  return {
+    name: billingField(data, ["name", "full_name"]),
+    email: billingField(data, ["email"]),
+    phone: billingField(data, ["phone", "phone_number", "mobile", "mobile_number", "telephone", "billing_phone", "billing_phone_number"]),
+  };
 }
 
 export default function CheckoutScreen() {
@@ -150,16 +172,13 @@ export default function CheckoutScreen() {
     profileService.billingInfo()
       .then((payload) => {
         if (cancelled) return;
-        const data = unwrapBillingInfo(payload);
-        const nextName = billingString(data.name || data.full_name);
-        const nextEmail = billingString(data.email);
-        const nextPhone = billingString(data.phone);
+        const nextBillingInfo = readBillingInfo(payload);
 
-        if (nextName) setName(nextName);
+        if (nextBillingInfo.name) setName(nextBillingInfo.name);
         else if (auth.user?.name) setName(auth.user.name);
-        if (nextEmail) setEmail(nextEmail);
+        if (nextBillingInfo.email) setEmail(nextBillingInfo.email);
         else if (auth.user?.email) setEmail(auth.user.email);
-        if (nextPhone) setPhone(formatLebanonPhone(nextPhone));
+        if (nextBillingInfo.phone) setPhone(formatLebanonPhone(nextBillingInfo.phone));
       })
       .catch(() => {
         if (auth.user?.name) setName(auth.user.name);
@@ -255,6 +274,7 @@ export default function CheckoutScreen() {
         variant: "error",
         title: "Checkout failed",
         message: err instanceof Error ? err.message : "Please try again.",
+        duration: 6200,
       });
     } finally {
       setLoading(false);

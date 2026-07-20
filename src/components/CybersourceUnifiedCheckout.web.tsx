@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Platform, Text, View } from "react-native";
 import { colors, styles } from "@/components/ui";
+import { config } from "@/lib/config";
 
 declare global {
   interface Window {
@@ -27,8 +28,6 @@ type Props = {
   onSuccess: (token: string) => void;
   onError: (message: string) => void;
 };
-
-const UC_SCRIPT = "https://apitest.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js";
 
 export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError }: Props) {
   const clientRef = useRef<UCClient | null>(null);
@@ -97,7 +96,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
 
     const script = document.createElement("script");
     script.id = scriptId;
-    script.src = UC_SCRIPT;
+    script.src = config.cybersourceUnifiedCheckoutUrl;
     script.async = true;
     script.onload = () => void init();
     script.onerror = () => {

@@ -1,30 +1,36 @@
-import { Stack, router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, Text, View } from "react-native";
-import { Button, Card, Empty, Loading, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
 import { AppHeader } from "@/components/AppHeader";
+import { Button, Card, Empty, Loading, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
+import { useCartSheet } from "@/context/CartSheetContext";
 import { useToast } from "@/context/ToastContext";
 import { storageUrl } from "@/lib/config";
 import { formatDate, formatMoney, formatTime, matchTitle } from "@/lib/format";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, ApiSeat, ApiZone } from "@/types";
+import { Stack, router, useLocalSearchParams } from "expo-router";
+import { createElement, useEffect, useMemo, useRef, useState } from "react";
+import { Image, Platform, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
 const MAP_VIEW_W = 600;
-const MAP_VIEW_H = 349;
+const DEFAULT_MAP_VIEW_H = 445;
 
 export default function MatchDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const responsive = useResponsive();
+  const theme = useTheme();
   const [match, setMatch] = useState<ApiMatch | null>(null);
   const [selectedZone, setSelectedZone] = useState<ApiZone | null>(null);
   const [seats, setSeats] = useState<ApiSeat[]>([]);
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
   const [quantity, setQuantity] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [seatLoading, setSeatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const zoneScrollRef = useRef<ScrollView>(null);
+  const zoneChipLayouts = useRef(new Map<number, { x: number; width: number }>());
   const cart = useCart();
+  const { openCartSheet } = useCartSheet();
   const toast = useToast();
   const cartSeatIds = useMemo(
     () => new Set(
@@ -41,20 +47,27 @@ export default function MatchDetail() {
     () => cart.items.map((item) => `${item.lock_key}:${item.quantity}:${item.seat_ids?.join(",") ?? ""}`).join("|"),
     [cart.items],
   );
+  const zones = match?.stadium?.zones ?? [];
+  const mapImageUrl = storageUrl(match?.stadium?.mapImageUrl ?? match?.stadium?.map_image);
+  const mapViewHeight = useMapViewHeight(mapImageUrl, zones);
 
-  useEffect(() => {
-    setLoading(true);
-    matchesService.details(id)
+  const loadMatch = (force = false) => {
+    if (!force) setLoading(true);
+    return matchesService.details(id, force)
       .then((data) => {
         setMatch(data);
-        setSelectedZone(data.stadium?.zones?.[0] ?? null);
+        setSelectedZone((current) => data.stadium?.zones?.find((zone) => zone.id === current?.id) ?? data.stadium?.zones?.[0] ?? null);
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Could not load match.";
         setError(message);
         toast.showToast({ variant: "error", title: "Could not load match", message });
       })
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); setRefreshing(false); });
+  };
+
+  useEffect(() => {
+    void loadMatch();
   }, [id]);
 
   useEffect(() => {
@@ -106,7 +119,7 @@ export default function MatchDetail() {
           : `${quantity} ticket${quantity === 1 ? "" : "s"} reserved in ${selectedZone.name}.`,
       });
       setSelectedSeats([]);
-      router.push("/cart");
+      openCartSheet();
     } catch (err) {
       toast.showToast({
         variant: "error",
@@ -140,20 +153,32 @@ export default function MatchDetail() {
     );
   }
 
-  const zones = match.stadium?.zones ?? [];
   const canAdd = selectedZone && (!selectedZone.has_seats || selectedSeats.length > 0);
   const mapWidth = Math.min(responsive.contentWidth - 32, 560);
-  const mapHeight = Math.round(mapWidth * MAP_VIEW_H / MAP_VIEW_W);
+  const mapHeight = Math.round(mapWidth * mapViewHeight / MAP_VIEW_W);
   const seatMapSize = mapWidth;
+  const selectZone = (zone: ApiZone, revealInList = false) => {
+    setSelectedZone(zone);
+    if (!revealInList) return;
+    requestAnimationFrame(() => {
+      const layout = zoneChipLayouts.current.get(zone.id);
+      if (!layout) return;
+      zoneScrollRef.current?.scrollTo({ x: Math.max(0, layout.x - (mapWidth - layout.width) / 2), animated: true });
+    });
+  };
 
   return (
     <Screen>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[local.shell, { width: responsive.contentWidth }]}>
         <AppHeader title="Match tickets" subtitle={match.stadium?.name ?? "Stadium TBC"} onBack={handleBack} />
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingBottom: 28 }}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.primary} onRefresh={() => { setRefreshing(true); void loadMatch(true); }} />}
+          contentContainerStyle={{ gap: 12, paddingBottom: 28 }}
+        >
           <Card>
-            <Text style={styles.title}>{matchTitle(match)}</Text>
+            <MatchTeams match={match} showNames={responsive.isTablet} />
             <Text style={styles.muted}>{formatDate(match.match_date)} at {formatTime(match.kickoff_at)}</Text>
             <Text style={styles.muted}>{match.stadium?.name ?? "Stadium TBC"}{match.stadium?.location ? `, ${match.stadium.location}` : ""}</Text>
           </Card>
@@ -169,19 +194,33 @@ export default function MatchDetail() {
             <ZoneMap
               zones={zones}
               selectedZoneId={selectedZone?.id ?? null}
-              mapImageUrl={storageUrl(match.stadium?.mapImageUrl ?? match.stadium?.map_image)}
+              mapImageUrl={mapImageUrl}
               width={mapWidth}
               height={mapHeight}
-              onSelectZone={setSelectedZone}
+              viewHeight={mapViewHeight}
+              onSelectZone={(zone) => selectZone(zone, true)}
             />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={local.zoneChips}>
-              {zones.map((zone) => (
-                <Pressable key={zone.id} onPress={() => setSelectedZone(zone)} style={[local.zoneChip, selectedZone?.id === zone.id && local.zoneChipActive]}>
-                  <Text numberOfLines={1} style={[local.zoneChipText, selectedZone?.id === zone.id && local.zoneChipTextActive]}>
+            <ScrollView ref={zoneScrollRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={local.zoneChips}>
+              {zones.map((zone, index) => {
+                const selected = selectedZone?.id === zone.id;
+                const color = zoneColor(index);
+                return (
+                <Pressable
+                  key={zone.id}
+                  onPress={() => selectZone(zone)}
+                  onLayout={(event) => zoneChipLayouts.current.set(zone.id, event.nativeEvent.layout)}
+                  style={[
+                    local.zoneChip,
+                    { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line },
+                    selected && { borderColor: color, backgroundColor: `${color}18` },
+                  ]}
+                >
+                  <Text numberOfLines={1} style={[local.zoneChipText, { color: selected ? color : theme.colors.ink }]}>
                     {zone.name} - {formatMoney(zone.price, zone.currency)}
                   </Text>
                 </Pressable>
-              ))}
+                );
+              })}
             </ScrollView>
             {!zones.length ? <Text style={styles.muted}>No ticket zones are available for this match.</Text> : null}
           </Card>
@@ -228,17 +267,51 @@ export default function MatchDetail() {
   );
 }
 
+function MatchTeams({ match, showNames }: { match: ApiMatch; showNames: boolean }) {
+  const theme = useTheme();
+  const home = match.home_team;
+  const away = match.away_team;
+  return (
+    <View style={[local.matchTeams, !showNames && local.matchTeamsCompact]} accessibilityLabel={matchTitle(match)}>
+      <View style={[local.matchTeam, !showNames && local.matchTeamCompact]}>
+        <TeamLogo team={home} />
+        {showNames ? <Text numberOfLines={2} style={[local.matchTeamName, { color: theme.colors.ink }]}>{home?.name ?? "Home"}</Text> : null}
+      </View>
+      <View style={[local.matchVersus, { backgroundColor: theme.colors.panelSoft }]}><Text style={[local.matchVersusText, { color: theme.colors.muted }]}>VS</Text></View>
+      <View style={[local.matchTeam, local.matchTeamAway, !showNames && local.matchTeamCompact]}>
+        <TeamLogo team={away} />
+        {showNames ? <Text numberOfLines={2} style={[local.matchTeamName, { color: theme.colors.ink }]}>{away?.name ?? "Away"}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
+function TeamLogo({ team }: { team?: ApiMatch["home_team"] }) {
+  const theme = useTheme();
+  return (
+    <View style={[local.matchTeamLogo, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
+      {team?.logo ? <Image source={{ uri: storageUrl(team.logo) }} style={local.matchTeamImage} resizeMode="contain" /> : <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>{team?.short_name?.slice(0, 3) ?? "LFA"}</Text>}
+    </View>
+  );
+}
+
 function zoneColor(index: number) {
   return ["#C8102E", "#007A3D", "#2563EB", "#C8A84B", "#7C3AED", "#0E7490"][index % 6];
 }
 
 function getZonePoints(zone: ApiZone) {
-  return Array.isArray(zone.shape_data) ? zone.shape_data : [];
+  return Array.isArray(zone.shape_data)
+    ? zone.shape_data.map((point) => ({ x: Number(point.x), y: Number(point.y) })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    : [];
 }
 
-function getZoneCentroid(zone: ApiZone) {
-  const points = getZonePoints(zone);
-  if (!points.length) return { x: MAP_VIEW_W / 2, y: MAP_VIEW_H / 2 };
+function getDisplayZonePoints(zone: ApiZone) {
+  return getZonePoints(zone);
+}
+
+function getZoneCentroid(zone: ApiZone, viewHeight: number) {
+  const points = getDisplayZonePoints(zone);
+  if (!points.length) return { x: MAP_VIEW_W / 2, y: viewHeight / 2 };
   return {
     x: points.reduce((sum, point) => sum + Number(point.x), 0) / points.length,
     y: points.reduce((sum, point) => sum + Number(point.y), 0) / points.length,
@@ -246,7 +319,7 @@ function getZoneCentroid(zone: ApiZone) {
 }
 
 function getZoneBounds(zone: ApiZone) {
-  const points = getZonePoints(zone);
+  const points = getDisplayZonePoints(zone);
   if (!points.length) return null;
   const xs = points.map((point) => Number(point.x));
   const ys = points.map((point) => Number(point.y));
@@ -265,12 +338,77 @@ function getZoneBounds(zone: ApiZone) {
 function getClipPath(zone: ApiZone) {
   const bounds = getZoneBounds(zone);
   if (!bounds) return undefined;
-  const points = getZonePoints(zone).map((point) => {
+  const points = getDisplayZonePoints(zone).map((point) => {
     const x = ((Number(point.x) - bounds.minX) / bounds.width) * 100;
     const y = ((Number(point.y) - bounds.minY) / bounds.height) * 100;
     return `${x.toFixed(1)}% ${y.toFixed(1)}%`;
   });
   return `polygon(${points.join(", ")})`;
+}
+
+function getZoneLabel(zoneName: string) {
+  return zoneName.length > 14 ? `${zoneName.slice(0, 12)}...` : zoneName;
+}
+
+function getFallbackMapViewHeight(zones: ApiZone[]) {
+  const maxY = Math.max(0, ...zones.flatMap(getZonePoints).map((point) => point.y));
+  return maxY ? Math.ceil(maxY + 44) : DEFAULT_MAP_VIEW_H;
+}
+
+function parseSvgViewHeight(svgText: string) {
+  const viewBox = svgText.match(/viewBox=["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)\s*["']/i);
+  if (viewBox) {
+    const viewWidth = Number(viewBox[1]);
+    const viewHeight = Number(viewBox[2]);
+    if (viewWidth > 0 && viewHeight > 0) return Math.round((MAP_VIEW_W * viewHeight) / viewWidth);
+  }
+
+  const width = svgText.match(/\bwidth=["']([\d.]+)(?:px)?["']/i);
+  const height = svgText.match(/\bheight=["']([\d.]+)(?:px)?["']/i);
+  const imageWidth = width ? Number(width[1]) : 0;
+  const imageHeight = height ? Number(height[1]) : 0;
+  return imageWidth > 0 && imageHeight > 0 ? Math.round((MAP_VIEW_W * imageHeight) / imageWidth) : null;
+}
+
+function useMapViewHeight(mapImageUrl: string | undefined, zones: ApiZone[]) {
+  const fallbackHeight = useMemo(() => getFallbackMapViewHeight(zones), [zones]);
+  const [viewHeight, setViewHeight] = useState(fallbackHeight);
+
+  useEffect(() => {
+    setViewHeight(fallbackHeight);
+  }, [fallbackHeight]);
+
+  useEffect(() => {
+    if (!mapImageUrl) return;
+
+    let cancelled = false;
+    const applyHeight = (nextHeight: number | null | undefined) => {
+      if (!cancelled && nextHeight && Number.isFinite(nextHeight) && nextHeight > 0) {
+        setViewHeight(nextHeight);
+      }
+    };
+
+    if (mapImageUrl.toLowerCase().split("?")[0].endsWith(".svg")) {
+      fetch(mapImageUrl)
+        .then((response) => response.ok ? response.text() : null)
+        .then((svgText) => applyHeight(svgText ? parseSvgViewHeight(svgText) : null))
+        .catch(() => {
+          Image.getSize(mapImageUrl, (imageWidth, imageHeight) => {
+            applyHeight(Math.round((MAP_VIEW_W * imageHeight) / imageWidth));
+          });
+        });
+    } else {
+      Image.getSize(mapImageUrl, (imageWidth, imageHeight) => {
+        applyHeight(Math.round((MAP_VIEW_W * imageHeight) / imageWidth));
+      });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fallbackHeight, mapImageUrl]);
+
+  return viewHeight;
 }
 
 function ZoneMap({
@@ -279,6 +417,7 @@ function ZoneMap({
   mapImageUrl,
   width,
   height,
+  viewHeight,
   onSelectZone,
 }: {
   zones: ApiZone[];
@@ -286,14 +425,111 @@ function ZoneMap({
   mapImageUrl?: string;
   width: number;
   height: number;
+  viewHeight: number;
   onSelectZone: (zone: ApiZone) => void;
 }) {
   const theme = useTheme();
 
+  if (Platform.OS === "web") {
+    return createElement(
+      "div",
+      {
+        style: {
+          alignSelf: "center",
+          width,
+          height,
+          borderRadius: 18,
+          border: `1px solid ${theme.colors.line}`,
+          backgroundColor: theme.colors.panelSoft,
+          overflow: "hidden",
+        },
+      },
+      createElement(
+        "svg",
+        {
+          viewBox: `0 0 ${MAP_VIEW_W} ${viewHeight}`,
+          style: {
+            display: "block",
+            width: "100%",
+            height: "100%",
+            cursor: "pointer",
+          },
+          preserveAspectRatio: "xMidYMid meet",
+        },
+        mapImageUrl
+          ? createElement("image", {
+              href: mapImageUrl,
+              x: 0,
+              y: 0,
+              width: MAP_VIEW_W,
+              height: viewHeight,
+              preserveAspectRatio: "xMidYMid meet",
+            })
+          : createElement(
+              "text",
+              {
+                x: MAP_VIEW_W / 2,
+                y: viewHeight / 2,
+                textAnchor: "middle",
+                fontSize: 16,
+                fontWeight: 700,
+                fill: theme.colors.muted,
+              },
+              "Stadium map unavailable",
+            ),
+        ...zones.map((zone, index) => {
+          const points = getDisplayZonePoints(zone);
+          if (!points.length) return null;
+          const active = zone.id === selectedZoneId;
+          const color = zoneColor(index);
+          const center = getZoneCentroid(zone, viewHeight);
+
+          return createElement(
+            "g",
+            {
+              key: zone.id,
+              onClick: () => onSelectZone(zone),
+              style: { cursor: "pointer" },
+            },
+            createElement("polygon", {
+              points: points.map((point) => `${point.x},${point.y}`).join(" "),
+              fill: color,
+              fillOpacity: active ? 0.75 : 0.35,
+              stroke: active ? "#FFFFFF" : color,
+              strokeWidth: active ? 2.5 : 1,
+              strokeOpacity: active ? 0.9 : 0.5,
+            }),
+            createElement(
+              "text",
+              {
+                x: center.x,
+                y: center.y + 4,
+                textAnchor: "middle",
+                fontSize: 13,
+                fontWeight: 700,
+                fill: "#FFFFFF",
+                stroke: "rgba(0,0,0,0.65)",
+                strokeWidth: 4,
+                paintOrder: "stroke",
+                style: { pointerEvents: "none", userSelect: "none" },
+              },
+              getZoneLabel(zone.name),
+            ),
+            createElement("title", null, zone.name),
+          );
+        }),
+      ),
+    );
+  }
+
   return (
     <View style={[local.mapFrame, { width, height, backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
       {mapImageUrl ? (
-        <Image source={{ uri: mapImageUrl }} style={local.mapImage} resizeMode="contain" />
+        <Image
+          source={{ uri: mapImageUrl }}
+          style={local.mapImage}
+          resizeMode="contain"
+        />
       ) : (
         <View style={local.mapFallback}><Text style={styles.muted}>Stadium map unavailable</Text></View>
       )}
@@ -306,14 +542,14 @@ function ZoneMap({
             key={`shape-${zone.id}`}
             onPress={() => onSelectZone(zone)}
             style={[
-              local.zoneShape,
-              {
-                left: (bounds.minX / MAP_VIEW_W) * width,
-                top: (bounds.minY / MAP_VIEW_H) * height,
-                width: (bounds.width / MAP_VIEW_W) * width,
-                height: (bounds.height / MAP_VIEW_H) * height,
-                backgroundColor: zoneColor(index),
-                opacity: active ? 0.5 : 0.28,
+                local.zoneShape,
+                {
+                  left: (bounds.minX / MAP_VIEW_W) * width,
+                top: (bounds.minY / viewHeight) * height,
+                  width: (bounds.width / MAP_VIEW_W) * width,
+                height: (bounds.height / viewHeight) * height,
+                  backgroundColor: zoneColor(index),
+                  opacity: active ? 0.5 : 0.28,
                 borderColor: zoneColor(index),
                 ...(getClipPath(zone) ? ({ clipPath: getClipPath(zone) } as any) : {}),
               },
@@ -322,12 +558,12 @@ function ZoneMap({
         );
       })}
       {zones.map((zone, index) => {
-        const center = getZoneCentroid(zone);
+        const center = getZoneCentroid(zone, viewHeight);
         const compact = width < 420;
         const markerWidth = compact ? 56 : 74;
         const markerHeight = compact ? 22 : 24;
         const left = Math.max(6, Math.min(width - markerWidth - 6, (center.x / MAP_VIEW_W) * width - markerWidth / 2));
-        const top = Math.max(6, Math.min(height - markerHeight - 6, (center.y / MAP_VIEW_H) * height - markerHeight / 2));
+        const top = Math.max(6, Math.min(height - markerHeight - 6, (center.y / viewHeight) * height - markerHeight / 2));
         const active = zone.id === selectedZoneId;
         return (
           <Pressable
@@ -342,7 +578,7 @@ function ZoneMap({
                 minHeight: markerHeight,
                 paddingHorizontal: compact ? 5 : 6,
                 borderColor: zoneColor(index),
-                backgroundColor: active ? zoneColor(index) : "rgba(255,255,255,0.92)",
+                backgroundColor: active ? zoneColor(index) : theme.colors.panel,
               },
             ]}
           >
@@ -350,7 +586,7 @@ function ZoneMap({
             <Text
               numberOfLines={1}
               ellipsizeMode="tail"
-              style={[local.zoneMarkerText, compact && local.zoneMarkerTextCompact, active && local.zoneMarkerTextActive]}
+              style={[local.zoneMarkerText, { color: theme.colors.ink }, compact && local.zoneMarkerTextCompact, active && local.zoneMarkerTextActive]}
             >
               {compactZoneName(zone.name)}
             </Text>
@@ -475,6 +711,16 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 
 const local = {
   shell: { flex: 1, alignSelf: "center" as const },
+  matchTeams: { width: "100%" as const, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 0, paddingVertical: 6 },
+  matchTeamsCompact: { alignSelf: "center" as const },
+  matchTeam: { flex: 1, minWidth: 0, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 12 },
+  matchTeamAway: { flexDirection: "row-reverse" as const },
+  matchTeamCompact: { flex: 1 },
+  matchTeamLogo: { width: 64, height: 64, borderRadius: 16, borderWidth: 1, alignItems: "center" as const, justifyContent: "center" as const, overflow: "hidden" as const },
+  matchTeamImage: { width: 50, height: 50 },
+  matchTeamName: { flexShrink: 1, fontSize: 17, lineHeight: 22, fontWeight: "900" as const, textAlign: "center" as const },
+  matchVersus: { width: 36, height: 36, borderRadius: 18, alignItems: "center" as const, justifyContent: "center" as const },
+  matchVersusText: { fontSize: 10, fontWeight: "900" as const },
   countText: { color: colors.muted, fontSize: 12, fontWeight: "900" as const, textTransform: "uppercase" as const },
   mapFrame: {
     alignSelf: "center" as const,
@@ -518,9 +764,7 @@ const local = {
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  zoneChipActive: { borderColor: colors.primary, backgroundColor: "rgba(200,16,46,0.08)" },
   zoneChipText: { color: colors.ink, fontSize: 12, fontWeight: "800" as const },
-  zoneChipTextActive: { color: colors.primary },
   seatMapFrame: {
     alignSelf: "center" as const,
     borderRadius: 18,

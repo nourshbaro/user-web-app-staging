@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 
 const TOKEN_KEY = "lfa_portal_token";
 type UnauthenticatedListener = () => void;
+type ApiRequestInit = RequestInit & { skipUnauthenticatedNotify?: boolean };
 const unauthenticatedListeners = new Set<UnauthenticatedListener>();
 
 export class ApiError extends Error {
@@ -40,29 +41,30 @@ export function notifyUnauthenticated() {
   unauthenticatedListeners.forEach((listener) => listener());
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const token = await getToken();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Number.isFinite(config.timeoutMs) ? config.timeoutMs : 15000);
   const url = Platform.OS === "web" ? `/api${path}` : `${config.apiBaseUrl}${path}`;
+  const { skipUnauthenticatedNotify, ...requestInit } = init;
 
   try {
     const response = await fetch(url, {
-      ...init,
+      ...requestInit,
       signal: controller.signal,
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         ...(Platform.OS !== "web" && config.apiPassword ? { password: config.apiPassword } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(init.headers ?? {}),
+        ...(requestInit.headers ?? {}),
       },
     });
 
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
+      if (!skipUnauthenticatedNotify && (response.status === 401 || response.status === 403)) {
         await clearToken();
         notifyUnauthenticated();
       }

@@ -26,6 +26,9 @@ export const config = {
   storageBaseUrl: resolveStorageBase(),
   apiPassword: process.env.EXPO_PUBLIC_LFA_API_PASSWORD ?? "",
   timeoutMs: Number(process.env.EXPO_PUBLIC_LFA_API_TIMEOUT_MS ?? 15000),
+  cybersourceUnifiedCheckoutUrl:
+    trimEndSlash(process.env.EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL) ??
+    "https://apitest.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
 };
 
 export function storageUrl(path?: string | null) {

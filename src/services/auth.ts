@@ -1,10 +1,11 @@
 import { Platform } from "react-native";
 import { config } from "@/lib/config";
-import { apiRequest, clearToken, getToken, notifyUnauthenticated, setToken, unwrapData } from "@/services/api";
+import { ApiError, apiRequest, clearToken, getToken, notifyUnauthenticated, setToken, unwrapData } from "@/services/api";
 import { storage } from "@/lib/storage";
 import type { User } from "@/types";
 
 const USER_KEY = "lfa_portal_user";
+export type OtpTarget = string | { userId?: string | null; email?: string | null };
 
 function readToken(payload: any): string | null {
   return payload?.token ?? payload?.access_token ?? payload?.data?.token ?? payload?.data?.access_token ?? null;
@@ -12,6 +13,14 @@ function readToken(payload: any): string | null {
 
 function readUser(payload: any): User | null {
   return payload?.user ?? payload?.data?.user ?? payload?.customer ?? null;
+}
+
+function otpTargetBody(target: OtpTarget) {
+  if (typeof target === "string") return { user_id: target };
+  return {
+    ...(target.userId ? { user_id: target.userId } : {}),
+    ...(target.email ? { email: target.email } : {}),
+  };
 }
 
 export const authService = {
@@ -29,9 +38,22 @@ export const authService = {
   },
 
   async login(email: string, password: string) {
-    const payload = await apiRequest("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    const payload = await apiRequest("/auth/login", { method: "POST", body: JSON.stringify({ email, password }), skipUnauthenticatedNotify: true });
     await this.saveSession(payload);
     return payload;
+  },
+
+  async checkEmailVerification(email: string) {
+    const endpoints = ["/auth/check-email-verification", "/auth/check-email", "/auth/email-verification-status"];
+    for (const endpoint of endpoints) {
+      try {
+        return await apiRequest(endpoint, { method: "POST", body: JSON.stringify({ email }), skipUnauthenticatedNotify: true });
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 404 || err.status === 405)) continue;
+        throw err;
+      }
+    }
+    return null;
   },
 
   async register(name: string, email: string, password: string, passwordConfirmation: string) {
@@ -43,19 +65,20 @@ export const authService = {
         password,
         password_confirmation: passwordConfirmation,
       }),
+      skipUnauthenticatedNotify: true,
     });
     await this.saveSession(payload);
     return payload;
   },
 
-  async verifyOtp(userId: string, code: string) {
-    const payload = await apiRequest("/auth/verify-otp", { method: "POST", body: JSON.stringify({ user_id: userId, code }) });
+  async verifyOtp(target: OtpTarget, code: string) {
+    const payload = await apiRequest("/auth/verify-otp", { method: "POST", body: JSON.stringify({ ...otpTargetBody(target), code }), skipUnauthenticatedNotify: true });
     await this.saveSession(payload);
     return payload;
   },
 
-  async resendOtp(userId: string) {
-    return apiRequest("/auth/resend-otp", { method: "POST", body: JSON.stringify({ user_id: userId }) });
+  async resendOtp(target: OtpTarget) {
+    return apiRequest("/auth/resend-otp", { method: "POST", body: JSON.stringify(otpTargetBody(target)), skipUnauthenticatedNotify: true });
   },
 
   async logout() {

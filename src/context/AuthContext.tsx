@@ -21,10 +21,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [isReady, setReady] = useState(false);
 
   const refreshAuth = async () => {
-    const [storedToken, storedUser] = await Promise.all([getToken(), authService.currentUser()]);
-    setTokenState(storedToken);
-    setUser(storedUser);
-    setReady(true);
+    try {
+      const [storedToken, storedUser] = await Promise.all([getToken(), authService.currentUser()]);
+      setTokenState(storedToken);
+      setUser(storedUser);
+    } finally {
+      setReady(true);
+    }
   };
 
   useEffect(() => {

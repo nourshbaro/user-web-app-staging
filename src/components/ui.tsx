@@ -1,11 +1,14 @@
+import { storage } from "@/lib/storage";
+import { router, usePathname } from "expo-router";
+import { SymbolView } from "expo-symbols";
 import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TextInputProps, useWindowDimensions, View } from "react-native";
-import { storage } from "@/lib/storage";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const THEME_KEY = "lfa_theme";
 
 const lightColors = {
-  bg: "#F6F6F2",
+  bg: "#F5F6F8",
   bgAlt: "#EEF1F6",
   panel: "#FFFFFF",
   panelSoft: "#F8FAFC",
@@ -108,7 +111,13 @@ export function useTheme() {
 
 export function Screen({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
-  return <View style={theme.styles.screen}><View style={theme.styles.bgAccentRed} /><View style={theme.styles.bgAccentGreen} />{children}</View>;
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[theme.styles.screen, { paddingTop: Math.max(insets.top, 14), paddingBottom: Math.max(insets.bottom, 12) + 74 }]}>
+      {children}
+      <BottomNavigation bottomInset={insets.bottom} />
+    </View>
+  );
 }
 
 export function Card({ children }: { children: React.ReactNode }) {
@@ -160,6 +169,48 @@ export function Loading() {
   return <View style={theme.styles.loading}><ActivityIndicator color={theme.colors.primary} /></View>;
 }
 
+function BottomNavigation({ bottomInset }: { bottomInset: number }) {
+  const pathname = usePathname();
+  const theme = useTheme();
+
+  if (pathname === "/auth" || pathname === "/cart" || pathname === "/checkout") return null;
+
+  const tabs = [
+    { label: "Home", href: "/", icon: { ios: "house", android: "home", web: "home" } },
+    { label: "Tournament", href: "/tournament", icon: { ios: "trophy", android: "emoji_events", web: "emoji_events" } },
+    { label: "Matches", href: "/matches", icon: { ios: "sportscourt", android: "stadium", web: "stadium" } },
+    { label: "Profile", href: "/profile", icon: { ios: "person", android: "person_outline", web: "person_outline" } },
+  ];
+
+  return (
+    <>
+      <View style={[theme.styles.bottomNav, { bottom: Math.max(bottomInset, 12), backgroundColor: theme.colors.bg, borderTopColor: theme.colors.line }]}> 
+        {tabs.map((tab) => {
+          const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
+          return (
+            <Pressable
+              key={tab.href}
+              onPress={() => router.push(tab.href as any)}
+              style={[theme.styles.bottomNavItem, active && theme.styles.bottomNavItemActive]}
+              accessibilityLabel={tab.label}
+            >
+              <View style={theme.styles.bottomNavIconWrap}>
+                <SymbolView
+                  name={tab.icon as any}
+                  size={20}
+                  tintColor={active ? theme.colors.primary : theme.colors.muted}
+                  fallback={<Text style={[theme.styles.bottomNavFallback, { color: active ? theme.colors.primary : theme.colors.muted }]}>{tab.label.slice(0, 1)}</Text>}
+                />
+              </View>
+              <Text style={[theme.styles.bottomNavText, { color: active ? theme.colors.primary : theme.colors.muted }]}>{tab.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </>
+  );
+}
+
 export function useResponsive() {
   const { width } = useWindowDimensions();
   const availableWidth = Math.max(width - 32, 0);
@@ -175,21 +226,19 @@ export function useResponsive() {
 function createStyles(palette: typeof lightColors) {
   const isDark = palette.bg === darkColors.bg;
   return StyleSheet.create({
-  screen: { flex: 1, backgroundColor: palette.bg, padding: 16, gap: 12, overflow: "hidden", alignItems: "center" },
-  bgAccentRed: { position: "absolute", top: -80, left: -80, width: 220, height: 220, borderRadius: 110, backgroundColor: isDark ? "rgba(200,16,46,0.18)" : "rgba(200,16,46,0.08)" },
-  bgAccentGreen: { position: "absolute", top: -40, right: -90, width: 190, height: 190, borderRadius: 95, backgroundColor: isDark ? "rgba(34,197,94,0.12)" : "rgba(0,122,61,0.07)" },
+  screen: { flex: 1, backgroundColor: palette.bg, padding: 14, paddingBottom: 86, gap: 12, overflow: "hidden", alignItems: "center" },
   card: {
-    backgroundColor: isDark ? "rgba(23,32,51,0.96)" : "rgba(255,255,255,0.96)",
-    borderRadius: 20,
+    backgroundColor: isDark ? "rgba(23,32,51,0.92)" : "rgba(255,255,255,0.82)",
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: palette.line,
+    borderColor: isDark ? palette.line : "rgba(219,224,232,0.78)",
     padding: 16,
     gap: 10,
     shadowColor: "#000000",
-    shadowOpacity: isDark ? 0.28 : 0.08,
+    shadowOpacity: isDark ? 0.34 : 0.12,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
+    elevation: 5,
   },
   title: { color: palette.ink, fontSize: 24, fontWeight: "900", lineHeight: 30 },
   h2: { color: palette.ink, fontSize: 18, fontWeight: "800" },
@@ -214,6 +263,93 @@ function createStyles(palette: typeof lightColors) {
   sectionLabel: { color: palette.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.8 },
   badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: "rgba(200,16,46,0.09)" },
   badgeText: { color: palette.primary, fontSize: 11, fontWeight: "800", textTransform: "uppercase" },
+  bottomNav: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    bottom: 12,
+    height: 62,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    shadowColor: "#000000",
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  bottomNavItem: {
+    flex: 1,
+    height: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    borderRadius: 14,
+  },
+  bottomNavIconWrap: {
+    width: 42,
+    height: 26,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  bottomNavBadge: {
+    position: "absolute",
+    top: -4,
+    right: 4,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bottomNavBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 8,
+    lineHeight: 9,
+    fontWeight: "900",
+  },
+  bottomNavItemActive: {
+    backgroundColor: isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.08)",
+  },
+  bottomNavText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+  },
+  bottomNavFallback: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  reservationPill: {
+    position: "absolute",
+    right: 22,
+    bottom: 82,
+    minHeight: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    shadowColor: "#000000",
+    shadowOpacity: isDark ? 0.24 : 0.09,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+  reservationLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  reservationTime: {
+    fontSize: 13,
+    lineHeight: 16,
+    fontWeight: "900",
+  },
 });
 }
 

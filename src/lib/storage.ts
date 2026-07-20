@@ -13,7 +13,8 @@ const webStorage = () => {
 export const storage = {
   async get(key: string) {
     const local = webStorage();
-    return local ? local.getItem(key) : memoryStore[key] ?? null;
+    if (local) return local.getItem(key);
+    return memoryStore[key] ?? null;
   },
   async set(key: string, value: string) {
     const local = webStorage();

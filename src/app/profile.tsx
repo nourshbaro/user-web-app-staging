@@ -1,55 +1,100 @@
 import { Stack, router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, type DimensionValue } from "react-native";
-import { AppHeader } from "@/components/AppHeader";
-import { Button, Empty, Loading, Screen, colors, useResponsive, useTheme } from "@/components/ui";
+import { ActivityIndicator, Image, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type DimensionValue } from "react-native";
+import { MainHeader } from "@/components/MainHeader";
+import { Button, Empty, Input, Loading, Screen, colors, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
+import { useToast } from "@/context/ToastContext";
 import { formatMoney } from "@/lib/format";
+import { ApiError } from "@/services/api";
+import { authService, type OtpTarget } from "@/services/auth";
 import { profileService } from "@/services/auth";
 import type { Order } from "@/types";
 
 type PortalItem = Record<string, any>;
 type DetailState = { type: "order" | "ticket"; title: string; item: PortalItem; pdfId?: string } | null;
+type GuestAuthMode = "login" | "register" | "otp";
+let profileCache: { orders: Order[]; tickets: PortalItem[] } | null = null;
+
+const readString = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
+
+const getUserId = (payload: unknown): string | null => {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.user_id === "number" || typeof payload.user_id === "string") return String(payload.user_id);
+  if (isRecord(payload.user) && (typeof payload.user.id === "number" || typeof payload.user.id === "string")) return String(payload.user.id);
+  if (isRecord(payload.data)) return getUserId(payload.data);
+  return null;
+};
+
+const hasSessionToken = (payload: unknown): boolean => {
+  if (!isRecord(payload)) return false;
+  if (readString(payload.token) || readString(payload.access_token)) return true;
+  return hasSessionToken(payload.data);
+};
+
+const getVerificationStatus = (payload: unknown): boolean | null => {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.email_verified === "boolean") return payload.email_verified;
+  if (typeof payload.verified === "boolean") return payload.verified;
+  if (typeof payload.is_verified === "boolean") return payload.is_verified;
+  if (typeof payload.email_verified_at === "string" && payload.email_verified_at.trim()) return true;
+  if (payload.email_verified_at === null) return false;
+  return getVerificationStatus(payload.user) ?? getVerificationStatus(payload.data);
+};
+
+const getMessage = (payload: unknown, fallback: string) => {
+  if (!isRecord(payload)) return fallback;
+  return readString(payload.message) ?? readString(payload.error) ?? fallback;
+};
 
 export default function ProfileScreen() {
   const auth = useAuth();
+  const toast = useToast();
   const responsive = useResponsive();
   const theme = useTheme();
-  const profileColumns = responsive.width >= 760 ? 2 : 1;
-  const profileGap = 14;
-  const panelWidth: DimensionValue = profileColumns === 1 ? "100%" : (responsive.contentWidth - profileGap * (profileColumns - 1)) / profileColumns;
-  const heroWidth: DimensionValue = "100%";
+  const isWide = responsive.width >= 760;
+  const panelWidth: DimensionValue = isWide ? (responsive.contentWidth - 14) / 2 : "100%";
   const [orders, setOrders] = useState<Order[]>([]);
   const [tickets, setTickets] = useState<PortalItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [detail, setDetail] = useState<DetailState>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeList, setActiveList] = useState<"orders" | "tickets">("orders");
 
-  const load = async () => {
+  const load = async (force = false) => {
     if (!auth.isAuthenticated) return;
+    if (!force && profileCache) {
+      setOrders(profileCache.orders);
+      setTickets(profileCache.tickets);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const [nextOrders, nextTickets] = await Promise.all([profileService.orders(), profileService.tickets()]);
       setOrders(Array.isArray(nextOrders) ? nextOrders : []);
       setTickets(Array.isArray(nextTickets) ? nextTickets : []);
+      profileCache = { orders: Array.isArray(nextOrders) ? nextOrders : [], tickets: Array.isArray(nextTickets) ? nextTickets : [] };
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load profile.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useFocusEffect(useCallback(() => {
-    void auth.refreshAuth().then(load);
+    void auth.refreshAuth().then(() => load());
   }, [auth.isAuthenticated]));
 
   const logout = async () => {
     setDetail(null);
     setOrders([]);
     setTickets([]);
+    profileCache = null;
     await auth.logout();
     router.replace("/");
   };
@@ -120,18 +165,22 @@ export default function ProfileScreen() {
     <Screen>
       <Stack.Screen options={{ title: "Profile" }} />
       <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <AppHeader title="Profile" subtitle="Orders and tickets" />
-        <ScrollView style={local.scroll} contentContainerStyle={local.content} showsVerticalScrollIndicator={false}>
+        <MainHeader />
+        <ScrollView
+          style={local.scroll}
+          contentContainerStyle={local.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={auth.isAuthenticated ? <RefreshControl refreshing={refreshing} tintColor={theme.colors.primary} onRefresh={() => { setRefreshing(true); void load(true); }} /> : undefined}
+        >
 
         {!auth.isAuthenticated ? (
           <View style={local.guestWrap}>
-            <Empty title="Login required" detail="Login to see your orders, tickets, and saved account details." />
-            <Button title="Login or register" onPress={() => router.push("/auth")} />
+            <GuestAuthForm onSignedIn={() => { toast.showToast({ variant: "success", title: "Signed in", message: "Welcome back." }); }} />
           </View>
         ) : (
           <>
             <View style={local.profileGrid}>
-              <View style={[local.profilePanel, { width: heroWidth }]}>
+              <View style={[local.profilePanel, { width: "100%" }]}>
                 <View style={[local.heroCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
                   <View style={local.heroTop}>
                     <View style={local.identity}>
@@ -161,15 +210,15 @@ export default function ProfileScreen() {
                   <Text style={[local.email, { color: theme.colors.secondary }]} numberOfLines={1}>{auth.user?.email}</Text>
 
                   <View style={[local.statGrid, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
-                    <View style={local.statBox}>
+                    <Pressable onPress={() => setActiveList("orders")} style={[local.statBox, !isWide && activeList === "orders" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
                       <Text style={[local.statValue, { color: theme.colors.ink }]}>{orders.length}</Text>
-                      <Text style={[local.statLabel, { color: theme.colors.muted }]}>Orders</Text>
-                    </View>
+                      <Text style={[local.statLabel, { color: !isWide && activeList === "orders" ? theme.colors.primary : theme.colors.muted }]}>Orders</Text>
+                    </Pressable>
                     <View style={[local.statDivider, { backgroundColor: theme.colors.line }]} />
-                    <View style={local.statBox}>
+                    <Pressable onPress={() => setActiveList("tickets")} style={[local.statBox, !isWide && activeList === "tickets" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
                       <Text style={[local.statValue, { color: theme.colors.ink }]}>{tickets.length}</Text>
-                      <Text style={[local.statLabel, { color: theme.colors.muted }]}>Tickets</Text>
-                    </View>
+                      <Text style={[local.statLabel, { color: !isWide && activeList === "tickets" ? theme.colors.primary : theme.colors.muted }]}>Tickets</Text>
+                    </Pressable>
                   </View>
                 </View>
               </View>
@@ -178,6 +227,7 @@ export default function ProfileScreen() {
               {detailLoading ? <Text style={[local.loadingText, local.fullWidth]}>Loading details...</Text> : null}
               {error ? <View style={local.fullWidth}><Empty title="Profile error" detail={error} /></View> : null}
 
+              {isWide || activeList === "orders" ? (
               <View style={[local.profilePanel, { width: panelWidth }]}>
                 <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
                   <View style={local.sectionHeader}>
@@ -201,7 +251,9 @@ export default function ProfileScreen() {
                   )) : <Text style={[local.emptyText, { borderTopColor: theme.colors.line, color: theme.colors.muted }]}>No orders yet.</Text>}
                 </View>
               </View>
+              ) : null}
 
+              {isWide || activeList === "tickets" ? (
               <View style={[local.profilePanel, { width: panelWidth }]}>
                 <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
                   <View style={local.sectionHeader}>
@@ -225,14 +277,187 @@ export default function ProfileScreen() {
                   )) : <Text style={[local.emptyText, { borderTopColor: theme.colors.line, color: theme.colors.muted }]}>No tickets yet.</Text>}
                 </View>
               </View>
+              ) : null}
             </View>
           </>
         )}
+        <InfoSections />
         </ScrollView>
       </View>
 
       <DetailModal detail={detail} downloadingPdf={downloadingPdf} onClose={() => setDetail(null)} onDownloadPdf={downloadPdf} />
     </Screen>
+  );
+}
+
+function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
+  const auth = useAuth();
+  const toast = useToast();
+  const theme = useTheme();
+  const [mode, setMode] = useState<GuestAuthMode>("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [otp, setOtp] = useState("");
+  const [pendingOtpTarget, setPendingOtpTarget] = useState<OtpTarget | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  const showOtp = (payload: unknown, fallback: string, fallbackEmail = email.trim()) => {
+    const userId = getUserId(payload);
+    const nextMessage = getMessage(payload, fallback);
+    setPendingOtpTarget({ userId, email: fallbackEmail || null });
+    setOtp("");
+    setMode("otp");
+    setMessage(nextMessage);
+    toast.showToast({ variant: "info", title: "OTP required", message: nextMessage });
+  };
+
+  const submit = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      if (mode === "otp") {
+        if (!pendingOtpTarget || otp.length !== 6) {
+          const nextMessage = "Enter the 6-digit OTP sent to your email.";
+          setMessage(nextMessage);
+          toast.showToast({ variant: "warning", title: "OTP incomplete", message: nextMessage });
+          return;
+        }
+        await authService.verifyOtp(pendingOtpTarget, otp);
+        await auth.refreshAuth();
+        onSignedIn();
+        return;
+      }
+
+      if (mode === "register") {
+        if (password !== passwordConfirmation) {
+          setMessage("Password confirmation does not match.");
+          return;
+        }
+        const payload = await authService.register(name.trim(), email.trim(), password, passwordConfirmation);
+        showOtp(payload, "Account created. Enter the 6-digit OTP sent to your email.");
+        return;
+      }
+
+      const trimmedEmail = email.trim();
+      const verification = await authService.checkEmailVerification(trimmedEmail);
+      if (verification && getVerificationStatus(verification) === false) {
+        showOtp(verification, "Please verify your email. A new code has been sent.", trimmedEmail);
+        return;
+      }
+
+      const payload = await authService.login(trimmedEmail, password);
+      const userId = getUserId(payload);
+      if (userId && !hasSessionToken(payload)) {
+        showOtp(payload, "Please verify your email. A new code has been sent.", trimmedEmail);
+        return;
+      }
+      await auth.refreshAuth();
+      onSignedIn();
+    } catch (err) {
+      if (err instanceof ApiError && mode === "login" && getUserId(err.body)) {
+        showOtp(err.body, "Please verify your email. A new code has been sent.", email.trim());
+        return;
+      }
+      const nextMessage = err instanceof ApiError || err instanceof Error ? err.message : "Please try again.";
+      setMessage(nextMessage);
+      toast.showToast({ variant: "error", title: "Unable to continue", message: nextMessage });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resendOtp = async () => {
+    if (!pendingOtpTarget) return;
+    setResending(true);
+    setMessage(null);
+    try {
+      const payload = await authService.resendOtp(pendingOtpTarget);
+      const nextMessage = getMessage(payload, "A new OTP was sent to your email.");
+      setMessage(nextMessage);
+      toast.showToast({ variant: "success", title: "OTP sent", message: nextMessage });
+    } catch (err) {
+      const nextMessage = err instanceof Error ? err.message : "Unable to resend OTP.";
+      setMessage(nextMessage);
+      toast.showToast({ variant: "error", title: "Could not resend OTP", message: nextMessage });
+    } finally {
+      setResending(false);
+    }
+  };
+
+  const switchMode = (nextMode: "login" | "register") => {
+    setMode(nextMode);
+    setMessage(null);
+    setOtp("");
+    setPendingOtpTarget(null);
+  };
+
+  return (
+    <View style={[local.authPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+      {mode !== "otp" ? (
+      <View style={[local.authTabs, { backgroundColor: theme.colors.panelSoft }]}>
+        <Pressable onPress={() => switchMode("login")} style={[local.authTab, mode === "login" && { backgroundColor: theme.colors.primary }]}>
+          <Text style={[local.authTabText, { color: mode === "login" ? "#FFFFFF" : theme.colors.secondary }]}>Login</Text>
+        </Pressable>
+        <Pressable onPress={() => switchMode("register")} style={[local.authTab, mode === "register" && { backgroundColor: theme.colors.primary }]}>
+          <Text style={[local.authTabText, { color: mode === "register" ? "#FFFFFF" : theme.colors.secondary }]}>Register</Text>
+        </Pressable>
+      </View>
+      ) : null}
+      {mode === "register" ? <Input label="Full name" value={name} onChangeText={setName} autoCapitalize="words" /> : null}
+      {mode === "otp" ? (
+        <Input
+          label="6-digit OTP"
+          value={otp}
+          onChangeText={(value) => setOtp(value.replace(/\D/g, "").slice(0, 6))}
+          keyboardType="number-pad"
+          maxLength={6}
+          style={local.otpInput}
+        />
+      ) : (
+        <>
+          <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+          <Input label="Password" value={password} onChangeText={setPassword} secureTextEntry />
+          {mode === "register" ? <Input label="Confirm password" value={passwordConfirmation} onChangeText={setPasswordConfirmation} secureTextEntry /> : null}
+        </>
+      )}
+      {message ? <Text style={[local.message, { color: theme.colors.secondary }]}>{message}</Text> : null}
+      <Button
+        title={loading ? "Please wait..." : mode === "login" ? "Login" : mode === "register" ? "Register" : "Confirm email"}
+        disabled={
+          loading ||
+          (mode === "login" && (!email || !password)) ||
+          (mode === "register" && (!name || !email || !password || !passwordConfirmation)) ||
+          (mode === "otp" && (!pendingOtpTarget || otp.length !== 6))
+        }
+        onPress={submit}
+      />
+      {mode === "otp" ? (
+        <>
+          <Button title={resending ? "Sending..." : "Resend OTP"} variant="secondary" disabled={resending || !pendingOtpTarget} onPress={resendOtp} />
+          <Text style={[local.footerText, { color: theme.colors.secondary }]}>
+            Already confirmed? <Text style={local.footerLink} onPress={() => switchMode("login")}>Login</Text>
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function InfoSections() {
+  const theme = useTheme();
+
+  return (
+    <View style={local.infoSections}>
+      {["Privacy", "Terms of Use", "FAQ"].map((title) => (
+        <View key={title} style={[local.infoRow, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+          <Text style={[local.infoTitle, { color: theme.colors.ink }]}>{title}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -461,6 +686,76 @@ const local = StyleSheet.create({
   guestWrap: {
     gap: 12,
   },
+  authPanel: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.panel,
+    padding: 16,
+    gap: 12,
+  },
+  authTabs: {
+    flexDirection: "row",
+    borderRadius: 8,
+    backgroundColor: colors.panelSoft,
+    padding: 4,
+    gap: 4,
+  },
+  authTab: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  authTabActive: {
+    backgroundColor: colors.primary,
+  },
+  authTabText: {
+    color: colors.secondary,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  authTabTextActive: {
+    color: "#FFFFFF",
+  },
+  message: {
+    color: colors.secondary,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  otpInput: {
+    textAlign: "center",
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: 8,
+  },
+  footerText: {
+    color: colors.secondary,
+    textAlign: "center",
+    fontSize: 14,
+  },
+  footerLink: {
+    color: colors.primary,
+    fontWeight: "900",
+  },
+  infoSections: {
+    gap: 8,
+  },
+  infoRow: {
+    minHeight: 52,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.panel,
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  infoTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
   profileGrid: {
     width: "100%",
     flexDirection: "row",
@@ -563,12 +858,14 @@ const local = StyleSheet.create({
     borderColor: colors.line,
     flexDirection: "row",
     alignItems: "center",
+    overflow: "hidden",
   },
   statBox: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
+    alignSelf: "stretch",
   },
   statDivider: {
     width: 1,

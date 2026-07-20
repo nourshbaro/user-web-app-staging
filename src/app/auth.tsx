@@ -5,7 +5,7 @@ import { Button, Card, Input, Screen, colors, styles, useResponsive, useTheme } 
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/services/api";
-import { authService } from "@/services/auth";
+import { authService, type OtpTarget } from "@/services/auth";
 
 type Mode = "login" | "register" | "otp";
 
@@ -25,6 +25,22 @@ const getUserId = (payload: unknown) => {
   return null;
 };
 
+const hasSessionToken = (payload: unknown): boolean => {
+  if (!isRecord(payload)) return false;
+  if (readString(payload.token) || readString(payload.access_token)) return true;
+  return hasSessionToken(payload.data);
+};
+
+const getVerificationStatus = (payload: unknown): boolean | null => {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.email_verified === "boolean") return payload.email_verified;
+  if (typeof payload.verified === "boolean") return payload.verified;
+  if (typeof payload.is_verified === "boolean") return payload.is_verified;
+  if (typeof payload.email_verified_at === "string" && payload.email_verified_at.trim()) return true;
+  if (payload.email_verified_at === null) return false;
+  return getVerificationStatus(payload.user) ?? getVerificationStatus(payload.data);
+};
+
 const getMessage = (payload: unknown, fallback: string) => {
   if (!isRecord(payload)) return fallback;
   return readString(payload.message) ?? readString(payload.error) ?? fallback;
@@ -41,15 +57,15 @@ export default function AuthScreen() {
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [otp, setOtp] = useState("");
-  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  const [pendingOtpTarget, setPendingOtpTarget] = useState<OtpTarget | null>(null);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const showOtp = (payload: unknown, fallback: string) => {
+  const showOtp = (payload: unknown, fallback: string, fallbackEmail = email.trim()) => {
     const userId = getUserId(payload);
     const nextMessage = getMessage(payload, fallback);
-    if (userId) setPendingUserId(userId);
+    setPendingOtpTarget({ userId, email: fallbackEmail || null });
     setMode("otp");
     setMessage(nextMessage);
     toast.showToast({ variant: "info", title: "OTP required", message: nextMessage });
@@ -60,10 +76,17 @@ export default function AuthScreen() {
     setMessage(null);
     try {
       if (mode === "login") {
-        const payload = await authService.login(email.trim(), password);
+        const trimmedEmail = email.trim();
+        const verification = await authService.checkEmailVerification(trimmedEmail);
+        if (verification && getVerificationStatus(verification) === false) {
+          showOtp(verification, "Please verify your email. A new code has been sent.", trimmedEmail);
+          return;
+        }
+
+        const payload = await authService.login(trimmedEmail, password);
         const userId = getUserId(payload);
-        if (userId && isRecord(payload) && payload.expires_at) {
-          showOtp(payload, "Please verify your email. A new code has been sent.");
+        if (userId && !hasSessionToken(payload)) {
+          showOtp(payload, "Please verify your email. A new code has been sent.", trimmedEmail);
           return;
         }
       }
@@ -81,13 +104,13 @@ export default function AuthScreen() {
       }
 
       if (mode === "otp") {
-        if (!pendingUserId || otp.length !== 6) {
+        if (!pendingOtpTarget || otp.length !== 6) {
           const nextMessage = "Enter the 6-digit OTP sent to your email.";
           setMessage(nextMessage);
           toast.showToast({ variant: "warning", title: "OTP incomplete", message: nextMessage });
           return;
         }
-        await authService.verifyOtp(pendingUserId, otp);
+        await authService.verifyOtp(pendingOtpTarget, otp);
       }
 
       await auth.refreshAuth();
@@ -95,7 +118,7 @@ export default function AuthScreen() {
       router.replace("/profile");
     } catch (err) {
       if (err instanceof ApiError && mode === "login" && getUserId(err.body)) {
-        showOtp(err.body, "Please verify your email. A new code has been sent.");
+        showOtp(err.body, "Please verify your email. A new code has been sent.", email.trim());
         return;
       }
       const nextMessage = err instanceof Error ? err.message : "Please try again.";
@@ -107,11 +130,11 @@ export default function AuthScreen() {
   };
 
   const resendOtp = async () => {
-    if (!pendingUserId) return;
+    if (!pendingOtpTarget) return;
     setResending(true);
     setMessage(null);
     try {
-      const payload = await authService.resendOtp(pendingUserId);
+      const payload = await authService.resendOtp(pendingOtpTarget);
       const nextMessage = getMessage(payload, "A new OTP was sent to your email.");
       setMessage(nextMessage);
       toast.showToast({ variant: "success", title: "OTP sent", message: nextMessage });
@@ -128,7 +151,7 @@ export default function AuthScreen() {
     setMode(nextMode);
     setMessage(null);
     setOtp("");
-    setPendingUserId(null);
+    setPendingOtpTarget(null);
   };
 
   const title = mode === "login" ? "Login to your account" : mode === "register" ? "Create your account" : "Enter registration OTP";
@@ -192,13 +215,13 @@ export default function AuthScreen() {
                 loading ||
                 (mode === "login" && (!email || !password)) ||
                 (mode === "register" && (!name || !email || !password || !passwordConfirmation)) ||
-                (mode === "otp" && (!pendingUserId || otp.length !== 6))
+                (mode === "otp" && (!pendingOtpTarget || otp.length !== 6))
               }
               onPress={submit}
             />
 
             {mode === "otp" ? (
-              <Button title={resending ? "Sending..." : "Resend OTP"} variant="secondary" disabled={resending || !pendingUserId} onPress={resendOtp} />
+              <Button title={resending ? "Sending..." : "Resend OTP"} variant="secondary" disabled={resending || !pendingOtpTarget} onPress={resendOtp} />
             ) : null}
           </Card>
 
