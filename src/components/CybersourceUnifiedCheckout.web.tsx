@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Platform, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { colors, styles } from "@/components/ui";
 import { config } from "@/lib/config";
 
@@ -13,6 +13,7 @@ declare global {
 
 type UCCheckout = {
   mount(selector?: string | { paymentSelection?: string; paymentScreen?: string }): Promise<string>;
+  on?(event: "ready", handler: () => void): unknown;
   unmount(): void;
   destroy(): void;
   complete(transientToken: string): Promise<unknown>;
@@ -44,13 +45,6 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
   }, [onSuccess, onError]);
 
   useEffect(() => {
-    if (Platform.OS !== "web") {
-      setStatus("error");
-      setError("Card checkout is available on web only.");
-      onErrorRef.current("Card checkout is available on web only.");
-      return;
-    }
-
     if (!captureContext || mountingRef.current) return;
     mountingRef.current = true;
 
@@ -63,9 +57,12 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
 
         const checkout = await client.createCheckout({ autoProcessing: false });
         checkoutRef.current = checkout;
-        setStatus("ready");
+        checkout.on?.("ready", () => setStatus("ready"));
 
-        const transientToken = await checkout.mount("#uc-payment-buttons");
+        const transientToken = await checkout.mount({
+          paymentSelection: "#uc-payment-buttons",
+          paymentScreen: "#uc-payment-form",
+        });
         onSuccessRef.current(transientToken);
       } catch (err) {
         const candidate = err as { message?: string; reason?: string };
@@ -118,6 +115,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
       {status === "loading" ? <Text style={styles.muted}>Loading secure payment form...</Text> : null}
       {status === "error" && error ? <Text style={local.errorText}>{error}</Text> : null}
       <View nativeID="uc-payment-buttons" style={local.buttons} />
+      <View nativeID="uc-payment-form" style={local.form} />
     </View>
   );
 }
@@ -125,5 +123,6 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
 const local = {
   wrap: { gap: 8 },
   buttons: { minHeight: 44 },
+  form: { width: "100%" as const },
   errorText: { color: colors.danger, fontSize: 13, lineHeight: 18 },
 };

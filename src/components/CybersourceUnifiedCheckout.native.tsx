@@ -1,10 +1,10 @@
+import { useTheme } from "@/components/ui";
+import { config } from "@/lib/config";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { useTheme } from "@/components/ui";
-import { config } from "@/lib/config";
 
-const CHECKOUT_INITIAL_HEIGHT = 520;
+const CHECKOUT_LOADING_HEIGHT = 320;
 const CHECKOUT_MAX_HEIGHT = 2200;
 
 type Props = {
@@ -41,32 +41,73 @@ function buildCheckoutHtml(captureContext: string) {
         width: 100%;
         overflow: hidden;
       }
-      #uc-payment-buttons {
-        min-height: 420px;
+      #uc-payment-buttons,
+      #uc-payment-form {
         width: 100%;
       }
     </style>
   </head>
   <body>
     <div id="uc-payment-buttons"></div>
+    <div id="uc-payment-form"></div>
     <script>
       const post = (payload) => window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(payload));
-      const reportHeight = () => {
-        const contentBottom = Array.from(document.body.querySelectorAll('*')).reduce((bottom, element) => {
+      const checkoutContainers = () => [
+        document.getElementById("uc-payment-buttons"),
+        document.getElementById("uc-payment-form")
+      ].filter(Boolean);
+      let animationFrame = 0;
+      let lastReportedHeight = 0;
+      let readyPosted = false;
+      let resizeObserver;
+      let mutationObserver;
+
+      const measureCheckout = () => {
+        animationFrame = 0;
+        const containers = checkoutContainers();
+        const contentBottom = containers.reduce((bottom, element) => {
           const rect = element.getBoundingClientRect();
-          return Math.max(bottom, rect.bottom + window.scrollY);
+          if (!rect.width && !rect.height && !element.scrollHeight) return bottom;
+          const top = rect.top + window.scrollY;
+          return Math.max(bottom, top + Math.max(rect.height, element.scrollHeight));
         }, 0);
-        const height = Math.ceil(Math.max(
-          ${CHECKOUT_INITIAL_HEIGHT},
-          contentBottom,
-          document.body.scrollHeight,
-          document.documentElement.scrollHeight
-        ));
-        post({ type: "height", height });
+        const height = Math.ceil(contentBottom);
+        if (height > 0 && height !== lastReportedHeight) {
+          lastReportedHeight = height;
+          post({ type: "height", height });
+        }
+        if (!readyPosted && height > 0 && containers.some((element) => element.childElementCount > 0)) {
+          readyPosted = true;
+          post({ type: "ready" });
+        }
       };
-      new ResizeObserver(reportHeight).observe(document.documentElement);
-      new MutationObserver(reportHeight).observe(document.body, { childList: true, subtree: true, attributes: true });
-      window.addEventListener("load", reportHeight);
+      const scheduleMeasurement = () => {
+        if (animationFrame) return;
+        animationFrame = requestAnimationFrame(measureCheckout);
+      };
+      const markReady = () => {
+        if (!readyPosted) {
+          readyPosted = true;
+          post({ type: "ready" });
+        }
+        scheduleMeasurement();
+      };
+      const observeCheckout = () => {
+        const containers = checkoutContainers();
+        resizeObserver = new ResizeObserver(scheduleMeasurement);
+        mutationObserver = new MutationObserver(scheduleMeasurement);
+        containers.forEach((element) => {
+          resizeObserver.observe(element);
+          mutationObserver.observe(element, { childList: true, subtree: true, attributes: true });
+        });
+        scheduleMeasurement();
+      };
+      const stopObservingCheckout = () => {
+        if (animationFrame) cancelAnimationFrame(animationFrame);
+        resizeObserver && resizeObserver.disconnect();
+        mutationObserver && mutationObserver.disconnect();
+      };
+      window.addEventListener("load", scheduleMeasurement);
       const fail = (error) => {
         const message = error && (error.reason || error.message) ? (error.reason || error.message) : "Payment could not be completed. Please try again.";
         post({ type: "error", message });
@@ -80,14 +121,25 @@ function buildCheckoutHtml(captureContext: string) {
 
           const client = await window.VAS.UnifiedCheckout(${safeCaptureContext});
           const checkout = await client.createCheckout({ autoProcessing: false });
-          post({ type: "ready" });
-          reportHeight();
+          observeCheckout();
+          if (typeof checkout.on === "function") checkout.on("ready", markReady);
 
-          const transientToken = await checkout.mount("#uc-payment-buttons");
-          post({ type: "success", token: transientToken });
-          checkout.destroy();
-          client.destroy();
+          try {
+            const transientToken = await checkout.mount({
+              paymentSelection: "#uc-payment-buttons",
+              paymentScreen: "#uc-payment-form"
+            });
+            post({ type: "success", token: transientToken });
+          } finally {
+            stopObservingCheckout();
+            try {
+              checkout.destroy();
+            } finally {
+              client.destroy();
+            }
+          }
         } catch (error) {
+          stopObservingCheckout();
           fail(error);
         }
       }
@@ -104,7 +156,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
   const completedRef = useRef(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
-  const [webViewHeight, setWebViewHeight] = useState(CHECKOUT_INITIAL_HEIGHT);
+  const [webViewHeight, setWebViewHeight] = useState(CHECKOUT_LOADING_HEIGHT);
   const [attempt, setAttempt] = useState(0);
   const html = useMemo(() => buildCheckoutHtml(captureContext), [captureContext]);
 
@@ -118,7 +170,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
     const resetTimer = setTimeout(() => {
       setStatus("loading");
       setError(null);
-      setWebViewHeight(CHECKOUT_INITIAL_HEIGHT);
+      setWebViewHeight(CHECKOUT_LOADING_HEIGHT);
       setAttempt(0);
     }, 0);
     return () => clearTimeout(resetTimer);
@@ -137,8 +189,14 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
       return;
     }
 
-    if (message.type === "height" && Number.isFinite(message.height)) {
-      setWebViewHeight(Math.max(CHECKOUT_INITIAL_HEIGHT, Math.min(CHECKOUT_MAX_HEIGHT, Number(message.height))));
+    if (
+      message.type === "height"
+      && typeof message.height === "number"
+      && Number.isFinite(message.height)
+      && message.height > 0
+      && message.height <= CHECKOUT_MAX_HEIGHT
+    ) {
+      setWebViewHeight(Math.ceil(message.height));
       return;
     }
 
@@ -158,7 +216,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
 
   return (
     <View style={local.wrap}>
-      <View style={local.heading}>
+      {/* <View style={local.heading}>
         <View style={[local.secureMark, { backgroundColor: theme.colors.success }]}>
           <Text style={local.secureMarkText}>✓</Text>
         </View>
@@ -166,7 +224,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
           <Text style={[local.title, { color: theme.colors.ink }]}>Secure card payment</Text>
           <Text style={[local.subtitle, { color: theme.colors.muted }]}>Your card details are encrypted and sent directly to our payment partner.</Text>
         </View>
-      </View>
+      </View> */}
 
       <View style={[local.frame, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }]}>
         {status !== "error" ? (
@@ -209,7 +267,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
                 completedRef.current = false;
                 setError(null);
                 setStatus("loading");
-                setWebViewHeight(CHECKOUT_INITIAL_HEIGHT);
+                setWebViewHeight(CHECKOUT_LOADING_HEIGHT);
                 setAttempt((value) => value + 1);
               }}
               style={({ pressed }) => [local.retryButton, { backgroundColor: theme.colors.primary }, pressed && local.pressed]}
@@ -233,7 +291,7 @@ const local = StyleSheet.create({
   secureMarkText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
   title: { fontSize: 16, lineHeight: 21, fontWeight: "900" },
   subtitle: { fontSize: 12, lineHeight: 17 },
-  frame: { width: "100%", minHeight: CHECKOUT_INITIAL_HEIGHT, overflow: "hidden", borderWidth: 1, borderRadius: 18 },
+  frame: { width: "100%", overflow: "hidden", borderWidth: 1, borderRadius: 18 },
   webview: { width: "100%", backgroundColor: "#FFFFFF" },
   loading: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, padding: 24, alignItems: "center", justifyContent: "center" },
   loadingTitle: { marginTop: 14, fontSize: 15, lineHeight: 20, fontWeight: "800" },
@@ -243,7 +301,7 @@ const local = StyleSheet.create({
   skeletonRow: { flexDirection: "row", gap: 10 },
   skeletonHalf: { flex: 1, height: 54, borderRadius: 12 },
   skeletonButton: { height: 48, marginTop: 4, borderRadius: 12 },
-  errorState: { minHeight: CHECKOUT_INITIAL_HEIGHT, padding: 28, alignItems: "center", justifyContent: "center" },
+  errorState: { minHeight: 240, padding: 28, alignItems: "center", justifyContent: "center" },
   errorTitle: { fontSize: 17, lineHeight: 23, fontWeight: "900", textAlign: "center" },
   errorText: { maxWidth: 360, marginTop: 7, fontSize: 13, lineHeight: 19, textAlign: "center" },
   retryButton: { minHeight: 44, marginTop: 20, paddingHorizontal: 24, borderRadius: 12, alignItems: "center", justifyContent: "center" },
