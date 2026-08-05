@@ -1,18 +1,21 @@
-import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { AppHeader } from "@/components/AppHeader";
-import { Button, Card, Empty, Input, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
 import { CybersourceUnifiedCheckout } from "@/components/CybersourceUnifiedCheckout";
+import { Button, Card, Empty, Input, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
-import { config } from "@/lib/config";
+import { clearBluePaymentHandoff, createBluePaymentHandoff } from "@/lib/bluePaymentHandoff";
+import { validateBluePaymentUrl } from "@/lib/bluePaymentRedirect";
 import { groupCartItems } from "@/lib/cartDisplay";
+import { checkoutResultRouteParams, parseCheckoutResultParams } from "@/lib/checkoutResultParams";
+import { config } from "@/lib/config";
 import { formatMoney, minutesSeconds } from "@/lib/format";
 import { profileService } from "@/services/auth";
 import { checkoutService } from "@/services/checkout";
 import type { CheckoutSubmitRequest } from "@/types";
+import { router } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
 
 type PaymentMethod = CheckoutSubmitRequest["payment_method"];
 type BillingInfoPayload = Record<string, unknown>;
@@ -107,6 +110,8 @@ export default function CheckoutScreen() {
   const [loading, setLoading] = useState(false);
   const captureCalledRef = useRef(false);
   const captureSessionRef = useRef<string | null>(null);
+  const submitInFlightRef = useRef(false);
+  const blueHandoffStartedRef = useRef(false);
   const groupedItems = groupCartItems(cart.items);
   const isCheckoutLocked = loading;
   // Native tablets can rotate without inheriting the web-only sticky two-column layout.
@@ -194,15 +199,15 @@ export default function CheckoutScreen() {
     };
   }, [auth.isAuthenticated, auth.isReady, auth.user?.email, auth.user?.name]);
 
-  const goHomeAndDismissRoutes = () => {
+  const dismissAllRoutes = () => {
     const resetRouter = router as typeof router & { dismissAll?: () => void };
     resetRouter.dismissAll?.();
-    router.replace("/");
   };
 
-  const completeCheckout = async () => {
+  const completeCheckout = async (resultParams: ReturnType<typeof checkoutResultRouteParams>) => {
     await cart.clearCart();
-    goHomeAndDismissRoutes();
+    dismissAllRoutes();
+    router.replace({ pathname: "/checkout/success", params: resultParams });
   };
 
   useEffect(() => {
@@ -212,7 +217,7 @@ export default function CheckoutScreen() {
   }, []);
 
   const submit = async (transientToken?: string) => {
-    if (!cart.sessionId || loading) return;
+    if (!cart.sessionId || submitInFlightRef.current || blueHandoffStartedRef.current) return;
 
     const missingHolder = ticketSlots.find((slot) => !holderNames[slot.key]?.trim());
     if (missingHolder) {
@@ -237,6 +242,7 @@ export default function CheckoutScreen() {
     }
 
     try {
+      submitInFlightRef.current = true;
       setLoading(true);
 
       const ticketsByMatch = ticketSlots.reduce<Record<string, { holder_name: string }[]>>((acc, slot) => {
@@ -252,24 +258,47 @@ export default function CheckoutScreen() {
         ...(transientToken ? { payment: { transient_token: transientToken } } : {}),
       });
 
-      const paymentUrl = response?.payment?.payment_url ?? response?.payment_url;
-      if (paymentUrl) {
-        await completeCheckout();
-        await Linking.openURL(paymentUrl);
-        toast.showToast({
-          variant: "info",
-          title: "Payment opened",
-          message: "Return here after finishing payment.",
-          duration: 5200,
-        });
-      } else {
-        await completeCheckout();
-        toast.showToast({
-          variant: "success",
-          title: "Order submitted",
-          message: response?.order_id ? `Order ${response.order_id} was submitted.` : "Your order was submitted.",
-        });
+      if (paymentMethod === "blue") {
+        const validatedUrl = validateBluePaymentUrl(response.payment?.payment_url, config.bluePaymentAllowedOrigin);
+        blueHandoffStartedRef.current = true;
+
+        if (Platform.OS === "web") {
+          try {
+            await cart.clearCart();
+            if (typeof window === "undefined") throw new Error("Blue payment navigation is unavailable.");
+            window.location.assign(validatedUrl);
+          } catch (error) {
+            blueHandoffStartedRef.current = false;
+            throw error;
+          }
+          return;
+        }
+
+        const handoffId = createBluePaymentHandoff(validatedUrl);
+        try {
+          await cart.clearCart();
+          dismissAllRoutes();
+          router.replace({ pathname: "/checkout/blue/payment", params: { handoff: handoffId } });
+        } catch (error) {
+          clearBluePaymentHandoff(handoffId);
+          blueHandoffStartedRef.current = false;
+          throw error;
+        }
+        return;
       }
+
+      const resultParams = checkoutResultRouteParams(parseCheckoutResultParams({
+        provider: "cybersource",
+        order_id: response.order_id,
+        order_number: response.order_number,
+        reference:
+          response.reference
+          ?? response.payment_reference
+          ?? response.payment?.reference
+          ?? response.payment?.payment_reference,
+        status: response.status ?? response.payment?.status,
+      }));
+      await completeCheckout(resultParams);
     } catch (err) {
       toast.showToast({
         variant: "error",
@@ -278,6 +307,7 @@ export default function CheckoutScreen() {
         duration: 6200,
       });
     } finally {
+      submitInFlightRef.current = false;
       setLoading(false);
     }
   };
@@ -365,7 +395,7 @@ export default function CheckoutScreen() {
                 : captureContext
                   ? "Secure card checkout is prepared."
                   : "Card checkout is not ready yet."
-            : "You will be redirected to Blue Wallet to complete payment."}
+            : "Blue Wallet will open securely inside the app."}
         </Text>
       </View>
       {paymentMethod === "cybersource" && captureError ? (
@@ -383,7 +413,7 @@ export default function CheckoutScreen() {
       ) : loading ? (
         <Text style={styles.muted}>Confirming your order...</Text>
       ) : null}
-      {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null}
+      {/* {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null} */}
     </Card>
   );
 
@@ -501,7 +531,7 @@ export default function CheckoutScreen() {
                             : captureContext
                               ? "Secure card checkout is prepared."
                               : "Card checkout is not ready yet."
-                        : "You will be redirected to Blue Wallet to complete payment."}
+                        : "Blue Wallet will open securely inside the app."}
                     </Text>
                   </View>
                   {paymentMethod === "cybersource" && captureError ? (
@@ -519,7 +549,7 @@ export default function CheckoutScreen() {
                   ) : loading ? (
                     <Text style={styles.muted}>Confirming your order...</Text>
                   ) : null}
-                  {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null}
+                  {/* {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null} */}
                 </Card>
               </View>
             </View>
