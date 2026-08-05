@@ -7,6 +7,7 @@ import { storageUrl } from "@/lib/config";
 import { formatDate, formatMoney, formatTime, matchTitle } from "@/lib/format";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, ApiSeat, ApiZone } from "@/types";
+import { Image as ExpoImage } from "expo-image";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Platform, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
@@ -411,6 +412,27 @@ function useMapViewHeight(mapImageUrl: string | undefined, zones: ApiZone[]) {
   return viewHeight;
 }
 
+function NativeStadiumImage({ mapImageUrl }: { mapImageUrl?: string }) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  if (!mapImageUrl || imageFailed) {
+    return (
+      <View style={local.mapFallback}>
+        <Text style={styles.muted}>Stadium map unavailable.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ExpoImage
+      source={{ uri: mapImageUrl }}
+      style={local.mapImage}
+      contentFit="contain"
+      onError={() => setImageFailed(true)}
+    />
+  );
+}
+
 function ZoneMap({
   zones,
   selectedZoneId,
@@ -524,15 +546,10 @@ function ZoneMap({
 
   return (
     <View style={[local.mapFrame, { width, height, backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
-      {mapImageUrl ? (
-        <Image
-          source={{ uri: mapImageUrl }}
-          style={local.mapImage}
-          resizeMode="contain"
-        />
-      ) : (
-        <View style={local.mapFallback}><Text style={styles.muted}>Stadium map unavailable</Text></View>
-      )}
+      <NativeStadiumImage
+        key={mapImageUrl ?? "stadium-map-unavailable"}
+        mapImageUrl={mapImageUrl}
+      />
       {zones.map((zone, index) => {
         const bounds = getZoneBounds(zone);
         if (!bounds) return null;
