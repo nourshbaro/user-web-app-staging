@@ -1,9 +1,9 @@
 import { apiRequest } from "@/services/api";
-import type { CheckoutSubmitRequest } from "@/types";
+import type { CheckoutSubmitRequest, CheckoutSubmitResponse } from "@/types";
 
 export const checkoutService = {
   async submit(payload: CheckoutSubmitRequest) {
-    return apiRequest<any>("/checkout/web/submit", { method: "POST", body: JSON.stringify(payload) });
+    return apiRequest<CheckoutSubmitResponse>("/checkout/web/submit", { method: "POST", body: JSON.stringify(payload) });
   },
 
   async captureContext(checkoutSessionId: string, targetOrigins: string[]) {

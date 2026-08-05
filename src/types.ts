@@ -130,6 +130,22 @@ export type CheckoutSubmitRequest = {
   payment?: { transient_token?: string };
 };
 
+export type CheckoutSubmitResponse = {
+  order_id?: string | number;
+  order_number?: string | number;
+  reference?: string | number;
+  payment_reference?: string | number;
+  status?: string;
+  payment_redirect_validated?: boolean;
+  payment?: {
+    payment_url?: string;
+    reference?: string | number;
+    payment_reference?: string | number;
+    status?: string;
+    payment_redirect_validated?: boolean;
+  };
+};
+
 export type Order = {
   id: number;
   status?: string;
