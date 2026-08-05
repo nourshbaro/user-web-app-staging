@@ -136,15 +136,25 @@ export default function ProfileScreen() {
       return;
     }
 
-    if (Platform.OS !== "web") {
-      setError("PDF download is available from the web app.");
-      return;
-    }
-
     setDownloadingPdf(true);
     setError(null);
     try {
       const response = await profileService.orderPdf(orderId);
+      if (Platform.OS !== "web") {
+        const FileSystem = await import("expo-file-system");
+        const Sharing = await import("expo-sharing");
+        // SDK 56 exposes these native methods at runtime, while its generated File type omits inherited members.
+        const file = new FileSystem.File(FileSystem.Paths.cache, `order-${orderId}.pdf`) as unknown as {
+          create: (options?: { overwrite?: boolean }) => void;
+          write: (content: Uint8Array) => void;
+          uri: string;
+        };
+        file.create({ overwrite: true });
+        file.write(new Uint8Array(await response.arrayBuffer()));
+        if (!(await Sharing.isAvailableAsync())) throw new Error("No app is available to open this PDF.");
+        await Sharing.shareAsync(file.uri, { mimeType: "application/pdf", dialogTitle: `Order ${orderId}` });
+        return;
+      }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -472,6 +482,7 @@ function DetailModal({
   onClose: () => void;
   onDownloadPdf: (orderId?: string) => void;
 }) {
+  const theme = useTheme();
   const item = detail?.item;
   const normalized = detail?.type === "order" && isRecord(item?.order) ? item.order : item;
   const entries = normalized ? Object.entries(normalized).filter(([key, value]) => shouldShowDetailField(key, value)) : [];
@@ -481,11 +492,11 @@ function DetailModal({
   return (
     <Modal visible={Boolean(detail)} transparent animationType="slide" onRequestClose={onClose}>
       <View style={local.modalOverlay}>
-        <View style={local.modalSheet}>
-          <View style={local.modalHeader}>
+        <View style={[local.modalSheet, { backgroundColor: theme.colors.panel }]}>
+          <View style={[local.modalHeader, { borderBottomColor: theme.colors.line }]}>
             <View style={local.modalTitleWrap}>
               <Text style={local.modalEyebrow}>{detail?.type === "order" ? "Order details" : "Ticket details"}</Text>
-              <Text style={local.modalTitle} numberOfLines={2}>{detail?.title}</Text>
+              <Text style={[local.modalTitle, { color: theme.colors.ink }]} numberOfLines={2}>{detail?.title}</Text>
             </View>
             <View style={local.modalActions}>
               {detail?.type === "order" && detail.pdfId ? (
@@ -497,8 +508,8 @@ function DetailModal({
                   <Text style={local.pdfText}>{downloadingPdf ? "Downloading" : "PDF"}</Text>
                 </Pressable>
               ) : null}
-              <Pressable onPress={onClose} style={({ pressed }) => [local.closeButton, pressed && local.pressed]}>
-                <Text style={local.closeText}>Close</Text>
+              <Pressable onPress={onClose} style={({ pressed }) => [local.closeButton, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }, pressed && local.pressed]}>
+                <Text style={[local.closeText, { color: theme.colors.ink }]}>Close</Text>
               </Pressable>
             </View>
           </View>
@@ -512,14 +523,14 @@ function DetailModal({
 
             {items.length ? (
               <View style={local.detailGroup}>
-                <Text style={local.detailGroupTitle}>Items</Text>
+                <Text style={[local.detailGroupTitle, { color: theme.colors.ink }]}>Items</Text>
                 {items.map((entry, index) => <NestedCard key={index} item={entry} />)}
               </View>
             ) : null}
 
             {tickets.length ? (
               <View style={local.detailGroup}>
-                <Text style={local.detailGroupTitle}>Tickets</Text>
+                <Text style={[local.detailGroupTitle, { color: theme.colors.ink }]}>Tickets</Text>
                 {tickets.map((entry, index) => <NestedCard key={index} item={entry} />)}
               </View>
             ) : null}
@@ -542,35 +553,37 @@ function StatusPill({ status }: { status: string }) {
 }
 
 function DetailField({ fieldKey, label, value }: { fieldKey: string; label: string; value: unknown }) {
+  const theme = useTheme();
   if (Array.isArray(value)) return null;
   if (label.toLowerCase() === "qr image" && typeof value === "string") return <QrImage value={value} />;
   if (isRecord(value)) {
     return (
       <View style={local.detailGroup}>
-        <Text style={local.detailGroupTitle}>{label}</Text>
+        <Text style={[local.detailGroupTitle, { color: theme.colors.ink }]}>{label}</Text>
         <NestedCard item={value} />
       </View>
     );
   }
 
   return (
-    <View style={local.detailField}>
-      <Text style={local.detailLabel}>{label}</Text>
-      <Text style={local.detailValue}>{formatDetailValue(value, fieldKey)}</Text>
+    <View style={[local.detailField, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
+      <Text style={[local.detailLabel, { color: theme.colors.muted }]}>{label}</Text>
+      <Text style={[local.detailValue, { color: theme.colors.ink }]}>{formatDetailValue(value, fieldKey)}</Text>
     </View>
   );
 }
 
 function NestedCard({ item }: { item: PortalItem }) {
+  const theme = useTheme();
   const hasQr = typeof item.qr_image === "string";
 
   return (
-    <View style={local.nestedCard}>
+    <View style={[local.nestedCard, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
       {hasQr ? <QrImage value={item.qr_image} compact /> : null}
       {Object.entries(item).filter(([key, value]) => shouldShowDetailField(key, value)).slice(0, 8).map(([key, value]) => (
         <View key={key} style={local.nestedRow}>
-          <Text style={local.nestedLabel}>{labelize(key)}</Text>
-          <Text style={local.nestedValue}>{isRecord(value) || Array.isArray(value) ? summarizeValue(value) : formatDetailValue(value, key)}</Text>
+          <Text style={[local.nestedLabel, { color: theme.colors.muted }]}>{labelize(key)}</Text>
+          <Text style={[local.nestedValue, { color: theme.colors.ink }]}>{isRecord(value) || Array.isArray(value) ? summarizeValue(value) : formatDetailValue(value, key)}</Text>
         </View>
       ))}
     </View>

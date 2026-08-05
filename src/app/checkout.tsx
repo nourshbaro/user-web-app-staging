@@ -109,7 +109,8 @@ export default function CheckoutScreen() {
   const captureSessionRef = useRef<string | null>(null);
   const groupedItems = groupCartItems(cart.items);
   const isCheckoutLocked = loading;
-  const isWide = responsive.width >= 920;
+  // Native tablets can rotate without inheriting the web-only sticky two-column layout.
+  const isWide = Platform.OS === "web" && responsive.width >= 920;
 
   const ticketSlots = useMemo(
     () => cart.items.flatMap((item) => {
@@ -390,7 +391,7 @@ export default function CheckoutScreen() {
     <Screen>
       <View style={[local.shell, { width: responsive.contentWidth }]}>
         <AppHeader title="Checkout" subtitle={cart.items.length ? "Review and pay securely" : "No active reservation"} hideCart />
-        <ScrollView contentContainerStyle={{ gap: 12, paddingBottom: 28 }}>
+        <ScrollView style={{ width: "100%" }} contentContainerStyle={{ width: "100%", gap: 12, paddingBottom: 28 }}>
           {!cart.items.length ? (
             <Empty title="Nothing to checkout" detail="Your reserved tickets will appear here." />
           ) : (
