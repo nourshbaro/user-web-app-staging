@@ -1,35 +1,47 @@
 import { colors, useTheme } from "@/components/ui";
+import { classifyAdLink, resolveAdImageUrl } from "@/lib/adUrls";
 import {
   classifyBannerSwipe,
   isHorizontalBannerGesture,
   normalizeBannerIndex,
+  shouldAutoRotateBanners,
   type BannerSwipeDirection,
 } from "@/lib/appBannerCarousel";
-import { classifyAdLink, resolveAdImageUrl } from "@/lib/adUrls";
 import { APP_BANNER_REQUEST_KEY, adsService } from "@/services/ads";
 import type { AppBannerAd } from "@/types/ads";
 import { Image } from "expo-image";
 import { router, type Href } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AccessibilityInfo,
   Animated,
   AppState,
-  type LayoutChangeEvent,
   Linking,
   PanResponder,
   Pressable,
   StyleSheet,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 
 const ROTATION_INTERVAL_MS = 10_000;
 const SLIDE_DURATION_MS = 360;
 const SNAP_BACK_DURATION_MS = 220;
-const PRESS_RESET_DELAY_MS = 80;
 
 type DisplayBanner = AppBannerAd & {
   imageUrl: string;
+};
+
+type BannerHandoff = {
+  banner: DisplayBanner;
+  targetIndex: number;
 };
 
 export function AppBanner() {
@@ -62,15 +74,17 @@ export function AppBanner() {
 
   if (loading) {
     return (
-      <View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={[
-          styles.frame,
-          styles.skeleton,
-          { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line },
-        ]}
-      />
+      <View style={styles.placement}>
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[
+            styles.frame,
+            styles.skeleton,
+            { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line },
+          ]}
+        />
+      </View>
     );
   }
 
@@ -91,12 +105,15 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
   const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [timerResetKey, setTimerResetKey] = useState(0);
-  const dragX = useRef(new Animated.Value(0)).current;
-  const animationRef = useRef<Animated.CompositeAnimation | null>(null);
-  const animatingRef = useRef(false);
+  const [animating, setAnimating] = useState(false);
+  const [suppressPress, setSuppressPress] = useState(false);
+  const [loadedIds, setLoadedIds] = useState<Set<number>>(() => new Set());
+  const [handoff, setHandoff] = useState<BannerHandoff | null>(null);
+  const [dragX] = useState(() => new Animated.Value(0));
+  const transitionInProgressRef = useRef(false);
+  const draggingRef = useRef(false);
   const mountedRef = useRef(true);
-  const suppressPressRef = useRef(false);
-  const pressResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prefetchedUrlsRef = useRef(new Set<string>());
   const availableBanners = useMemo(
     () => banners.filter((banner) => !failedIds.has(banner.id)),
     [banners, failedIds],
@@ -138,59 +155,105 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
     return () => {
       active = false;
       mountedRef.current = false;
-      animationRef.current?.stop();
-      if (pressResetTimerRef.current) clearTimeout(pressResetTimerRef.current);
+      transitionInProgressRef.current = false;
+      draggingRef.current = false;
+      dragX.stopAnimation();
       appStateSubscription.remove();
       screenReaderSubscription.remove();
       reduceMotionSubscription.remove();
     };
-  }, []);
+  }, [dragX]);
+
+  useEffect(() => {
+    const candidates = [
+      ...new Map(
+        [previousBanner, nextBanner]
+          .filter((item): item is DisplayBanner => Boolean(item))
+          .map((item) => [item.imageUrl, item]),
+      ).values(),
+    ].filter((item) => !prefetchedUrlsRef.current.has(item.imageUrl));
+
+    for (const item of candidates) {
+      prefetchedUrlsRef.current.add(item.imageUrl);
+      void Image.prefetch(item.imageUrl)
+        .catch(() => undefined);
+    }
+  }, [nextBanner, previousBanner]);
+
+  useLayoutEffect(() => {
+    if (!handoff) return;
+
+    if (safeActiveIndex !== handoff.targetIndex) {
+      const commitFrame = requestAnimationFrame(() => {
+        if (mountedRef.current) setActiveIndex(handoff.targetIndex);
+      });
+      return () => cancelAnimationFrame(commitFrame);
+    }
+    dragX.setValue(0);
+    const frame = requestAnimationFrame(() => {
+      if (mountedRef.current) {
+        setHandoff(null);
+        setAnimating(false);
+        transitionInProgressRef.current = false;
+        setTimerResetKey((value) => value + 1);
+      }
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [dragX, handoff, safeActiveIndex]);
 
   const releasePressSuppression = useCallback(() => {
-    if (pressResetTimerRef.current) clearTimeout(pressResetTimerRef.current);
-    pressResetTimerRef.current = setTimeout(() => {
-      suppressPressRef.current = false;
-      pressResetTimerRef.current = null;
-    }, PRESS_RESET_DELAY_MS);
+    setSuppressPress(false);
   }, []);
 
   const stopAnimation = useCallback(() => {
-    animationRef.current?.stop();
-    animationRef.current = null;
-    animatingRef.current = false;
-  }, []);
+    dragX.stopAnimation();
+    transitionInProgressRef.current = false;
+    setAnimating(false);
+  }, [dragX]);
 
   const moveToIndex = useCallback((
     targetIndex: number,
     direction: BannerSwipeDirection,
-    manual: boolean,
   ) => {
-    if (!availableBanners.length || animatingRef.current) return;
+    if (
+      !availableBanners.length
+      || transitionInProgressRef.current
+      || draggingRef.current
+    ) return;
     const normalizedTarget = normalizeBannerIndex(targetIndex, availableBanners.length);
+    const destinationBanner = availableBanners[normalizedTarget];
 
-    if (manual) setTimerResetKey((value) => value + 1);
     if (normalizedTarget === safeActiveIndex) {
       dragX.setValue(0);
+      return;
+    }
+    if (!destinationBanner || !loadedIds.has(destinationBanner.id)) {
+      dragX.setValue(0);
+      setTimerResetKey((value) => value + 1);
       return;
     }
 
     const duration = reduceMotionEnabled || screenReaderEnabled ? 0 : SLIDE_DURATION_MS;
     const destination = direction === "next" ? -viewportWidth : viewportWidth;
-    animatingRef.current = true;
-    animationRef.current = Animated.timing(dragX, {
+    transitionInProgressRef.current = true;
+    setAnimating(true);
+    Animated.timing(dragX, {
       toValue: destination,
       duration,
       useNativeDriver: true,
-    });
-    animationRef.current.start(({ finished }) => {
-      animationRef.current = null;
-      animatingRef.current = false;
-      dragX.setValue(0);
-      if (finished && mountedRef.current) setActiveIndex(normalizedTarget);
+    }).start(({ finished }) => {
+      if (!finished || !mountedRef.current) {
+        transitionInProgressRef.current = false;
+        setAnimating(false);
+        return;
+      }
+      setHandoff({ banner: destinationBanner, targetIndex: normalizedTarget });
     });
   }, [
-    availableBanners.length,
+    availableBanners,
     dragX,
+    loadedIds,
     reduceMotionEnabled,
     safeActiveIndex,
     screenReaderEnabled,
@@ -198,36 +261,44 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
   ]);
 
   const snapBack = useCallback(() => {
-    stopAnimation();
-    animationRef.current = Animated.timing(dragX, {
+    if (transitionInProgressRef.current) return;
+    transitionInProgressRef.current = true;
+    setAnimating(true);
+    Animated.timing(dragX, {
       toValue: 0,
       duration: reduceMotionEnabled || screenReaderEnabled ? 0 : SNAP_BACK_DURATION_MS,
       useNativeDriver: true,
+    }).start(({ finished }) => {
+      transitionInProgressRef.current = false;
+      if (!finished || !mountedRef.current) return;
+      setAnimating(false);
+      setTimerResetKey((value) => value + 1);
     });
-    animationRef.current.start(() => {
-      animationRef.current = null;
-      animatingRef.current = false;
-    });
-  }, [dragX, reduceMotionEnabled, screenReaderEnabled, stopAnimation]);
+  }, [dragX, reduceMotionEnabled, screenReaderEnabled]);
 
   useEffect(() => {
     if (
-      availableBanners.length <= 1
-      || !viewportWidth
-      || !appIsActive
-      || screenReaderEnabled
-      || reduceMotionEnabled
+      !viewportWidth
+      || animating
+      || draggingRef.current
+      || !shouldAutoRotateBanners(
+        availableBanners.length,
+        appIsActive,
+        screenReaderEnabled,
+        reduceMotionEnabled,
+      )
     ) {
       return;
     }
 
     const timer = setTimeout(() => {
-      moveToIndex(safeActiveIndex + 1, "next", false);
+      moveToIndex(safeActiveIndex + 1, "next");
     }, ROTATION_INTERVAL_MS);
 
     return () => clearTimeout(timer);
   }, [
     appIsActive,
+    animating,
     availableBanners.length,
     moveToIndex,
     reduceMotionEnabled,
@@ -240,31 +311,55 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
   const handleImageError = useCallback((id: number) => {
     stopAnimation();
     dragX.setValue(0);
+    setHandoff(null);
+    const remainingBanners = availableBanners.filter((item) => item.id !== id);
+    const nextActiveIndex = id === banner?.id
+      ? normalizeBannerIndex(safeActiveIndex, remainingBanners.length)
+      : Math.max(0, remainingBanners.findIndex((item) => item.id === banner?.id));
+    setActiveIndex(nextActiveIndex);
     setFailedIds((current) => {
       if (current.has(id)) return current;
       const next = new Set(current);
       next.add(id);
       return next;
     });
+    setLoadedIds((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
     setTimerResetKey((value) => value + 1);
-  }, [dragX, stopAnimation]);
+  }, [availableBanners, banner?.id, dragX, safeActiveIndex, stopAnimation]);
 
+  const handleImageLoad = useCallback((id: number) => {
+    setLoadedIds((current) => {
+      if (current.has(id)) return current;
+      const next = new Set(current);
+      next.add(id);
+      return next;
+    });
+  }, []);
+
+  // The responder callbacks read mutable gesture/transition guards only when native
+  // events fire; they do not use those refs to calculate rendered output.
+  // eslint-disable-next-line react-hooks/refs
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, gesture) => (
       availableBanners.length > 1
       && !screenReaderEnabled
-      && !animatingRef.current
+      && !transitionInProgressRef.current
       && isHorizontalBannerGesture(gesture.dx, gesture.dy)
     ),
     onMoveShouldSetPanResponderCapture: (_, gesture) => (
       availableBanners.length > 1
       && !screenReaderEnabled
-      && !animatingRef.current
+      && !transitionInProgressRef.current
       && isHorizontalBannerGesture(gesture.dx, gesture.dy)
     ),
     onPanResponderGrant: () => {
-      suppressPressRef.current = true;
-      stopAnimation();
+      draggingRef.current = true;
+      setSuppressPress(true);
     },
     onPanResponderMove: (_, gesture) => {
       if (!reduceMotionEnabled) dragX.setValue(gesture.dx);
@@ -277,17 +372,19 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
         viewportWidth,
       );
       if (direction === "next") {
-        moveToIndex(safeActiveIndex + 1, direction, true);
+        draggingRef.current = false;
+        moveToIndex(safeActiveIndex + 1, direction);
       } else if (direction === "previous") {
-        moveToIndex(safeActiveIndex - 1, direction, true);
+        draggingRef.current = false;
+        moveToIndex(safeActiveIndex - 1, direction);
       } else {
-        setTimerResetKey((value) => value + 1);
+        draggingRef.current = false;
         snapBack();
       }
       releasePressSuppression();
     },
     onPanResponderTerminate: () => {
-      setTimerResetKey((value) => value + 1);
+      draggingRef.current = false;
       snapBack();
       releasePressSuppression();
     },
@@ -301,7 +398,6 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
     safeActiveIndex,
     screenReaderEnabled,
     snapBack,
-    stopAnimation,
     viewportWidth,
   ]);
 
@@ -314,11 +410,6 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
       dragX.setValue(0);
       setViewportWidth(nextWidth);
     }
-  };
-
-  const handleDotPress = (index: number) => {
-    if (index === safeActiveIndex || animatingRef.current) return;
-    moveToIndex(index, index > safeActiveIndex ? "next" : "previous", true);
   };
 
   return (
@@ -339,24 +430,30 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
             ]}
           >
             <BannerSlide
+              key="previous"
               banner={previousBanner}
               width={viewportWidth}
               active={false}
-              suppressPressRef={suppressPressRef}
+              suppressPress={suppressPress}
+              onLoad={handleImageLoad}
               onError={handleImageError}
             />
             <BannerSlide
+              key="current"
               banner={banner}
               width={viewportWidth}
               active
-              suppressPressRef={suppressPressRef}
+              suppressPress={suppressPress}
+              onLoad={handleImageLoad}
               onError={handleImageError}
             />
             <BannerSlide
+              key="next"
               banner={nextBanner}
               width={viewportWidth}
               active={false}
-              suppressPressRef={suppressPressRef}
+              suppressPress={suppressPress}
+              onLoad={handleImageLoad}
               onError={handleImageError}
             />
           </Animated.View>
@@ -364,37 +461,26 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
           <BannerSlide
             banner={banner}
             active
-            suppressPressRef={suppressPressRef}
+            suppressPress={suppressPress}
+            onLoad={handleImageLoad}
             onError={handleImageError}
           />
         )}
+        {handoff ? (
+          <View
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            pointerEvents="none"
+            style={styles.handoff}
+          >
+            <Image
+              source={{ uri: handoff.banner.imageUrl }}
+              style={styles.image}
+              contentFit="cover"
+            />
+          </View>
+        ) : null}
       </View>
-
-      {availableBanners.length > 1 ? (
-        <View style={styles.pagination}>
-          {availableBanners.map((item, index) => {
-            const active = index === safeActiveIndex;
-            return (
-              <Pressable
-                key={item.id}
-                accessibilityRole="button"
-                accessibilityLabel={`Show banner ${index + 1} of ${availableBanners.length}`}
-                accessibilityState={{ selected: active }}
-                onPress={() => handleDotPress(index)}
-                style={styles.dotTarget}
-              >
-                <View
-                  style={[
-                    styles.dot,
-                    { backgroundColor: active ? theme.colors.primary : theme.colors.line },
-                    active && styles.activeDot,
-                  ]}
-                />
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -403,13 +489,15 @@ function BannerSlide({
   banner,
   width,
   active,
-  suppressPressRef,
+  suppressPress,
+  onLoad,
   onError,
 }: {
   banner: DisplayBanner;
   width?: number;
   active: boolean;
-  suppressPressRef: React.RefObject<boolean>;
+  suppressPress: boolean;
+  onLoad: (id: number) => void;
   onError: (id: number) => void;
 }) {
   const link = classifyAdLink(banner.link_url);
@@ -421,6 +509,7 @@ function BannerSlide({
       accessible={active && !link}
       accessibilityLabel={active && !link ? banner.title : undefined}
       accessibilityRole={active && !link ? "image" : undefined}
+      onLoad={() => onLoad(banner.id)}
       onError={() => onError(banner.id)}
     />
   );
@@ -437,7 +526,7 @@ function BannerSlide({
           accessibilityRole="link"
           accessibilityLabel={banner.title}
           onPress={() => {
-            if (!suppressPressRef.current) openAdLink(link);
+            if (!suppressPress) openAdLink(link);
           }}
           style={styles.pressable}
         >
@@ -490,25 +579,7 @@ const styles = StyleSheet.create({
     height: "100%",
     backgroundColor: colors.panelSoft,
   },
-  pagination: {
-    minHeight: 44,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dotTarget: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  activeDot: {
-    width: 18,
+  handoff: {
+    ...StyleSheet.absoluteFill,
   },
 });
