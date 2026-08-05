@@ -1,22 +1,20 @@
-import { SymbolView } from "expo-symbols";
-import { Image } from "expo-image";
-import { useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, RefreshControl, ScrollView, Text, View, type DimensionValue } from "react-native";
+import { AppBanner } from "@/components/AppBanner";
 import { MatchCard } from "@/components/MatchCard";
 import { Empty, Loading, colors, useResponsive, useTheme } from "@/components/ui";
 import { useToast } from "@/context/ToastContext";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, FilterOption, MatchFilters } from "@/types";
-
-const ticketsImage = require("../../assets/images/bd3c55e11f49ae2eb3ca71f02055bc64e119658b.jpg");
+import { SymbolView } from "expo-symbols";
+import { useEffect, useMemo, useState } from "react";
+import { Modal, Pressable, RefreshControl, ScrollView, Text, View, type DimensionValue } from "react-native";
 
 type MatchesListProps = {
   limit?: number;
   filterable?: boolean;
-  showAds?: boolean;
+  showAppBanner?: boolean;
 };
 
-export function MatchesList({ limit, filterable = false, showAds = false }: MatchesListProps) {
+export function MatchesList({ limit, filterable = false, showAppBanner = false }: MatchesListProps) {
   const responsive = useResponsive();
   const theme = useTheme();
   const toast = useToast();
@@ -96,11 +94,7 @@ export function MatchesList({ limit, filterable = false, showAds = false }: Matc
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(true); }} />}
       contentContainerStyle={local.scrollContent}
     >
-      {showAds ? (
-        <View style={[local.adFrame, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-          <Image source={ticketsImage} style={local.adImage} contentFit="cover" />
-        </View>
-      ) : null}
+      {showAppBanner ? <AppBanner /> : null}
 
       {filterable ? (
         <View style={[local.filterCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>

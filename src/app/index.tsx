@@ -10,7 +10,7 @@ export default function HomeScreen() {
     <Screen>
       <View style={[local.shell, { width: responsive.contentWidth }]}>
         <MainHeader />
-        <MatchesList limit={5} showAds />
+        <MatchesList limit={5} showAppBanner />
       </View>
     </Screen>
   );
