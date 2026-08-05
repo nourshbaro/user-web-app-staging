@@ -360,22 +360,13 @@ function monthLabel(date: Date) {
 
 const local = {
   scrollContent: { gap: 12, paddingBottom: 28 },
-  adFrame: {
-    borderRadius: 8,
-    borderWidth: 1,
-    overflow: "hidden" as const,
-  },
-  adImage: {
-    width: "100%" as const,
-    height: 150,
-    backgroundColor: colors.panelSoft,
-  },
   filterCard: {
     borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.line,
     backgroundColor: colors.panel,
     overflow: "hidden" as const,
+    marginTop: 8,
   },
   filterToggle: {
     minHeight: 58,
