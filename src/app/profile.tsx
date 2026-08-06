@@ -1,5 +1,5 @@
 import { Stack, router, useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type DimensionValue } from "react-native";
 import { MainHeader } from "@/components/MainHeader";
 import { Button, Empty, Input, Loading, Screen, colors, useResponsive, useTheme } from "@/components/ui";
@@ -9,12 +9,18 @@ import { formatMoney } from "@/lib/format";
 import { ApiError } from "@/services/api";
 import { authService, type OtpTarget } from "@/services/auth";
 import { profileService } from "@/services/auth";
+import {
+  UserScopedCache,
+  getUserScopedCacheGeneration,
+  onUserScopedCacheInvalidated,
+} from "@/lib/userScopedCache";
 import type { Order } from "@/types";
 
 type PortalItem = Record<string, any>;
 type DetailState = { type: "order" | "ticket"; title: string; item: PortalItem; pdfId?: string } | null;
 type GuestAuthMode = "login" | "register" | "otp";
-let profileCache: { orders: Order[]; tickets: PortalItem[] } | null = null;
+type ProfileData = { orders: Order[]; tickets: PortalItem[] };
+const profileCache = new UserScopedCache<ProfileData>();
 
 const readString = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
 
@@ -63,83 +69,143 @@ export default function ProfileScreen() {
   const [detail, setDetail] = useState<DetailState>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeList, setActiveList] = useState<"orders" | "tickets">("orders");
+  const [renderedOwnerKey, setRenderedOwnerKey] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const activeOwnerKey = auth.isAuthenticated ? auth.userCacheKey : null;
+  const refreshAuth = auth.refreshAuth;
+  const visibleOrders = renderedOwnerKey === activeOwnerKey ? orders : [];
+  const visibleTickets = renderedOwnerKey === activeOwnerKey ? tickets : [];
 
-  const load = async (force = false) => {
-    if (!auth.isAuthenticated) return;
-    if (!force && profileCache) {
-      setOrders(profileCache.orders);
-      setTickets(profileCache.tickets);
+  useEffect(() => onUserScopedCacheInvalidated(() => {
+    requestIdRef.current += 1;
+    setOrders([]);
+    setTickets([]);
+    setRenderedOwnerKey(null);
+    setDetail(null);
+    setError(null);
+    setLoading(false);
+    setRefreshing(false);
+    setDetailLoading(false);
+    setDownloadingPdf(false);
+  }), []);
+
+  const load = useCallback(async (force = false) => {
+    const ownerKey = activeOwnerKey;
+    if (!ownerKey) return;
+
+    const requestId = ++requestIdRef.current;
+    const cacheGeneration = getUserScopedCacheGeneration();
+    const cached = force ? null : profileCache.get(ownerKey);
+    if (cached) {
+      setOrders(cached.orders);
+      setTickets(cached.tickets);
+      setRenderedOwnerKey(ownerKey);
       return;
     }
+
+    setOrders([]);
+    setTickets([]);
+    setRenderedOwnerKey(null);
     setLoading(true);
     setError(null);
     try {
       const [nextOrders, nextTickets] = await Promise.all([profileService.orders(), profileService.tickets()]);
-      setOrders(Array.isArray(nextOrders) ? nextOrders : []);
-      setTickets(Array.isArray(nextTickets) ? nextTickets : []);
-      profileCache = { orders: Array.isArray(nextOrders) ? nextOrders : [], tickets: Array.isArray(nextTickets) ? nextTickets : [] };
+      if (
+        requestId !== requestIdRef.current
+        || cacheGeneration !== getUserScopedCacheGeneration()
+      ) return;
+
+      const nextData = {
+        orders: Array.isArray(nextOrders) ? nextOrders : [],
+        tickets: Array.isArray(nextTickets) ? nextTickets : [],
+      };
+      profileCache.set(ownerKey, nextData);
+      setOrders(nextData.orders);
+      setTickets(nextData.tickets);
+      setRenderedOwnerKey(ownerKey);
     } catch (err) {
+      if (
+        requestId !== requestIdRef.current
+        || cacheGeneration !== getUserScopedCacheGeneration()
+      ) return;
       setError(err instanceof Error ? err.message : "Could not load profile.");
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (
+        requestId === requestIdRef.current
+        && cacheGeneration === getUserScopedCacheGeneration()
+      ) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  };
+  }, [activeOwnerKey]);
 
   useFocusEffect(useCallback(() => {
-    void auth.refreshAuth().then(() => load());
-  }, [auth.isAuthenticated]));
+    void refreshAuth();
+    if (activeOwnerKey) void load();
+    return () => {
+      requestIdRef.current += 1;
+    };
+  }, [activeOwnerKey, load, refreshAuth]));
 
   const logout = async () => {
-    setDetail(null);
-    setOrders([]);
-    setTickets([]);
-    profileCache = null;
     await auth.logout();
     router.replace("/");
   };
 
   const openOrder = async (order: Order & PortalItem) => {
     const id = order.order_number ?? order.order_code ?? order.code ?? order.reference ?? order.id;
-    if (!id) return;
+    if (!id || !activeOwnerKey) return;
+    const cacheGeneration = getUserScopedCacheGeneration();
     setDetailLoading(true);
     setError(null);
     try {
       const item = await profileService.order(id);
+      if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       setDetail({ type: "order", title: `Order ${displayValue(order, ["order_code", "order_number", "id"], `#${id}`)}`, item, pdfId: String(id) });
     } catch (err) {
+      if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       setError(err instanceof Error ? err.message : "Could not load order details.");
     } finally {
-      setDetailLoading(false);
+      if (cacheGeneration === getUserScopedCacheGeneration()) {
+        setDetailLoading(false);
+      }
     }
   };
 
   const openTicket = async (ticket: PortalItem) => {
     const code = displayValue(ticket, ["ticket_code", "code", "reference"], "");
-    if (!code) return;
+    if (!code || !activeOwnerKey) return;
+    const cacheGeneration = getUserScopedCacheGeneration();
     setDetailLoading(true);
     setError(null);
     try {
       const item = await profileService.ticket(code);
+      if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       const pdfId = displayValue(item, ["order_code", "order_number", "order_id"], displayValue(ticket, ["order_code", "order_number", "order_id"], ""));
       setDetail({ type: "ticket", title: `Ticket ${code}`, item, pdfId });
     } catch (err) {
+      if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       setError(err instanceof Error ? err.message : "Could not load ticket details.");
     } finally {
-      setDetailLoading(false);
+      if (cacheGeneration === getUserScopedCacheGeneration()) {
+        setDetailLoading(false);
+      }
     }
   };
 
   const downloadPdf = async (orderId?: string) => {
-    if (!orderId) {
+    if (!orderId || !activeOwnerKey) {
       setError("Order number is required to download the PDF.");
       return;
     }
 
+    const cacheGeneration = getUserScopedCacheGeneration();
     setDownloadingPdf(true);
     setError(null);
     try {
       const response = await profileService.orderPdf(orderId);
+      if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       if (Platform.OS !== "web") {
         const FileSystem = await import("expo-file-system");
         const Sharing = await import("expo-sharing");
@@ -151,11 +217,13 @@ export default function ProfileScreen() {
         };
         file.create({ overwrite: true });
         file.write(new Uint8Array(await response.arrayBuffer()));
+        if (cacheGeneration !== getUserScopedCacheGeneration()) return;
         if (!(await Sharing.isAvailableAsync())) throw new Error("No app is available to open this PDF.");
         await Sharing.shareAsync(file.uri, { mimeType: "application/pdf", dialogTitle: `Order ${orderId}` });
         return;
       }
       const blob = await response.blob();
+      if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -163,9 +231,12 @@ export default function ProfileScreen() {
       anchor.click();
       window.URL.revokeObjectURL(url);
     } catch (err) {
+      if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       setError(err instanceof Error ? err.message : "Failed to download PDF.");
     } finally {
-      setDownloadingPdf(false);
+      if (cacheGeneration === getUserScopedCacheGeneration()) {
+        setDownloadingPdf(false);
+      }
     }
   };
 
@@ -221,12 +292,12 @@ export default function ProfileScreen() {
 
                   <View style={[local.statGrid, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
                     <Pressable onPress={() => setActiveList("orders")} style={[local.statBox, !isWide && activeList === "orders" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
-                      <Text style={[local.statValue, { color: theme.colors.ink }]}>{orders.length}</Text>
+                      <Text style={[local.statValue, { color: theme.colors.ink }]}>{visibleOrders.length}</Text>
                       <Text style={[local.statLabel, { color: !isWide && activeList === "orders" ? theme.colors.primary : theme.colors.muted }]}>Orders</Text>
                     </Pressable>
                     <View style={[local.statDivider, { backgroundColor: theme.colors.line }]} />
                     <Pressable onPress={() => setActiveList("tickets")} style={[local.statBox, !isWide && activeList === "tickets" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
-                      <Text style={[local.statValue, { color: theme.colors.ink }]}>{tickets.length}</Text>
+                      <Text style={[local.statValue, { color: theme.colors.ink }]}>{visibleTickets.length}</Text>
                       <Text style={[local.statLabel, { color: !isWide && activeList === "tickets" ? theme.colors.primary : theme.colors.muted }]}>Tickets</Text>
                     </Pressable>
                   </View>
@@ -242,9 +313,9 @@ export default function ProfileScreen() {
                 <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
                   <View style={local.sectionHeader}>
                     <Text style={[local.sectionTitle, { color: theme.colors.ink }]}>Orders</Text>
-                    <View style={local.countPill}><Text style={local.countText}>{orders.length}</Text></View>
+                    <View style={local.countPill}><Text style={local.countText}>{visibleOrders.length}</Text></View>
                   </View>
-                  {orders.length ? orders.map((order) => (
+                  {visibleOrders.length ? visibleOrders.map((order) => (
                     <Pressable key={order.id} onPress={() => void openOrder(order as Order & PortalItem)} style={({ pressed }) => [local.listRow, { borderTopColor: theme.colors.line }, pressed && local.rowPressed]}>
                       <View style={local.rowMain}>
                         <View style={local.rowTitleLine}>
@@ -268,9 +339,9 @@ export default function ProfileScreen() {
                 <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
                   <View style={local.sectionHeader}>
                     <Text style={[local.sectionTitle, { color: theme.colors.ink }]}>Tickets</Text>
-                    <View style={local.countPill}><Text style={local.countText}>{tickets.length}</Text></View>
+                    <View style={local.countPill}><Text style={local.countText}>{visibleTickets.length}</Text></View>
                   </View>
-                  {tickets.length ? tickets.slice(0, 10).map((ticket, index) => (
+                  {visibleTickets.length ? visibleTickets.slice(0, 10).map((ticket, index) => (
                     <Pressable key={ticket.id ?? ticket.ticket_code ?? index} onPress={() => void openTicket(ticket)} style={({ pressed }) => [local.listRow, { borderTopColor: theme.colors.line }, pressed && local.rowPressed]}>
                       <View style={local.rowMain}>
                         <View style={local.rowTitleLine}>
