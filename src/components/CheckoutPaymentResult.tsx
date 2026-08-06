@@ -1,10 +1,16 @@
 import { Button, Card, Screen, styles, useResponsive, useTheme } from "@/components/ui";
 import type { CheckoutResultParams } from "@/lib/checkoutResultParams";
+import {
+  getCheckoutResultMetadata,
+  getCheckoutResultPresentation,
+  type CheckoutResultOutcome,
+} from "@/lib/checkoutResultPresentation";
 import { router } from "expo-router";
-import { Text, View } from "react-native";
+import { useEffect, useRef } from "react";
+import { AccessibilityInfo, ScrollView, Text, View } from "react-native";
 
 type Props = {
-  outcome: "success" | "failed";
+  outcome: CheckoutResultOutcome;
   result: CheckoutResultParams;
 };
 
@@ -12,39 +18,58 @@ export function CheckoutPaymentResult({ outcome, result }: Props) {
   const theme = useTheme();
   const responsive = useResponsive();
   const succeeded = outcome === "success";
-  const order = result.order_number ?? result.order_id;
-  const copy = resultCopy(outcome, result.provider);
+  const presentation = getCheckoutResultPresentation(outcome, result.provider);
+  const metadata = getCheckoutResultMetadata(result);
+  const announcedResultRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const announcementKey = `${outcome}:${result.provider}`;
+    if (announcedResultRef.current === announcementKey) return;
+    announcedResultRef.current = announcementKey;
+    AccessibilityInfo.announceForAccessibility(presentation.title);
+  }, [outcome, presentation.title, result.provider]);
 
   return (
     <Screen>
-      <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <Card>
-          <View style={[local.icon, { backgroundColor: succeeded ? theme.colors.success : theme.colors.danger }]}>
-            <Text style={local.iconText}>{succeeded ? "✓" : "!"}</Text>
-          </View>
-          <Text accessibilityRole="header" style={[local.title, { color: theme.colors.ink }]}>
-            {copy.title}
-          </Text>
-          <Text style={[local.message, { color: theme.colors.secondary }]}>{copy.message}</Text>
-
-          {result.reasonMessage ? (
-            <Text accessibilityRole="alert" style={[local.reason, { color: theme.colors.secondary }]}>
-              {result.reasonMessage}
+      <ScrollView
+        style={[local.scroll, { width: responsive.contentWidth }]}
+        contentContainerStyle={local.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={local.cardWrap}>
+          <Card>
+            <View
+              accessible={false}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              style={[local.icon, { backgroundColor: succeeded ? theme.colors.success : theme.colors.danger }]}
+            >
+              <Text accessible={false} style={local.iconText}>{succeeded ? "✓" : "!"}</Text>
+            </View>
+            <Text accessibilityRole="header" style={[local.title, { color: theme.colors.ink }]}>
+              {presentation.title}
             </Text>
-          ) : null}
+            <Text style={[local.message, { color: theme.colors.secondary }]}>{presentation.message}</Text>
 
-          {order ? <ResultDetail label="Order" value={order} /> : null}
-          {result.reference ? <ResultDetail label="Reference" value={result.reference} /> : null}
-          {result.status ? <ResultDetail label="Status" value={result.status} /> : null}
+            {result.reasonMessage ? (
+              <Text accessibilityRole="alert" style={[local.reason, { color: theme.colors.secondary }]}>
+                {result.reasonMessage}
+              </Text>
+            ) : null}
 
-          <Button title="Return home" onPress={() => router.replace("/")} />
-          {succeeded ? (
-            <Button title="View bookings" variant="secondary" onPress={() => router.replace("/profile")} />
-          ) : (
-            <Button title="Browse matches" variant="secondary" onPress={() => router.replace("/matches")} />
-          )}
-        </Card>
-      </View>
+            {metadata.map((detail) => <ResultDetail key={detail.label} {...detail} />)}
+
+            <View style={local.actions}>
+              <Button title="Return home" onPress={() => router.replace("/")} />
+              <Button
+                title={presentation.secondaryAction.title}
+                variant="secondary"
+                onPress={() => router.replace(presentation.secondaryAction.href)}
+              />
+            </View>
+          </Card>
+        </View>
+      </ScrollView>
     </Screen>
   );
 }
@@ -60,52 +85,17 @@ function ResultDetail({ label, value }: { label: string; value: string }) {
   );
 }
 
-function resultCopy(outcome: Props["outcome"], provider: CheckoutResultParams["provider"]) {
-  if (outcome === "success") {
-    if (provider === "blue") {
-      return {
-        title: "Blue Wallet payment successful",
-        message: "Your booking has been confirmed. You can find your tickets and booking details in your profile.",
-      };
-    }
-    if (provider === "cybersource") {
-      return {
-        title: "Card payment successful",
-        message: "Your booking has been confirmed. You can find your tickets and booking details in your profile.",
-      };
-    }
-    return {
-      title: "Payment successful",
-      message: "Your payment result is ready. View your profile for authoritative booking details.",
-    };
-  }
-
-  if (provider === "blue") {
-    return {
-      title: "Blue Wallet payment failed",
-      message: "Blue Wallet could not complete this payment. The previous checkout is no longer active, so a new attempt must begin with a new reservation.",
-    };
-  }
-  if (provider === "cybersource") {
-    return {
-      title: "Card payment failed",
-      message: "The card payment could not be completed. Return home or browse matches to begin a safe new attempt.",
-    };
-  }
-  return {
-    title: "Payment failed",
-    message: "The payment could not be completed. Return home or browse matches to continue safely.",
-  };
-}
-
 const local = {
-  shell: { flex: 1, maxWidth: 560, alignSelf: "center" as const, justifyContent: "center" as const },
-  icon: { width: 58, height: 58, borderRadius: 29, alignSelf: "center" as const, alignItems: "center" as const, justifyContent: "center" as const },
-  iconText: { color: "#FFFFFF", fontSize: 30, lineHeight: 36, fontWeight: "900" as const },
-  title: { marginTop: 4, fontSize: 25, lineHeight: 32, fontWeight: "900" as const, textAlign: "center" as const },
+  scroll: { flex: 1, maxWidth: 560, alignSelf: "center" as const },
+  content: { flexGrow: 1, justifyContent: "center" as const, paddingTop: 18, paddingBottom: 24 },
+  cardWrap: { width: "100%" as const },
+  icon: { width: 52, height: 52, borderRadius: 26, alignSelf: "center" as const, alignItems: "center" as const, justifyContent: "center" as const },
+  iconText: { color: "#FFFFFF", fontSize: 27, lineHeight: 32, fontWeight: "900" as const },
+  title: { marginTop: 2, fontSize: 24, lineHeight: 31, fontWeight: "900" as const, textAlign: "center" as const },
   message: { fontSize: 14, lineHeight: 21, textAlign: "center" as const },
   reason: { fontSize: 13, lineHeight: 19, textAlign: "center" as const },
-  detail: { borderWidth: 1, borderRadius: 13, padding: 12, gap: 2 },
+  detail: { borderWidth: 1, borderRadius: 13, paddingHorizontal: 12, paddingVertical: 10, gap: 2 },
   detailLabel: { textTransform: "uppercase" as const, fontWeight: "800" as const },
   detailValue: { fontSize: 14, lineHeight: 20, fontWeight: "800" as const },
+  actions: { marginTop: 2, gap: 10 },
 };
