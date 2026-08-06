@@ -1,6 +1,11 @@
 import { useTheme } from "@/components/ui";
 import { clearBluePaymentHandoff, readBluePaymentHandoff } from "@/lib/bluePaymentHandoff";
-import { blueResultDisplayParams, classifyBlueTerminalUrl } from "@/lib/bluePaymentRedirect";
+import {
+  createBlueNavigationDiagnostic,
+  logBlueNavigationDiagnostic,
+  type BlueNavigationDecision,
+} from "@/lib/bluePaymentNavigationDiagnostics";
+import { blueResultDisplayParams, decideBlueNavigation } from "@/lib/bluePaymentRedirect";
 import { config } from "@/lib/config";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -8,11 +13,13 @@ import { ActivityIndicator, BackHandler, Linking, StyleSheet, Text, View } from 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewNavigation } from "react-native-webview";
 
-const EXTERNAL_SCHEMES = new Set(["tel:", "mailto:"]);
-const REJECTED_SCHEMES = new Set(["file:", "data:", "javascript:", "intent:", "market:"]);
-
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function readIsTopFrame(request: WebViewNavigation) {
+  const candidate = request as WebViewNavigation & { isTopFrame?: unknown };
+  return typeof candidate.isTopFrame === "boolean" ? candidate.isTopFrame : undefined;
 }
 
 export default function BluePaymentScreen() {
@@ -49,45 +56,89 @@ export default function BluePaymentScreen() {
     });
   }, [handoffId]);
 
-  const handleNavigation = useCallback((navigationUrl: string) => {
-    const terminalResult = classifyBlueTerminalUrl(navigationUrl, config.blueRedirectOrigin);
-    if (terminalResult) {
+  const handleNavigation = useCallback((request: WebViewNavigation) => {
+    const navigationUrl = request.url;
+    const navigationDecision = decideBlueNavigation(
+      navigationUrl,
+      config.blueRedirectOrigin,
+      terminalHandledRef.current,
+    );
+    const { terminalResult } = navigationDecision;
+    const logDecision = (
+      decision: BlueNavigationDecision,
+      callback = "onShouldStartLoadWithRequest",
+    ) => {
+      logBlueNavigationDiagnostic(createBlueNavigationDiagnostic(navigationUrl, {
+        callback,
+        navigationType: request.navigationType,
+        isTopFrame: readIsTopFrame(request),
+        terminalResult,
+        terminalAlreadyHandled: terminalHandledRef.current,
+        decision,
+      }));
+    };
+
+    logDecision("navigation_received");
+
+    if (navigationDecision.action === "ignore") {
+      logDecision(navigationDecision.decision);
+      return false;
+    }
+
+    if (navigationDecision.action === "handle_terminal" && terminalResult) {
+      logDecision(navigationDecision.decision);
       handleTerminal(navigationUrl, terminalResult);
       return false;
     }
 
-    let url: URL;
-    try {
-      url = new URL(navigationUrl);
-    } catch {
+    if (navigationDecision.decision === "invalid_url") {
+      logDecision(navigationDecision.decision);
       setError("The payment page tried to open an invalid address.");
       return false;
     }
 
-    if (url.username || url.password) {
+    if (navigationDecision.decision === "blocked_credentials") {
+      logDecision(navigationDecision.decision);
       setError("The payment page tried to open an unsafe address.");
       return false;
     }
-    if (url.protocol === "http:" || url.protocol === "https:") return true;
+    if (navigationDecision.action === "allow_webview") {
+      logDecision(navigationDecision.decision);
+      return true;
+    }
 
-    if (EXTERNAL_SCHEMES.has(url.protocol)) {
-      void Linking.canOpenURL(url.href)
-        .then((supported) => supported ? Linking.openURL(url.href) : undefined)
-        .catch(() => setError("This external action is not available on this device."));
+    if (navigationDecision.action === "open_external") {
+      const externalUrl = new URL(navigationUrl);
+      logDecision(navigationDecision.decision, "Linking.canOpenURL");
+      void Linking.canOpenURL(externalUrl.href)
+        .then((supported) => {
+          if (!supported) {
+            logDecision("external_open_failed", "Linking.canOpenURL");
+            return;
+          }
+          return Linking.openURL(externalUrl.href)
+            .then(() => logDecision("open_external_supported", "Linking.openURL"));
+        })
+        .catch(() => {
+          logDecision("external_open_failed", "Linking.openURL");
+          setError("This external action is not available on this device.");
+        });
       return false;
     }
 
-    if (REJECTED_SCHEMES.has(url.protocol)) {
+    if (navigationDecision.decision === "blocked_dangerous_scheme") {
+      logDecision(navigationDecision.decision);
       setError("This payment-page action is not supported inside the app.");
       return false;
     }
 
+    logDecision(navigationDecision.decision);
     setError("The payment page requested an unsupported external application.");
     return false;
   }, [handleTerminal]);
 
   const handleShouldStart = useCallback(
-    (request: WebViewNavigation) => handleNavigation(request.url),
+    (request: WebViewNavigation) => handleNavigation(request),
     [handleNavigation],
   );
 
