@@ -5,17 +5,14 @@
     "owner": "jasquare",
     "version": "1.0.0",
     "orientation": "default",
-    "icon": "./assets/images/lfa-app-icon-v2.png",
+    "icon": "./assets/images/lfa-app-icon.png",
     "scheme": "lfa-app",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/images/lfa-app-icon-v2.png"
+      "icon": "./assets/images/lfa-app-icon-ios.png"
     },
     "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#C8102E",
-        "foregroundImage": "./assets/images/lfa-app-icon-v2.png"
-      },
+      "icon": "./assets/images/lfa-app-icon-android.png",
       "predictiveBackGestureEnabled": false,
       "package": "com.lfaticketing.app"
     },
