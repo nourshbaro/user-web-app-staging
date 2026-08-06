@@ -3,7 +3,7 @@ import type { CheckoutSubmitRequest, CheckoutSubmitResponse } from "@/types";
 
 export const checkoutService = {
   async submit(payload: CheckoutSubmitRequest) {
-    return apiRequest<CheckoutSubmitResponse>("/checkout/web/submit", { method: "POST", body: JSON.stringify(payload) });
+    return apiRequest<CheckoutSubmitResponse>("/checkout/mobile/submit", { method: "POST", body: JSON.stringify(payload) });
   },
 
   async captureContext(checkoutSessionId: string, targetOrigins: string[]) {
