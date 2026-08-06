@@ -93,6 +93,11 @@ export default function CartScreen() {
                 <Button title="Checkout" onPress={() => router.push("/checkout")} />
               </View>
             </View>
+          ) : cart.cartRefreshError ? (
+            <Card>
+              <Empty title="Unable to load your cart" detail={cart.cartRefreshError} />
+              <Button title="Retry" onPress={() => void cart.refreshCart()} />
+            </Card>
           ) : (
             <Empty title="Your cart is empty" detail="Pick a match and reserve tickets to start checkout." />
           )}

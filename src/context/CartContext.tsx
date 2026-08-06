@@ -1,7 +1,9 @@
 import { router } from "expo-router";
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "react-native";
+import { classifyCartRefreshFailure, createCartRefreshGuard } from "@/lib/cartRefreshPolicy";
 import { storage } from "@/lib/storage";
+import { ApiError } from "@/services/api";
 import { cartService, getCartItems } from "@/services/cart";
 import type { AddCartRequest, CartItem } from "@/types";
 
@@ -14,6 +16,7 @@ type CartContextValue = {
   currency: string;
   secondsLeft: number;
   isLoading: boolean;
+  cartRefreshError: string | null;
   addItem: (payload: Omit<AddCartRequest, "checkout_session_id">) => Promise<void>;
   removeItem: (lockKey: string) => Promise<void>;
   removeItems: (lockKeys: string[]) => Promise<void>;
@@ -39,7 +42,10 @@ export function CartProvider({ children }: PropsWithChildren) {
   const [currency, setCurrency] = useState("USD");
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [isLoading, setLoading] = useState(false);
+  const [cartRefreshError, setCartRefreshError] = useState<string | null>(null);
   const expiryHandledRef = useRef(false);
+  const refreshGuardRef = useRef(createCartRefreshGuard());
+  const mountedRef = useRef(true);
 
   const resetCartState = useCallback(() => {
     setSessionId(null);
@@ -48,6 +54,7 @@ export function CartProvider({ children }: PropsWithChildren) {
     setTotal(0);
     setCurrency("USD");
     setSecondsLeft(0);
+    setCartRefreshError(null);
   }, []);
 
   const applyCart = useCallback((response: Awaited<ReturnType<typeof cartService.get>>) => {
@@ -57,10 +64,13 @@ export function CartProvider({ children }: PropsWithChildren) {
     setTotal(Number(response.cart.total ?? 0));
     setCurrency(response.cart.currency ?? "USD");
     setExpiresAt(response.expires_at ? new Date(response.expires_at) : null);
+    setCartRefreshError(null);
   }, []);
 
   const clearCart = useCallback(async () => {
+    refreshGuardRef.current.invalidate();
     await storage.remove(SESSION_KEY);
+    if (!mountedRef.current) return;
     expiryHandledRef.current = false;
     resetCartState();
   }, [resetCartState]);
@@ -68,34 +78,53 @@ export function CartProvider({ children }: PropsWithChildren) {
   const expireCart = useCallback(async () => {
     if (expiryHandledRef.current) return;
     expiryHandledRef.current = true;
+    refreshGuardRef.current.invalidate();
     await storage.remove(SESSION_KEY);
+    if (!mountedRef.current) return;
     resetCartState();
     dismissEverythingAndGoHome();
   }, [resetCartState]);
 
   const refreshCart = useCallback(async () => {
     if (!sessionId) return;
+    const requestId = refreshGuardRef.current.begin();
     try {
       const response = await cartService.get(sessionId);
+      if (!mountedRef.current || !refreshGuardRef.current.isCurrent(requestId)) return;
       const nextItems = getCartItems(response.cart);
       if (!nextItems.length) {
         await clearCart();
         return;
       }
       applyCart(response);
-    } catch {
-      await clearCart();
+    } catch (error) {
+      if (!mountedRef.current || !refreshGuardRef.current.isCurrent(requestId)) return;
+      const status = error instanceof ApiError ? error.status : null;
+      const failure = classifyCartRefreshFailure(status);
+      if (failure.shouldClearSession) {
+        await clearCart();
+        return;
+      }
+      setCartRefreshError("We couldn't refresh your cart. Your reservation reference was kept; please try again.");
     }
   }, [applyCart, clearCart, sessionId]);
 
   useEffect(() => {
+    const refreshGuard = refreshGuardRef.current;
+    mountedRef.current = true;
     void storage.get(SESSION_KEY).then((stored) => {
-      if (stored) setSessionId(stored);
+      if (mountedRef.current && stored) setSessionId(stored);
     });
+    return () => {
+      mountedRef.current = false;
+      refreshGuard.invalidate();
+    };
   }, []);
 
   useEffect(() => {
-    if (sessionId) void refreshCart();
+    if (!sessionId) return;
+    const timeout = setTimeout(() => void refreshCart(), 0);
+    return () => clearTimeout(timeout);
   }, [refreshCart, sessionId]);
 
   useEffect(() => {
@@ -186,13 +215,14 @@ export function CartProvider({ children }: PropsWithChildren) {
     currency,
     secondsLeft,
     isLoading,
+    cartRefreshError,
     addItem,
     removeItem,
     removeItems,
     updateItem,
     refreshCart,
     clearCart,
-  }), [currency, isLoading, items, secondsLeft, sessionId, total]);
+  }), [cartRefreshError, currency, isLoading, items, secondsLeft, sessionId, total]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

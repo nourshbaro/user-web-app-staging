@@ -18,6 +18,17 @@ export class ApiError extends Error {
   }
 }
 
+export class ApiTransportError extends Error {
+  category: "network" | "timeout";
+  originalError: unknown;
+
+  constructor(message: string, category: "network" | "timeout", originalError: unknown) {
+    super(message);
+    this.category = category;
+    this.originalError = originalError;
+  }
+}
+
 export async function getToken() {
   return storage.get(TOKEN_KEY);
 }
@@ -44,7 +55,11 @@ export function notifyUnauthenticated() {
 export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const token = await getToken();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number.isFinite(config.timeoutMs) ? config.timeoutMs : 15000);
+  let didTimeout = false;
+  const timeout = setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, Number.isFinite(config.timeoutMs) ? config.timeoutMs : 15000);
   const url = Platform.OS === "web" ? `/api${path}` : `${config.apiBaseUrl}${path}`;
   const { skipUnauthenticatedNotify, ...requestInit } = init;
 
@@ -73,6 +88,10 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
     }
 
     return body as T;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (didTimeout) throw new ApiTransportError("The request timed out. Please try again.", "timeout", error);
+    throw new ApiTransportError("Unable to reach the server. Check your connection and try again.", "network", error);
   } finally {
     clearTimeout(timeout);
   }

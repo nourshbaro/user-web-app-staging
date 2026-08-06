@@ -115,6 +115,11 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
                   <Button title="Checkout" onPress={checkout} />
                 </View>
               </View>
+            ) : cart.cartRefreshError ? (
+              <Card>
+                <Empty title="Unable to load your cart" detail={cart.cartRefreshError} />
+                <Button title="Retry" onPress={() => void cart.refreshCart()} />
+              </Card>
             ) : (
               <Empty title="Your cart is empty" detail="Pick a match and reserve tickets to start checkout." />
             )}
