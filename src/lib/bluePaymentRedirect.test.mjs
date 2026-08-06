@@ -191,25 +191,3 @@ test("intent remains in the dangerous-scheme branch", () => {
     { terminalResult: null, decision: "blocked_dangerous_scheme", action: "block" },
   );
 });
-
-test("custom callback diagnostics contain terminal decisions without sensitive values", async () => {
-  const { createBlueNavigationDiagnostic } = await import("./bluePaymentNavigationDiagnostics.ts");
-  const callback = "lfa-app://checkout/success?payment_id=secret";
-  const decision = decideBlueNavigation(callback, redirectOrigin, false);
-  const metadata = createBlueNavigationDiagnostic(callback, {
-    callback: "onShouldStartLoadWithRequest",
-    navigationType: "other",
-    isTopFrame: true,
-    terminalResult: decision.terminalResult,
-    terminalAlreadyHandled: false,
-    decision: decision.decision,
-  });
-  const output = JSON.stringify(metadata);
-
-  assert.equal(metadata.scheme, "lfa-app");
-  assert.equal(metadata.host, "checkout");
-  assert.equal(metadata.terminalResult, "success");
-  assert.equal(metadata.decision, "terminal_success");
-  assert.doesNotMatch(output, /provider|payment_id|secret/);
-  assert.ok(!output.includes(callback));
-});
