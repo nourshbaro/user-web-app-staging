@@ -5,11 +5,12 @@ import { useCartSheet } from "@/context/CartSheetContext";
 import { useToast } from "@/context/ToastContext";
 import { storageUrl } from "@/lib/config";
 import { formatDate, formatMoney, formatTime, matchTitle } from "@/lib/format";
+import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, ApiSeat, ApiZone } from "@/types";
 import { Image as ExpoImage } from "expo-image";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { createElement, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Image, Platform, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
 const MAP_VIEW_W = 600;
@@ -21,8 +22,9 @@ export default function MatchDetail() {
   const theme = useTheme();
   const [match, setMatch] = useState<ApiMatch | null>(null);
   const [selectedZone, setSelectedZone] = useState<ApiZone | null>(null);
-  const [seats, setSeats] = useState<ApiSeat[]>([]);
+  const [seatSnapshot, setSeatSnapshot] = useState<{ identity: string; seats: ApiSeat[] } | null>(null);
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
+  const [selectedZoneMatchId, setSelectedZoneMatchId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -30,6 +32,7 @@ export default function MatchDetail() {
   const [error, setError] = useState<string | null>(null);
   const zoneScrollRef = useRef<ScrollView>(null);
   const zoneChipLayouts = useRef(new Map<number, { x: number; width: number }>());
+  const seatRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const cart = useCart();
   const { openCartSheet } = useCartSheet();
   const toast = useToast();
@@ -48,6 +51,15 @@ export default function MatchDetail() {
     () => cart.items.map((item) => `${item.lock_key}:${item.quantity}:${item.seat_ids?.join(",") ?? ""}`).join("|"),
     [cart.items],
   );
+  const routeMatchId = String(id ?? "");
+  const selectedZoneBelongsToMatch = selectedZoneMatchId === routeMatchId;
+  const activeSeatIdentity = createRequestIdentity([
+    routeMatchId,
+    selectedZoneBelongsToMatch ? selectedZone?.id : null,
+    cartItemsSignature,
+    selectedZoneBelongsToMatch ? selectedZone?.has_seats : false,
+  ]);
+  const visibleSeats = seatSnapshot?.identity === activeSeatIdentity ? seatSnapshot.seats : [];
   const zones = match?.stadium?.zones ?? [];
   const mapImageUrl = storageUrl(match?.stadium?.mapImageUrl ?? match?.stadium?.map_image);
   const mapViewHeight = useMapViewHeight(mapImageUrl, zones);
@@ -56,6 +68,7 @@ export default function MatchDetail() {
     if (!force) setLoading(true);
     return matchesService.details(id, force)
       .then((data) => {
+        setSelectedZoneMatchId(String(id ?? ""));
         setMatch(data);
         setSelectedZone((current) => data.stadium?.zones?.find((zone) => zone.id === current?.id) ?? data.stadium?.zones?.[0] ?? null);
       })
@@ -72,24 +85,55 @@ export default function MatchDetail() {
   }, [id]);
 
   useEffect(() => {
+    seatRequestAuthority.mount();
+    return () => seatRequestAuthority.unmount();
+  }, [seatRequestAuthority]);
+
+  useLayoutEffect(() => {
+    seatRequestAuthority.invalidate(activeSeatIdentity);
+  }, [activeSeatIdentity, seatRequestAuthority]);
+
+  useEffect(() => {
     setSelectedSeats([]);
-    setSeats([]);
+    setSeatSnapshot(null);
   }, [selectedZone?.id]);
 
   useEffect(() => {
-    if (!selectedZone?.has_seats) return;
-    setSeatLoading(true);
-    matchesService.seats(id, selectedZone.id)
-      .then((data) => setSeats(data.seats))
-      .catch((err) => {
-        toast.showToast({
-          variant: "error",
-          title: "Could not load seats",
-          message: err instanceof Error ? err.message : "Try choosing another zone.",
+    const requestIdentity = activeSeatIdentity;
+    const ticket = seatRequestAuthority.begin(requestIdentity);
+    const requestedMatchId = routeMatchId;
+    const requestedZoneId = selectedZoneBelongsToMatch ? selectedZone?.id : null;
+    const requestedHasSeats = selectedZoneBelongsToMatch && Boolean(selectedZone?.has_seats);
+
+    const timeout = setTimeout(() => {
+      if (!seatRequestAuthority.isCurrent(ticket, activeSeatIdentity)) return;
+      if (requestedZoneId === null || requestedZoneId === undefined || !requestedHasSeats) {
+        setSeatLoading(false);
+        return;
+      }
+
+      setSeatLoading(true);
+      void matchesService.seats(requestedMatchId, requestedZoneId)
+        .then((data) => {
+          if (!seatRequestAuthority.isCurrent(ticket, activeSeatIdentity)) return;
+          setSeatSnapshot({ identity: requestIdentity, seats: data.seats });
+        })
+        .catch((err) => {
+          if (!seatRequestAuthority.isCurrent(ticket, activeSeatIdentity)) return;
+          toast.showToast({
+            variant: "error",
+            title: "Could not load seats",
+            message: err instanceof Error ? err.message : "Try choosing another zone.",
+          });
+        })
+        .finally(() => {
+          if (!seatRequestAuthority.isCurrent(ticket, activeSeatIdentity)) return;
+          setSeatLoading(false);
         });
-      })
-      .finally(() => setSeatLoading(false));
-  }, [id, selectedZone?.id, cartItemsSignature]);
+    }, 0);
+
+    return () => clearTimeout(timeout);
+  }, [activeSeatIdentity, routeMatchId, seatRequestAuthority, selectedZone?.has_seats, selectedZone?.id, selectedZoneBelongsToMatch, toast]);
 
   useEffect(() => {
     if (!selectedSeats.length || !cartSeatIds.size) return;
@@ -159,6 +203,9 @@ export default function MatchDetail() {
   const mapHeight = Math.round(mapWidth * mapViewHeight / MAP_VIEW_W);
   const seatMapSize = mapWidth;
   const selectZone = (zone: ApiZone, revealInList = false) => {
+    const nextIdentity = createRequestIdentity([routeMatchId, zone.id, cartItemsSignature, zone.has_seats]);
+    seatRequestAuthority.invalidate(nextIdentity);
+    setSelectedZoneMatchId(routeMatchId);
     setSelectedZone(zone);
     if (!revealInList) return;
     requestAnimationFrame(() => {
@@ -237,7 +284,7 @@ export default function MatchDetail() {
               </View>
               {seatLoading ? <Text style={styles.muted}>Loading seats...</Text> : null}
               <SeatMap
-                seats={seats}
+                seats={visibleSeats}
                 selectedIds={selectedSeats}
                 cartSeatIds={cartSeatIds}
                 size={seatMapSize}
@@ -247,7 +294,7 @@ export default function MatchDetail() {
                 }}
               />
               <SeatLegend />
-              {!seatLoading && !seats.length ? <Text style={styles.muted}>No seat map is available. Choose another zone.</Text> : null}
+              {!seatLoading && !visibleSeats.length ? <Text style={styles.muted}>No seat map is available. Choose another zone.</Text> : null}
             </Card>
           ) : selectedZone ? (
             <Card>

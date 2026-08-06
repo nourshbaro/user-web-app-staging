@@ -2,10 +2,11 @@ import { AppBanner } from "@/components/AppBanner";
 import { MatchCard } from "@/components/MatchCard";
 import { Empty, Loading, colors, useResponsive, useTheme } from "@/components/ui";
 import { useToast } from "@/context/ToastContext";
+import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, FilterOption, MatchFilters } from "@/types";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, RefreshControl, ScrollView, Text, View, type DimensionValue } from "react-native";
 
 type MatchesListProps = {
@@ -30,6 +31,8 @@ export function MatchesList({ limit, filterable = false, showAppBanner = false }
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestAuthority = useMemo(() => createRequestAuthority(), []);
+  const filterIdentity = createRequestIdentity([selected.team, selected.stadium, selected.date]);
   const columns = responsive.width >= 1120 ? 3 : responsive.width >= 720 ? 2 : 1;
   const wideFilters = responsive.width >= 760;
   const hasFilters = Boolean(selected.team || selected.stadium || selected.date);
@@ -41,45 +44,67 @@ export function MatchesList({ limit, filterable = false, showAppBanner = false }
     return next;
   }, [limit, matches]);
 
-  const load = async (forceRefresh = false) => {
+  const load = useCallback(async (forceRefresh = false) => {
+    const requestFilters = { team: selected.team, stadium: selected.stadium, date: selected.date };
+    const requestIdentity = createRequestIdentity([requestFilters.team, requestFilters.stadium, requestFilters.date]);
+    const ticket = requestAuthority.begin(requestIdentity);
     setError(null);
     if (!forceRefresh) setLoading(true);
     try {
-      const [nextMatches, nextFilters] = await Promise.all([matchesService.list(selected, forceRefresh), matchesService.filters(forceRefresh)]);
+      const [nextMatches, nextFilters] = await Promise.all([matchesService.list(requestFilters, forceRefresh), matchesService.filters(forceRefresh)]);
+      if (!requestAuthority.isCurrent(ticket)) return;
       setMatches(nextMatches);
       setFilters(nextFilters);
     } catch (err) {
+      if (!requestAuthority.isCurrent(ticket)) return;
       const message = err instanceof Error ? err.message : "Could not load matches.";
       setError(message);
       toast.showToast({ variant: "error", title: "Could not load matches", message });
     } finally {
+      if (!requestAuthority.isCurrent(ticket)) return;
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [requestAuthority, selected.date, selected.stadium, selected.team, toast]);
 
   useEffect(() => {
-    void load();
-  }, [selected.team, selected.stadium, selected.date]);
+    requestAuthority.mount();
+    return () => requestAuthority.unmount();
+  }, [requestAuthority]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => void load(), 0);
+    return () => {
+      clearTimeout(timeout);
+      requestAuthority.invalidate(filterIdentity);
+    };
+  }, [filterIdentity, load, requestAuthority]);
 
   const chooseTeam = (team?: string) => {
-    setSelected((value) => ({ ...value, team }));
+    const next = { ...selected, team };
+    requestAuthority.invalidate(createRequestIdentity([next.team, next.stadium, next.date]));
+    setSelected(next);
     setTeamOpen(false);
   };
 
   const chooseVenue = (stadium?: string) => {
-    setSelected((value) => ({ ...value, stadium }));
+    const next = { ...selected, stadium };
+    requestAuthority.invalidate(createRequestIdentity([next.team, next.stadium, next.date]));
+    setSelected(next);
     setVenueOpen(false);
   };
 
   const applyDate = (date: Date) => {
     const value = toDateInputValue(date);
+    const next = { ...selected, date: value };
+    requestAuthority.invalidate(createRequestIdentity([next.team, next.stadium, next.date]));
     setDateText(value);
-    setSelected((current) => ({ ...current, date: value }));
+    setSelected(next);
     setCalendarOpen(false);
   };
 
   const clearFilters = () => {
+    requestAuthority.invalidate(createRequestIdentity([null, null, null]));
     setSelected({});
     setDateText("");
     setTeamOpen(false);
