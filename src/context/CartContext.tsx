@@ -1,6 +1,11 @@
 import { router } from "expo-router";
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Keyboard } from "react-native";
+import { AppState, Keyboard, Platform } from "react-native";
+import {
+  isCartExpiryReached,
+  parsePersistedCartSession,
+  serializePersistedCartSession,
+} from "@/lib/cartPersistence";
 import { classifyCartRefreshFailure, createCartRefreshGuard } from "@/lib/cartRefreshPolicy";
 import { addWithSessionRecovery, createSingleFlight } from "@/lib/cartSessionRecovery";
 import { storage } from "@/lib/storage";
@@ -49,6 +54,14 @@ export function CartProvider({ children }: PropsWithChildren) {
   const addMutationGuardRef = useRef(createSingleFlight());
   const mountedRef = useRef(true);
   const sessionIdRef = useRef<string | null>(null);
+
+  const persistAuthoritativeCartSession = useCallback(
+    (response: Awaited<ReturnType<typeof cartService.get>>) => {
+      const persisted = serializePersistedCartSession(response.checkout_session_id, response.expires_at);
+      return persisted ? storage.set(SESSION_KEY, persisted) : storage.remove(SESSION_KEY);
+    },
+    [],
+  );
 
   const resetCartState = useCallback(() => {
     sessionIdRef.current = null;
@@ -100,6 +113,8 @@ export function CartProvider({ children }: PropsWithChildren) {
         await clearCart();
         return;
       }
+      await persistAuthoritativeCartSession(response);
+      if (!mountedRef.current || !refreshGuardRef.current.isCurrent(requestId)) return;
       applyCart(response);
     } catch (error) {
       if (!mountedRef.current || !refreshGuardRef.current.isCurrent(requestId)) return;
@@ -111,22 +126,33 @@ export function CartProvider({ children }: PropsWithChildren) {
       }
       setCartRefreshError("We couldn't refresh your cart. Your reservation reference was kept; please try again.");
     }
-  }, [applyCart, clearCart, sessionId]);
+  }, [applyCart, clearCart, persistAuthoritativeCartSession, sessionId]);
 
   useEffect(() => {
     const refreshGuard = refreshGuardRef.current;
     mountedRef.current = true;
-    void storage.get(SESSION_KEY).then((stored) => {
-      if (mountedRef.current && stored) {
-        sessionIdRef.current = stored;
-        setSessionId(stored);
+    void storage.get(SESSION_KEY).then(async (stored) => {
+      if (!mountedRef.current) return;
+      const persisted = parsePersistedCartSession(stored, Date.now());
+
+      if (persisted.kind === "malformed" || persisted.kind === "expired") {
+        refreshGuard.invalidate();
+        await storage.remove(SESSION_KEY);
+        if (mountedRef.current) resetCartState();
+        return;
+      }
+
+      if (persisted.kind === "active" || persisted.kind === "legacy") {
+        sessionIdRef.current = persisted.sessionId;
+        setSessionId(persisted.sessionId);
+        if (persisted.kind === "active") setExpiresAt(new Date(persisted.expiresAt));
       }
     });
     return () => {
       mountedRef.current = false;
       refreshGuard.invalidate();
     };
-  }, []);
+  }, [resetCartState]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -150,7 +176,17 @@ export function CartProvider({ children }: PropsWithChildren) {
     return () => clearInterval(id);
   }, [expireCart, expiresAt]);
 
-  const addItem = (payload: Omit<AddCartRequest, "checkout_session_id">) => addMutationGuardRef.current.run(async () => {
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active" && isCartExpiryReached(expiresAt, Date.now())) {
+        void expireCart();
+      }
+    });
+    return () => subscription.remove();
+  }, [expireCart, expiresAt]);
+
+  const addItem = useCallback((payload: Omit<AddCartRequest, "checkout_session_id">) => addMutationGuardRef.current.run(async () => {
     setLoading(true);
     try {
       const activeSessionId = sessionIdRef.current;
@@ -168,6 +204,7 @@ export function CartProvider({ children }: PropsWithChildren) {
       if (existingZoneItem && quantityToAdd !== undefined) {
         const currentQuantity = Number(existingZoneItem.quantity ?? 0);
         const response = await cartService.update(existingZoneItem.lock_key, { quantity: currentQuantity + quantityToAdd });
+        await persistAuthoritativeCartSession(response);
         applyCart(response);
         return;
       }
@@ -190,8 +227,8 @@ export function CartProvider({ children }: PropsWithChildren) {
           }
         },
       });
+      await persistAuthoritativeCartSession(response);
       if (!activeSessionId || response.checkout_session_id !== activeSessionId) {
-        await storage.set(SESSION_KEY, response.checkout_session_id);
         sessionIdRef.current = response.checkout_session_id;
         setSessionId(response.checkout_session_id);
       }
@@ -199,9 +236,9 @@ export function CartProvider({ children }: PropsWithChildren) {
     } finally {
       setLoading(false);
     }
-  });
+  }), [applyCart, items, persistAuthoritativeCartSession, resetCartState]);
 
-  const removeItem = async (lockKey: string) => {
+  const removeItem = useCallback(async (lockKey: string) => {
     if (!sessionId) return;
     setLoading(true);
     try {
@@ -210,9 +247,9 @@ export function CartProvider({ children }: PropsWithChildren) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [refreshCart, sessionId]);
 
-  const removeItems = async (lockKeys: string[]) => {
+  const removeItems = useCallback(async (lockKeys: string[]) => {
     if (!sessionId || !lockKeys.length) return;
     setLoading(true);
     try {
@@ -221,18 +258,19 @@ export function CartProvider({ children }: PropsWithChildren) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [refreshCart, sessionId]);
 
-  const updateItem = async (lockKey: string, quantity: number) => {
+  const updateItem = useCallback(async (lockKey: string, quantity: number) => {
     if (quantity < 1) return removeItem(lockKey);
     setLoading(true);
     try {
       const response = await cartService.update(lockKey, { quantity });
+      await persistAuthoritativeCartSession(response);
       applyCart(response);
     } finally {
       setLoading(false);
     }
-  };
+  }, [applyCart, persistAuthoritativeCartSession, removeItem]);
 
   const value = useMemo(() => ({
     sessionId,
@@ -248,7 +286,21 @@ export function CartProvider({ children }: PropsWithChildren) {
     updateItem,
     refreshCart,
     clearCart,
-  }), [cartRefreshError, currency, isLoading, items, secondsLeft, sessionId, total]);
+  }), [
+    addItem,
+    cartRefreshError,
+    clearCart,
+    currency,
+    isLoading,
+    items,
+    refreshCart,
+    removeItem,
+    removeItems,
+    secondsLeft,
+    sessionId,
+    total,
+    updateItem,
+  ]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }
