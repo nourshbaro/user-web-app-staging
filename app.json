@@ -25,7 +25,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#FFFFFF",
+          "backgroundColor": "#F5F6F8",
           "image": "./assets/images/lfa-logo.png",
           "imageWidth": 180,
           "resizeMode": "contain",
