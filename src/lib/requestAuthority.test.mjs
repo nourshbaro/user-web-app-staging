@@ -139,6 +139,86 @@ test("unmount invalidates the current match request", () => {
   assert.deepEqual(harness.state, { data: null, error: null, loading: true, toasts: [] });
 });
 
+test("late capture success cannot replace a newer session", () => {
+  const harness = createPublicationHarness("capture:A");
+  const sessionA = harness.start("capture:A");
+  const sessionB = harness.start("capture:B");
+  sessionB.succeed("context-b");
+  sessionA.succeed("context-a");
+  assert.equal(harness.state.data, "context-b");
+});
+
+test("late capture error cannot affect a newer session", () => {
+  const harness = createPublicationHarness("capture:A");
+  const sessionA = harness.start("capture:A");
+  harness.start("capture:B");
+  sessionA.fail("A failed");
+  assert.deepEqual(harness.state, { data: null, error: null, loading: true, toasts: [] });
+});
+
+test("late capture finalization cannot stop a newer session loading", () => {
+  const harness = createPublicationHarness("capture:A");
+  const sessionA = harness.start("capture:A");
+  harness.start("capture:B");
+  sessionA.finish();
+  assert.equal(harness.state.loading, true);
+});
+
+test("same-session capture retry owns publication", () => {
+  const harness = createPublicationHarness("capture:A");
+  const firstAttempt = harness.start("capture:A");
+  const retry = harness.start("capture:A");
+  retry.succeed("retry-context");
+  firstAttempt.succeed("old-context");
+  assert.equal(harness.state.data, "retry-context");
+});
+
+test("unmount invalidates capture publication", () => {
+  const harness = createPublicationHarness("capture:A");
+  const request = harness.start("capture:A");
+  harness.unmount();
+  request.succeed("context-a");
+  request.fail("failed");
+  request.finish();
+  assert.deepEqual(harness.state, { data: null, error: null, loading: true, toasts: [] });
+});
+
+test("user A billing success cannot publish after user B starts", () => {
+  const harness = createPublicationHarness("billing:id:1");
+  const userA = harness.start("billing:id:1");
+  const userB = harness.start("billing:id:2");
+  userB.succeed("billing-b");
+  userA.succeed("billing-a");
+  assert.equal(harness.state.data, "billing-b");
+});
+
+test("user A billing rejection fallback cannot publish after user B starts", () => {
+  const harness = createPublicationHarness("billing:id:1");
+  const userA = harness.start("billing:id:1");
+  harness.start("billing:id:2");
+  userA.fail("fallback-a");
+  assert.equal(harness.state.error, null);
+  assert.deepEqual(harness.state.toasts, []);
+});
+
+test("user A billing finalization cannot stop user B loading", () => {
+  const harness = createPublicationHarness("billing:id:1");
+  const userA = harness.start("billing:id:1");
+  harness.start("billing:id:2");
+  userA.finish();
+  assert.equal(harness.state.loading, true);
+});
+
+test("logout invalidates authenticated billing publication", () => {
+  const harness = createPublicationHarness("billing:id:1");
+  const userA = harness.start("billing:id:1");
+  harness.invalidate("billing:guest");
+  userA.succeed("billing-a");
+  userA.fail("fallback-a");
+  userA.finish();
+  assert.deepEqual(harness.state, { data: null, error: null, loading: true, toasts: [] });
+});
+
 test("unmount invalidates pending filter success", () => {
   const harness = createPublicationHarness(filter("a"));
   const request = harness.start(filter("a"));

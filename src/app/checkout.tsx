@@ -7,14 +7,21 @@ import { useToast } from "@/context/ToastContext";
 import { clearBluePaymentHandoff, createBluePaymentHandoff } from "@/lib/bluePaymentHandoff";
 import { validateBluePaymentUrl } from "@/lib/bluePaymentRedirect";
 import { groupCartItems } from "@/lib/cartDisplay";
+import {
+  getActiveBillingForm,
+  getActiveCaptureState,
+  type BillingFormState,
+  type CaptureState,
+} from "@/lib/checkoutOwnership";
 import { checkoutResultRouteParams, parseCheckoutResultParams } from "@/lib/checkoutResultParams";
 import { config } from "@/lib/config";
 import { formatMoney, minutesSeconds } from "@/lib/format";
+import { createRequestAuthority } from "@/lib/requestAuthority";
 import { profileService } from "@/services/auth";
 import { checkoutService } from "@/services/checkout";
 import type { CheckoutSubmitRequest } from "@/types";
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
 
 type PaymentMethod = CheckoutSubmitRequest["payment_method"];
@@ -99,24 +106,52 @@ export default function CheckoutScreen() {
   const theme = useTheme();
   const local = useMemo(() => createCheckoutStyles(theme.colors), [theme.colors]);
   const toast = useToast();
-  const [name, setName] = useState(auth.user?.name ?? "");
-  const [email, setEmail] = useState(auth.user?.email ?? "");
-  const [phone, setPhone] = useState(LEBANON_DIAL_CODE);
+  const [billingForm, setBillingForm] = useState<BillingFormState | null>(null);
   const [holderNames, setHolderNames] = useState<Record<string, string>>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("blue");
-  const [captureContext, setCaptureContext] = useState<string | null>(null);
-  const [captureLoading, setCaptureLoading] = useState(false);
-  const [captureError, setCaptureError] = useState<string | null>(null);
-  const [billingInfoLoading, setBillingInfoLoading] = useState(false);
+  const [captureState, setCaptureState] = useState<CaptureState | null>(null);
+  const [billingRequestState, setBillingRequestState] = useState<{ owner: string; status: "loading" | "ready" } | null>(null);
   const [loading, setLoading] = useState(false);
-  const captureCalledRef = useRef(false);
   const captureSessionRef = useRef<string | null>(null);
+  const captureRequestAuthority = useMemo(() => createRequestAuthority(), []);
+  const billingRequestAuthority = useMemo(() => createRequestAuthority(), []);
+  const billingProfileRef = useRef<{ owner: string | null; name: string; email: string }>({
+    owner: auth.userCacheKey,
+    name: auth.user?.name ?? "",
+    email: auth.user?.email ?? "",
+  });
   const submitInFlightRef = useRef(false);
   const blueHandoffStartedRef = useRef(false);
+  const billingOwner = auth.isReady && auth.isAuthenticated ? auth.userCacheKey : null;
+  const billingFallback = useMemo<BillingFormState>(() => ({
+    owner: billingOwner,
+    name: auth.user?.name ?? "",
+    email: auth.user?.email ?? "",
+    phone: LEBANON_DIAL_CODE,
+  }), [auth.user?.email, auth.user?.name, billingOwner]);
+  const activeBillingForm = getActiveBillingForm(billingForm, billingOwner, billingFallback);
+  const { name, email, phone } = activeBillingForm;
+  const billingInfoLoading =
+    billingOwner !== null
+    && (billingRequestState?.owner !== billingOwner || billingRequestState.status === "loading");
+  const activeCaptureState = getActiveCaptureState(captureState, cart.sessionId);
+  const captureContext = activeCaptureState?.status === "ready" ? activeCaptureState.context : null;
+  const captureError = activeCaptureState?.status === "error" ? activeCaptureState.error : null;
+  const captureLoading =
+    cart.sessionId !== null
+    && (activeCaptureState === null || activeCaptureState.status === "loading");
   const groupedItems = groupCartItems(cart.items);
   const isCheckoutLocked = loading;
   // Native tablets can rotate without inheriting the web-only sticky two-column layout.
   const isWide = Platform.OS === "web" && responsive.width >= 920;
+
+  const updateBillingForm = useCallback((updates: Partial<Omit<BillingFormState, "owner">>) => {
+    setBillingForm((current) => ({
+      ...(current?.owner === billingOwner ? current : billingFallback),
+      ...updates,
+      owner: billingOwner,
+    }));
+  }, [billingFallback, billingOwner]);
 
   const ticketSlots = useMemo(
     () => cart.items.flatMap((item) => {
@@ -138,67 +173,97 @@ export default function CheckoutScreen() {
   );
 
   const loadCaptureContext = useCallback(async (sessionId: string, force = false) => {
-    if (!force && captureCalledRef.current && captureSessionRef.current === sessionId) return;
-    captureCalledRef.current = true;
+    if (!force && captureSessionRef.current === sessionId) return;
     captureSessionRef.current = sessionId;
+    const ticket = captureRequestAuthority.begin(sessionId);
 
-    setCaptureLoading(true);
-    setCaptureError(null);
+    setCaptureState({ sessionId, status: "loading" });
     try {
       const response = await checkoutService.captureContext(sessionId, [getCheckoutOrigin()]);
       const context = readCaptureContext(response);
       if (!context) throw new Error("Empty Cybersource capture context.");
-      setCaptureContext(context);
+      if (!captureRequestAuthority.isCurrent(ticket)) return;
+      setCaptureState({ sessionId, status: "ready", context });
     } catch (err) {
-      captureCalledRef.current = false;
-      setCaptureError(err instanceof Error ? err.message : "Could not prepare card payment.");
-    } finally {
-      setCaptureLoading(false);
+      if (!captureRequestAuthority.isCurrent(ticket)) return;
+      captureSessionRef.current = null;
+      setCaptureState({
+        sessionId,
+        status: "error",
+        error: err instanceof Error ? err.message : "Could not prepare card payment.",
+      });
     }
-  }, []);
+  }, [captureRequestAuthority]);
+
+  const loadBillingInfo = useCallback(async (owner: string) => {
+    const ticket = billingRequestAuthority.begin(owner);
+    const profile = billingProfileRef.current;
+    setBillingRequestState({ owner, status: "loading" });
+
+    try {
+      const payload = await profileService.billingInfo();
+      if (!billingRequestAuthority.isCurrent(ticket)) return;
+      const nextBillingInfo = readBillingInfo(payload);
+      setBillingForm({
+        owner,
+        name: nextBillingInfo.name || profile.name,
+        email: nextBillingInfo.email || profile.email,
+        phone: nextBillingInfo.phone ? formatLebanonPhone(nextBillingInfo.phone) : LEBANON_DIAL_CODE,
+      });
+    } catch {
+      if (!billingRequestAuthority.isCurrent(ticket)) return;
+      setBillingForm({
+        owner,
+        name: profile.name,
+        email: profile.email,
+        phone: LEBANON_DIAL_CODE,
+      });
+    } finally {
+      if (!billingRequestAuthority.isCurrent(ticket)) return;
+      setBillingRequestState({ owner, status: "ready" });
+    }
+  }, [billingRequestAuthority]);
+
+  useLayoutEffect(() => {
+    billingProfileRef.current = {
+      owner: billingOwner,
+      name: auth.user?.name ?? "",
+      email: auth.user?.email ?? "",
+    };
+  }, [auth.user?.email, auth.user?.name, billingOwner]);
+
+  useLayoutEffect(() => {
+    captureRequestAuthority.invalidate(cart.sessionId);
+    if (captureSessionRef.current !== cart.sessionId) captureSessionRef.current = null;
+  }, [captureRequestAuthority, cart.sessionId]);
+
+  useLayoutEffect(() => {
+    billingRequestAuthority.invalidate(billingOwner);
+  }, [billingOwner, billingRequestAuthority]);
 
   useEffect(() => {
     const sessionId = cart.sessionId;
-    if (!sessionId) {
-      captureCalledRef.current = false;
-      captureSessionRef.current = null;
-      setCaptureContext(null);
-      setCaptureError(null);
-      return;
-    }
+    if (!sessionId) return;
 
-    void loadCaptureContext(sessionId);
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) return loadCaptureContext(sessionId);
+    });
+    return () => {
+      active = false;
+    };
   }, [cart.sessionId, loadCaptureContext]);
 
   useEffect(() => {
-    if (!auth.isReady || !auth.isAuthenticated) return;
-
-    let cancelled = false;
-    setBillingInfoLoading(true);
-
-    profileService.billingInfo()
-      .then((payload) => {
-        if (cancelled) return;
-        const nextBillingInfo = readBillingInfo(payload);
-
-        if (nextBillingInfo.name) setName(nextBillingInfo.name);
-        else if (auth.user?.name) setName(auth.user.name);
-        if (nextBillingInfo.email) setEmail(nextBillingInfo.email);
-        else if (auth.user?.email) setEmail(auth.user.email);
-        if (nextBillingInfo.phone) setPhone(formatLebanonPhone(nextBillingInfo.phone));
-      })
-      .catch(() => {
-        if (auth.user?.name) setName(auth.user.name);
-        if (auth.user?.email) setEmail(auth.user.email);
-      })
-      .finally(() => {
-        if (!cancelled) setBillingInfoLoading(false);
-      });
-
+    if (!billingOwner) return;
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) return loadBillingInfo(billingOwner);
+    });
     return () => {
-      cancelled = true;
+      active = false;
     };
-  }, [auth.isAuthenticated, auth.isReady, auth.user?.email, auth.user?.name]);
+  }, [billingOwner, loadBillingInfo]);
 
   const dismissAllRoutes = () => {
     const resetRouter = router as typeof router & { dismissAll?: () => void };
@@ -212,10 +277,14 @@ export default function CheckoutScreen() {
   };
 
   useEffect(() => {
+    captureRequestAuthority.mount();
+    billingRequestAuthority.mount();
     return () => {
-      captureCalledRef.current = false;
+      captureRequestAuthority.unmount();
+      billingRequestAuthority.unmount();
+      captureSessionRef.current = null;
     };
-  }, []);
+  }, [billingRequestAuthority, captureRequestAuthority]);
 
   const submit = async (transientToken?: string) => {
     if (!cart.sessionId || submitInFlightRef.current || blueHandoffStartedRef.current) return;
@@ -341,14 +410,14 @@ export default function CheckoutScreen() {
                     <Text style={theme.styles.h2}>Billing</Text>
                     {billingInfoLoading ? <Text style={theme.styles.muted}>Loading saved info...</Text> : null}
                   </View>
-                  <Input label="Name" value={name} onChangeText={setName} autoCapitalize="words" editable={!isCheckoutLocked} />
-                  <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!isCheckoutLocked} />
+                  <Input label="Name" value={name} onChangeText={(value) => updateBillingForm({ name: value })} autoCapitalize="words" editable={!isCheckoutLocked} />
+                  <Input label="Email" value={email} onChangeText={(value) => updateBillingForm({ email: value })} keyboardType="email-address" autoCapitalize="none" editable={!isCheckoutLocked} />
                   <Input
                     label="Phone"
                     value={phone}
-                    onChangeText={(value) => setPhone(formatLebanonPhone(value))}
+                    onChangeText={(value) => updateBillingForm({ phone: formatLebanonPhone(value) })}
                     onFocus={() => {
-                      if (!phone.startsWith(LEBANON_DIAL_CODE)) setPhone(LEBANON_DIAL_CODE);
+                      if (!phone.startsWith(LEBANON_DIAL_CODE)) updateBillingForm({ phone: LEBANON_DIAL_CODE });
                     }}
                     keyboardType="phone-pad"
                     textContentType="telephoneNumber"
