@@ -5,13 +5,16 @@ import { useCartSheet } from "@/context/CartSheetContext";
 import { useToast } from "@/context/ToastContext";
 import { storageUrl } from "@/lib/config";
 import { formatDate, formatMoney, formatTime, matchTitle } from "@/lib/format";
+import { createSeatLayout, getContainRect, getPolygonPoints, getPolygonPointsAttribute } from "@/lib/mapGeometry";
 import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
+import { getSeatAccessibility } from "@/lib/seatAccessibility";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, ApiSeat, ApiZone } from "@/types";
 import { Image as ExpoImage } from "expo-image";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Image, Platform, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { AccessibilityInfo, Image, Platform, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import Svg, { Polygon } from "react-native-svg";
 
 const MAP_VIEW_W = 600;
 const DEFAULT_MAP_VIEW_H = 445;
@@ -125,6 +128,7 @@ export default function MatchDetail() {
             title: "Could not load seats",
             message: err instanceof Error ? err.message : "Try choosing another zone.",
           });
+          AccessibilityInfo.announceForAccessibility("Could not load seats. Try choosing another zone.");
         })
         .finally(() => {
           if (!seatRequestAuthority.isCurrent(ticket, activeSeatIdentity)) return;
@@ -256,6 +260,9 @@ export default function MatchDetail() {
                 <Pressable
                   key={zone.id}
                   onPress={() => selectZone(zone)}
+                  accessibilityRole="button"
+                  accessibilityLabel={zone.name}
+                  accessibilityState={{ selected }}
                   onLayout={(event) => zoneChipLayouts.current.set(zone.id, event.nativeEvent.layout)}
                   style={[
                     local.zoneChip,
@@ -282,9 +289,19 @@ export default function MatchDetail() {
                 </View>
                 <Text style={local.countText}>{selectedSeats.length} selected</Text>
               </View>
-              {seatLoading ? <Text style={styles.muted}>Loading seats...</Text> : null}
+              {seatLoading ? (
+                <Text
+                  accessibilityRole="progressbar"
+                  accessibilityLabel="Loading seats"
+                  accessibilityLiveRegion="polite"
+                  style={styles.muted}
+                >
+                  Loading seats...
+                </Text>
+              ) : null}
               <SeatMap
                 seats={visibleSeats}
+                zoneName={selectedZone.name}
                 selectedIds={selectedSeats}
                 cartSeatIds={cartSeatIds}
                 size={seatMapSize}
@@ -348,9 +365,7 @@ function zoneColor(index: number) {
 }
 
 function getZonePoints(zone: ApiZone) {
-  return Array.isArray(zone.shape_data)
-    ? zone.shape_data.map((point) => ({ x: Number(point.x), y: Number(point.y) })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
-    : [];
+  return getPolygonPoints(zone);
 }
 
 function getDisplayZonePoints(zone: ApiZone) {
@@ -381,17 +396,6 @@ function getZoneBounds(zone: ApiZone) {
     width: Math.max(1, maxX - minX),
     height: Math.max(1, maxY - minY),
   };
-}
-
-function getClipPath(zone: ApiZone) {
-  const bounds = getZoneBounds(zone);
-  if (!bounds) return undefined;
-  const points = getDisplayZonePoints(zone).map((point) => {
-    const x = ((Number(point.x) - bounds.minX) / bounds.width) * 100;
-    const y = ((Number(point.y) - bounds.minY) / bounds.height) * 100;
-    return `${x.toFixed(1)}% ${y.toFixed(1)}%`;
-  });
-  return `polygon(${points.join(", ")})`;
 }
 
 function getZoneLabel(zoneName: string) {
@@ -498,6 +502,10 @@ function ZoneMap({
   onSelectZone: (zone: ApiZone) => void;
 }) {
   const theme = useTheme();
+  const imageRect = useMemo(
+    () => getContainRect(width, height, MAP_VIEW_W, viewHeight),
+    [height, viewHeight, width],
+  );
 
   if (Platform.OS === "web") {
     return createElement(
@@ -597,25 +605,56 @@ function ZoneMap({
         key={mapImageUrl ?? "stadium-map-unavailable"}
         mapImageUrl={mapImageUrl}
       />
-      {zones.map((zone, index) => {
+      <Svg
+        width={imageRect.width}
+        height={imageRect.height}
+        viewBox={`0 0 ${MAP_VIEW_W} ${viewHeight}`}
+        preserveAspectRatio="xMidYMid meet"
+        pointerEvents="none"
+        style={[
+          local.zoneOverlay,
+          {
+            left: imageRect.offsetX,
+            top: imageRect.offsetY,
+            width: imageRect.width,
+            height: imageRect.height,
+          },
+        ]}
+      >
+        {zones.map((zone, index) => {
+          const points = getPolygonPointsAttribute(zone);
+          if (!points) return null;
+          const active = zone.id === selectedZoneId;
+          const color = zoneColor(index);
+          return (
+            <Polygon
+              key={`shape-fill-${zone.id}`}
+              points={points}
+              fill={color}
+              fillOpacity={active ? 0.5 : 0.28}
+              stroke={color}
+              strokeWidth={active ? 2.5 : 1}
+            />
+          );
+        })}
+      </Svg>
+      {zones.map((zone) => {
         const bounds = getZoneBounds(zone);
         if (!bounds) return null;
-        const active = zone.id === selectedZoneId;
         return (
           <Pressable
-            key={`shape-${zone.id}`}
+            key={`shape-touch-${zone.id}`}
+            accessible={false}
             onPress={() => onSelectZone(zone)}
             style={[
-                local.zoneShape,
-                {
-                  left: (bounds.minX / MAP_VIEW_W) * width,
-                top: (bounds.minY / viewHeight) * height,
-                  width: (bounds.width / MAP_VIEW_W) * width,
-                height: (bounds.height / viewHeight) * height,
-                  backgroundColor: zoneColor(index),
-                  opacity: active ? 0.5 : 0.28,
-                borderColor: zoneColor(index),
-                ...(getClipPath(zone) ? ({ clipPath: getClipPath(zone) } as any) : {}),
+              local.zoneShape,
+              {
+                left: imageRect.offsetX + (bounds.minX / MAP_VIEW_W) * imageRect.width,
+                top: imageRect.offsetY + (bounds.minY / viewHeight) * imageRect.height,
+                width: (bounds.width / MAP_VIEW_W) * imageRect.width,
+                height: (bounds.height / viewHeight) * imageRect.height,
+                backgroundColor: "transparent",
+                borderColor: "transparent",
               },
             ]}
           />
@@ -626,13 +665,18 @@ function ZoneMap({
         const compact = width < 420;
         const markerWidth = compact ? 56 : 74;
         const markerHeight = compact ? 22 : 24;
-        const left = Math.max(6, Math.min(width - markerWidth - 6, (center.x / MAP_VIEW_W) * width - markerWidth / 2));
-        const top = Math.max(6, Math.min(height - markerHeight - 6, (center.y / viewHeight) * height - markerHeight / 2));
+        const centerX = imageRect.offsetX + (center.x / MAP_VIEW_W) * imageRect.width;
+        const centerY = imageRect.offsetY + (center.y / viewHeight) * imageRect.height;
+        const left = Math.max(6, Math.min(width - markerWidth - 6, centerX - markerWidth / 2));
+        const top = Math.max(6, Math.min(height - markerHeight - 6, centerY - markerHeight / 2));
         const active = zone.id === selectedZoneId;
         return (
           <Pressable
             key={zone.id}
             onPress={() => onSelectZone(zone)}
+            accessibilityRole="button"
+            accessibilityLabel={zone.name}
+            accessibilityState={{ selected: active }}
             style={[
               local.zoneMarker,
               {
@@ -674,56 +718,23 @@ function getSeatLabel(seat: ApiSeat) {
   return seat.label ?? `${seat.row}${seat.number}`;
 }
 
-function normalizeSeatValue(value: string | number | undefined) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function SeatMap({
   seats,
+  zoneName,
   selectedIds,
   cartSeatIds,
   size,
   onToggleSeat,
 }: {
   seats: ApiSeat[];
+  zoneName: string;
   selectedIds: number[];
   cartSeatIds: Set<number>;
   size: number;
   onToggleSeat: (seat: ApiSeat) => void;
 }) {
   const theme = useTheme();
-  const layout = useMemo(() => {
-    if (!seats.length) return { seats: [] as Array<ApiSeat & { px: number; py: number }>, width: size, height: Math.round(size * 0.72) };
-
-    const raw = seats.map((seat, index) => {
-      const x = normalizeSeatValue(seat.x);
-      const y = normalizeSeatValue(seat.y);
-      if (x || y) return { seat, x, y };
-      const col = index % 8;
-      const row = Math.floor(index / 8);
-      return { seat, x: 40 + col * 44, y: 36 + row * 42 };
-    });
-    const minX = Math.min(...raw.map((item) => item.x));
-    const maxX = Math.max(...raw.map((item) => item.x));
-    const minY = Math.min(...raw.map((item) => item.y));
-    const maxY = Math.max(...raw.map((item) => item.y));
-    const mapW = Math.max(1, maxX - minX);
-    const mapH = Math.max(1, maxY - minY);
-    const seatCount = raw.length;
-    const preferredWidth = Math.max(size, Math.min(760, Math.ceil(Math.sqrt(seatCount) * 44)));
-    const height = Math.max(240, Math.min(430, Math.round(preferredWidth * Math.min(0.78, Math.max(0.48, mapH / mapW)))));
-
-    return {
-      width: preferredWidth,
-      height,
-      seats: raw.map(({ seat, x, y }) => ({
-        ...seat,
-        px: 18 + ((x - minX) / mapW) * (preferredWidth - 56),
-        py: 50 + ((y - minY) / mapH) * (height - 88),
-      })),
-    };
-  }, [seats, size]);
+  const layout = useMemo(() => createSeatLayout(seats, size), [seats, size]);
 
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={local.seatMapScroll} contentContainerStyle={local.seatMapScroller}>
@@ -733,11 +744,24 @@ function SeatMap({
           const inCart = cartSeatIds.has(seat.id);
           const active = selectedIds.includes(seat.id) && !inCart;
           const available = isSeatAvailable(seat);
+          const accessibility = getSeatAccessibility({
+            seat,
+            zoneName,
+            selected: active,
+            inCart,
+          });
           return (
             <Pressable
               key={seat.id}
               disabled={!available || inCart}
               onPress={() => onToggleSeat(seat)}
+              accessibilityRole="button"
+              accessibilityLabel={accessibility.label}
+              accessibilityHint={accessibility.hint}
+              accessibilityState={{
+                selected: accessibility.selected,
+                disabled: accessibility.disabled,
+              }}
               style={[
                 local.seatDot,
                 { left: seat.px, top: seat.py },
@@ -795,10 +819,15 @@ const local = {
     overflow: "hidden" as const,
     position: "relative" as const,
   },
-  mapImage: { width: "100%" as const, height: "100%" as const },
+  mapImage: { width: "100%" as const, height: "100%" as const, zIndex: 0 },
+  zoneOverlay: {
+    position: "absolute" as const,
+    zIndex: 1,
+  },
   mapFallback: { flex: 1, alignItems: "center" as const, justifyContent: "center" as const },
   zoneMarker: {
     position: "absolute" as const,
+    zIndex: 3,
     borderRadius: 999,
     borderWidth: 1.5,
     flexDirection: "row" as const,
@@ -812,6 +841,7 @@ const local = {
   zoneShape: {
     position: "absolute" as const,
     borderWidth: 1,
+    zIndex: 2,
   },
   zoneMarkerDot: { width: 6, height: 6, borderRadius: 3 },
   zoneMarkerDotCompact: { width: 5, height: 5, borderRadius: 3 },
