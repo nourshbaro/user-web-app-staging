@@ -10,20 +10,20 @@ export function getCheckoutResultPresentation(
     if (provider === "blue") {
       return {
         title: "Blue Wallet payment successful",
-        message: "Your booking has been confirmed. You can find your tickets and booking details in your profile.",
+        message: "Your booking has been confirmed. Your ticket(s) have been sent to your email.",
         secondaryAction: { title: "View tickets", href: "/profile" as const },
       };
     }
     if (provider === "cybersource") {
       return {
         title: "Card payment successful",
-        message: "Your booking has been confirmed. You can find your tickets and booking details in your profile.",
+        message: "Your booking has been confirmed. Your ticket(s) have been sent to your email.",
         secondaryAction: { title: "View tickets", href: "/profile" as const },
       };
     }
     return {
       title: "Payment successful",
-      message: "Your payment result is ready. View your profile for authoritative booking details.",
+      message: "Your payment result is ready. Your ticket(s) have been sent to your email.",
       secondaryAction: { title: "View tickets", href: "/profile" as const },
     };
   }
