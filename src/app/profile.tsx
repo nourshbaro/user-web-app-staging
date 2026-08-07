@@ -1,8 +1,8 @@
 import { Stack, router, useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type DimensionValue } from "react-native";
 import { MainHeader } from "@/components/MainHeader";
-import { Button, Empty, Input, Loading, Screen, colors, useResponsive, useTheme } from "@/components/ui";
+import { Button, Empty, Input, Loading, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { formatMoney } from "@/lib/format";
@@ -54,6 +54,7 @@ const getMessage = (payload: unknown, fallback: string) => {
 };
 
 export default function ProfileScreen() {
+  const local = useProfileStyles();
   const auth = useAuth();
   const toast = useToast();
   const responsive = useResponsive();
@@ -304,7 +305,7 @@ export default function ProfileScreen() {
                 </View>
               </View>
 
-              {loading ? <View style={local.fullWidth}><View style={local.inlineLoader}><ActivityIndicator color={colors.primary} /></View></View> : null}
+              {loading ? <View style={local.fullWidth}><View style={local.inlineLoader}><ActivityIndicator color={theme.colors.primary} /></View></View> : null}
               {detailLoading ? <Text style={[local.loadingText, local.fullWidth]}>Loading details...</Text> : null}
               {error ? <View style={local.fullWidth}><Empty title="Profile error" detail={error} /></View> : null}
 
@@ -372,6 +373,7 @@ export default function ProfileScreen() {
 }
 
 function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
+  const local = useProfileStyles();
   const auth = useAuth();
   const toast = useToast();
   const theme = useTheme();
@@ -529,6 +531,7 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
 }
 
 function InfoSections() {
+  const local = useProfileStyles();
   const theme = useTheme();
 
   return (
@@ -553,6 +556,7 @@ function DetailModal({
   onClose: () => void;
   onDownloadPdf: (orderId?: string) => void;
 }) {
+  const local = useProfileStyles();
   const theme = useTheme();
   const item = detail?.item;
   const normalized = detail?.type === "order" && isRecord(item?.order) ? item.order : item;
@@ -613,6 +617,7 @@ function DetailModal({
 }
 
 function StatusPill({ status }: { status: string }) {
+  const local = useProfileStyles();
   const tone = statusTone(status);
   return (
     <View style={[local.statusPill, tone === "success" && local.statusPillSuccess, tone === "warning" && local.statusPillWarning]}>
@@ -624,6 +629,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 function DetailField({ fieldKey, label, value }: { fieldKey: string; label: string; value: unknown }) {
+  const local = useProfileStyles();
   const theme = useTheme();
   if (Array.isArray(value)) return null;
   if (label.toLowerCase() === "qr image" && typeof value === "string") return <QrImage value={value} />;
@@ -645,6 +651,7 @@ function DetailField({ fieldKey, label, value }: { fieldKey: string; label: stri
 }
 
 function NestedCard({ item }: { item: PortalItem }) {
+  const local = useProfileStyles();
   const theme = useTheme();
   const hasQr = typeof item.qr_image === "string";
 
@@ -662,6 +669,7 @@ function NestedCard({ item }: { item: PortalItem }) {
 }
 
 function QrImage({ value, compact = false }: { value: string; compact?: boolean }) {
+  const local = useProfileStyles();
   if (!value.startsWith("data:image/")) {
     return (
       <View style={local.qrEmpty}>
@@ -752,7 +760,13 @@ function summarizeValue(value: unknown) {
   return displayValue(value, ["name", "label", "title", "code", "ticket_code", "order_code", "home_team"], "Details");
 }
 
-const local = StyleSheet.create({
+function useProfileStyles() {
+  const theme = useTheme();
+  return useMemo(() => createProfileStyles(theme.colors), [theme.colors]);
+}
+
+function createProfileStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   shell: {
     flex: 1,
     alignSelf: "center",
@@ -1297,4 +1311,5 @@ const local = StyleSheet.create({
     fontWeight: "700",
     textAlign: "right",
   },
-});
+  });
+}

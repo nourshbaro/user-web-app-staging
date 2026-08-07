@@ -1,5 +1,5 @@
 import { AppHeader } from "@/components/AppHeader";
-import { Button, Card, Empty, Loading, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
+import { Button, Card, Empty, Loading, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
 import { useCartSheet } from "@/context/CartSheetContext";
 import { useToast } from "@/context/ToastContext";
@@ -20,6 +20,7 @@ const MAP_VIEW_W = 600;
 const DEFAULT_MAP_VIEW_H = 445;
 
 export default function MatchDetail() {
+  const local = useMatchStyles();
   const { id } = useLocalSearchParams<{ id: string }>();
   const responsive = useResponsive();
   const theme = useTheme();
@@ -231,15 +232,15 @@ export default function MatchDetail() {
         >
           <Card>
             <MatchTeams match={match} showNames={responsive.isTablet} />
-            <Text style={styles.muted}>{formatDate(match.match_date)} at {formatTime(match.kickoff_at)}</Text>
-            <Text style={styles.muted}>{match.stadium?.name ?? "Stadium TBC"}{match.stadium?.location ? `, ${match.stadium.location}` : ""}</Text>
+            <Text style={theme.styles.muted}>{formatDate(match.match_date)} at {formatTime(match.kickoff_at)}</Text>
+            <Text style={theme.styles.muted}>{match.stadium?.name ?? "Stadium TBC"}{match.stadium?.location ? `, ${match.stadium.location}` : ""}</Text>
           </Card>
 
           <Card>
-            <View style={styles.row}>
+            <View style={theme.styles.row}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.h2}>Stadium map</Text>
-                <Text style={styles.muted}>Tap a zone on the map or choose from the list.</Text>
+                <Text style={theme.styles.h2}>Stadium map</Text>
+                <Text style={theme.styles.muted}>Tap a zone on the map or choose from the list.</Text>
               </View>
               <Text style={local.countText}>{zones.length} zones</Text>
             </View>
@@ -277,15 +278,15 @@ export default function MatchDetail() {
                 );
               })}
             </ScrollView>
-            {!zones.length ? <Text style={styles.muted}>No ticket zones are available for this match.</Text> : null}
+            {!zones.length ? <Text style={theme.styles.muted}>No ticket zones are available for this match.</Text> : null}
           </Card>
 
           {selectedZone?.has_seats ? (
             <Card>
-              <View style={styles.row}>
+              <View style={theme.styles.row}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.h2}>Seat map</Text>
-                  <Text style={styles.muted}>{selectedZone.name} - {formatMoney(selectedZone.price, selectedZone.currency)} per seat</Text>
+                  <Text style={theme.styles.h2}>Seat map</Text>
+                  <Text style={theme.styles.muted}>{selectedZone.name} - {formatMoney(selectedZone.price, selectedZone.currency)} per seat</Text>
                 </View>
                 <Text style={local.countText}>{selectedSeats.length} selected</Text>
               </View>
@@ -294,7 +295,7 @@ export default function MatchDetail() {
                   accessibilityRole="progressbar"
                   accessibilityLabel="Loading seats"
                   accessibilityLiveRegion="polite"
-                  style={styles.muted}
+                  style={theme.styles.muted}
                 >
                   Loading seats...
                 </Text>
@@ -311,15 +312,15 @@ export default function MatchDetail() {
                 }}
               />
               <SeatLegend />
-              {!seatLoading && !visibleSeats.length ? <Text style={styles.muted}>No seat map is available. Choose another zone.</Text> : null}
+              {!seatLoading && !visibleSeats.length ? <Text style={theme.styles.muted}>No seat map is available. Choose another zone.</Text> : null}
             </Card>
           ) : selectedZone ? (
             <Card>
-              <Text style={styles.h2}>Quantity</Text>
-              <Text style={styles.muted}>{selectedZone.name} - {formatMoney(selectedZone.price, selectedZone.currency)} per ticket</Text>
-              <View style={styles.row}>
+              <Text style={theme.styles.h2}>Quantity</Text>
+              <Text style={theme.styles.muted}>{selectedZone.name} - {formatMoney(selectedZone.price, selectedZone.currency)} per ticket</Text>
+              <View style={theme.styles.row}>
                 <Button title="-" variant="secondary" onPress={() => setQuantity((v) => Math.max(1, v - 1))} />
-                <Text style={styles.h2}>{quantity}</Text>
+                <Text style={theme.styles.h2}>{quantity}</Text>
                 <Button title="+" variant="secondary" onPress={() => setQuantity((v) => Math.min(10, v + 1))} />
               </View>
             </Card>
@@ -333,6 +334,7 @@ export default function MatchDetail() {
 }
 
 function MatchTeams({ match, showNames }: { match: ApiMatch; showNames: boolean }) {
+  const local = useMatchStyles();
   const theme = useTheme();
   const home = match.home_team;
   const away = match.away_team;
@@ -352,6 +354,7 @@ function MatchTeams({ match, showNames }: { match: ApiMatch; showNames: boolean 
 }
 
 function TeamLogo({ team }: { team?: ApiMatch["home_team"] }) {
+  const local = useMatchStyles();
   const theme = useTheme();
   return (
     <View style={[local.matchTeamLogo, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
@@ -464,12 +467,14 @@ function useMapViewHeight(mapImageUrl: string | undefined, zones: ApiZone[]) {
 }
 
 function NativeStadiumImage({ mapImageUrl }: { mapImageUrl?: string }) {
+  const local = useMatchStyles();
+  const theme = useTheme();
   const [imageFailed, setImageFailed] = useState(false);
 
   if (!mapImageUrl || imageFailed) {
     return (
       <View style={local.mapFallback}>
-        <Text style={styles.muted}>Stadium map unavailable.</Text>
+        <Text style={theme.styles.muted}>Stadium map unavailable.</Text>
       </View>
     );
   }
@@ -501,6 +506,7 @@ function ZoneMap({
   viewHeight: number;
   onSelectZone: (zone: ApiZone) => void;
 }) {
+  const local = useMatchStyles();
   const theme = useTheme();
   const imageRect = useMemo(
     () => getContainRect(width, height, MAP_VIEW_W, viewHeight),
@@ -733,6 +739,7 @@ function SeatMap({
   size: number;
   onToggleSeat: (seat: ApiSeat) => void;
 }) {
+  const local = useMatchStyles();
   const theme = useTheme();
   const layout = useMemo(() => createSeatLayout(seats, size), [seats, size]);
 
@@ -778,26 +785,36 @@ function SeatMap({
 }
 
 function SeatLegend() {
+  const local = useMatchStyles();
+  const theme = useTheme();
   return (
     <View style={local.legend}>
-      <LegendDot color={colors.green} label="Available" />
-      <LegendDot color={colors.primary} label="Selected" />
-      <LegendDot color={colors.gold} label="In cart" />
+      <LegendDot color={theme.colors.green} label="Available" />
+      <LegendDot color={theme.colors.primary} label="Selected" />
+      <LegendDot color={theme.colors.gold} label="In cart" />
       <LegendDot color="#98A2B3" label="Unavailable" />
     </View>
   );
 }
 
 function LegendDot({ color, label }: { color: string; label: string }) {
+  const local = useMatchStyles();
+  const theme = useTheme();
   return (
     <View style={local.legendItem}>
       <View style={[local.legendDot, { backgroundColor: color }]} />
-      <Text style={styles.muted}>{label}</Text>
+      <Text style={theme.styles.muted}>{label}</Text>
     </View>
   );
 }
 
-const local = {
+function useMatchStyles() {
+  const theme = useTheme();
+  return useMemo(() => createMatchStyles(theme.colors), [theme.colors]);
+}
+
+function createMatchStyles(colors: ThemeColors) {
+  return {
   shell: { flex: 1, alignSelf: "center" as const },
   matchTeams: { width: "100%" as const, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 0, paddingVertical: 6 },
   matchTeamsCompact: { alignSelf: "center" as const },
@@ -912,4 +929,5 @@ const local = {
   legend: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 14 },
   legendItem: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
-};
+  };
+}

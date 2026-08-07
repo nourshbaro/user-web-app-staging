@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import { useState } from "react";
 import { Image, Pressable, ScrollView, Text, View } from "react-native";
-import { Button, Card, Input, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
+import { Button, Card, Input, Screen, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/services/api";
@@ -178,9 +178,9 @@ export default function AuthScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={local.scrollContent}>
         <View style={local.authPanel}>
           <Card>
-            <Text style={styles.sectionLabel}>Lebanon FA Account</Text>
+            <Text style={theme.styles.sectionLabel}>Lebanon FA Account</Text>
             <Text style={[local.title, { color: theme.colors.ink }]}>{title}</Text>
-            <Text style={styles.muted}>{detail}</Text>
+            <Text style={theme.styles.muted}>{detail}</Text>
           </Card>
 
           <Card>
@@ -227,15 +227,15 @@ export default function AuthScreen() {
 
           {mode === "login" ? (
             <Text style={[local.footerText, { color: theme.colors.secondary }]}>
-              Need an account? <Text style={local.footerLink} onPress={() => switchMode("register")}>Register</Text>
+              Need an account? <Text style={[local.footerLink, { color: theme.colors.primary }]} onPress={() => switchMode("register")}>Register</Text>
             </Text>
           ) : mode === "register" ? (
             <Text style={[local.footerText, { color: theme.colors.secondary }]}>
-              Already have an account? <Text style={local.footerLink} onPress={() => switchMode("login")}>Login</Text>
+              Already have an account? <Text style={[local.footerLink, { color: theme.colors.primary }]} onPress={() => switchMode("login")}>Login</Text>
             </Text>
           ) : (
             <Text style={[local.footerText, { color: theme.colors.secondary }]}>
-              Already confirmed? <Text style={local.footerLink} onPress={() => switchMode("login")}>Login</Text>
+              Already confirmed? <Text style={[local.footerLink, { color: theme.colors.primary }]} onPress={() => switchMode("login")}>Login</Text>
             </Text>
           )}
         </View>
@@ -270,8 +270,6 @@ const local = {
     height: 40,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
@@ -280,16 +278,15 @@ const local = {
     height: 11,
     borderLeftWidth: 2,
     borderBottomWidth: 2,
-    borderColor: colors.ink,
     transform: [{ rotate: "45deg" }],
     marginLeft: 4,
   },
   headerBrand: { alignItems: "center" as const, gap: 4 },
-  headerTitle: { color: colors.ink, fontSize: 12, fontWeight: "900" as const },
+  headerTitle: { fontSize: 12, fontWeight: "900" as const },
   logo: { width: 42, height: 42 },
-  title: { color: colors.ink, fontSize: 24, fontWeight: "900" as const, lineHeight: 30 },
-  message: { color: colors.secondary, fontSize: 13, lineHeight: 19 },
+  title: { fontSize: 24, fontWeight: "900" as const, lineHeight: 30 },
+  message: { fontSize: 13, lineHeight: 19 },
   otpInput: { textAlign: "center" as const, fontSize: 20, fontWeight: "800" as const, letterSpacing: 8 },
-  footerText: { color: colors.secondary, textAlign: "center" as const, fontSize: 14 },
-  footerLink: { color: colors.primary, fontWeight: "900" as const },
+  footerText: { textAlign: "center" as const, fontSize: 14 },
+  footerLink: { fontWeight: "900" as const },
 };

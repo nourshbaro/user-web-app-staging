@@ -1,4 +1,5 @@
 import { storage } from "@/lib/storage";
+import { darkColors, getThemeColors, lightColors, type ThemeMode } from "@/lib/themePalette";
 import { router, usePathname } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
@@ -7,43 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const THEME_KEY = "lfa_theme";
 
-const lightColors = {
-  bg: "#F5F6F8",
-  bgAlt: "#EEF1F6",
-  panel: "#FFFFFF",
-  panelSoft: "#F8FAFC",
-  ink: "#151A2C",
-  muted: "#7B879F",
-  secondary: "#3E4A67",
-  line: "#DBE0E8",
-  primary: "#C8102E",
-  primaryLight: "#E8112D",
-  primaryDark: "#8B0018",
-  green: "#007A3D",
-  gold: "#C8A84B",
-  danger: "#B42318",
-  success: "#007A3D",
-};
-
-const darkColors: typeof lightColors = {
-  bg: "#0F172A",
-  bgAlt: "#111827",
-  panel: "#172033",
-  panelSoft: "#111827",
-  ink: "#F8FAFC",
-  muted: "#94A3B8",
-  secondary: "#CBD5E1",
-  line: "#334155",
-  primary: "#E8112D",
-  primaryLight: "#FF5A70",
-  primaryDark: "#C8102E",
-  green: "#22C55E",
-  gold: "#F5C518",
-  danger: "#EF4444",
-  success: "#22C55E",
-};
-
-type ThemeMode = "light" | "dark";
+export type { ThemeColors } from "@/lib/themePalette";
 type ThemeContextValue = {
   mode: ThemeMode;
   isDark: boolean;
@@ -52,14 +17,7 @@ type ThemeContextValue = {
   toggleTheme: () => void;
 };
 
-let activeColors = lightColors;
-let activeStyles = createStyles(activeColors);
-
-export const colors = new Proxy(lightColors, {
-  get(_target, prop: keyof typeof lightColors) {
-    return activeColors[prop];
-  },
-}) as typeof lightColors;
+const defaultStyles = createStyles(lightColors);
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
@@ -72,16 +30,14 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     });
   }, []);
 
+  const themeColors = getThemeColors(mode);
+  const themeStyles = useMemo(() => createStyles(themeColors), [themeColors]);
   const value = useMemo<ThemeContextValue>(() => {
-    const nextColors = mode === "dark" ? darkColors : lightColors;
-    const nextStyles = createStyles(nextColors);
-    activeColors = nextColors;
-    activeStyles = nextStyles;
     return {
       mode,
       isDark: mode === "dark",
-      colors: nextColors,
-      styles: nextStyles,
+      colors: themeColors,
+      styles: themeStyles,
       toggleTheme: () => {
         setMode((current) => {
           const next = current === "dark" ? "light" : "dark";
@@ -90,7 +46,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
         });
       },
     };
-  }, [mode]);
+  }, [mode, themeColors, themeStyles]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
@@ -101,8 +57,8 @@ export function useTheme() {
     return {
       mode: "light" as const,
       isDark: false,
-      colors: activeColors,
-      styles: activeStyles,
+      colors: lightColors,
+      styles: defaultStyles,
       toggleTheme: () => {},
     };
   }
@@ -353,9 +309,3 @@ function createStyles(palette: typeof lightColors) {
   },
 });
 }
-
-export const styles = new Proxy({} as ReturnType<typeof createStyles>, {
-  get(_target, prop: keyof ReturnType<typeof createStyles>) {
-    return activeStyles[prop];
-  },
-});

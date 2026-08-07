@@ -1,6 +1,6 @@
 import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { colors, styles, useResponsive, useTheme } from "@/components/ui";
+import { useResponsive, useTheme } from "@/components/ui";
 
 type ToastVariant = "success" | "error" | "info" | "warning";
 
@@ -75,13 +75,14 @@ export function ToastProvider({ children }: PropsWithChildren) {
                 width: Math.min(responsive.contentWidth, 560),
                 backgroundColor: variant.bg,
                 borderColor: variant.accent,
+                shadowColor: theme.colors.ink,
               },
             ]}
           >
             <View style={[local.accent, { backgroundColor: variant.accent }]} />
             <View style={local.copy}>
               {toast.title ? <Text style={[local.title, { color: theme.colors.ink }]}>{toast.title}</Text> : null}
-              <Text style={[styles.text, local.message]}>{toast.message}</Text>
+              <Text style={[theme.styles.text, local.message]}>{toast.message}</Text>
             </View>
             <Text style={[local.close, { color: theme.colors.muted }]}>x</Text>
           </Pressable>
@@ -114,7 +115,6 @@ const local = {
     flexDirection: "row" as const,
     alignItems: "flex-start" as const,
     overflow: "hidden" as const,
-    shadowColor: colors.ink,
     shadowOpacity: 0.12,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -122,7 +122,7 @@ const local = {
   },
   accent: { width: 5, alignSelf: "stretch" as const },
   copy: { flex: 1, minWidth: 0, gap: 2, paddingHorizontal: 12, paddingVertical: 10 },
-  title: { color: colors.ink, fontSize: 14, fontWeight: "900" as const },
+  title: { fontSize: 14, fontWeight: "900" as const },
   message: { flexShrink: 1, lineHeight: 20 },
-  close: { color: colors.muted, fontSize: 16, fontWeight: "900" as const, paddingHorizontal: 12, paddingTop: 9 },
+  close: { fontSize: 16, fontWeight: "900" as const, paddingHorizontal: 12, paddingTop: 9 },
 };

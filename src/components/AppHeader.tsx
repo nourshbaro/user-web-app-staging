@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { Pressable, Text, View } from "react-native";
-import { colors, styles, useTheme } from "@/components/ui";
+import { useTheme } from "@/components/ui";
 import { HeaderActions } from "@/components/HeaderActions";
 
 export function AppHeader({
@@ -39,7 +39,7 @@ export function AppHeader({
         ) : null}
         <View style={local.copy}>
           <Text numberOfLines={1} style={[local.title, { color: theme.colors.ink }]}>{title}</Text>
-          {subtitle ? <Text numberOfLines={1} style={styles.muted}>{subtitle}</Text> : null}
+          {subtitle ? <Text numberOfLines={1} style={theme.styles.muted}>{subtitle}</Text> : null}
         </View>
       </View>
       <HeaderActions hideCart={hideCart} />
@@ -58,14 +58,12 @@ const local = {
   },
   left: { flex: 1, flexDirection: "row" as const, alignItems: "center" as const, gap: 12 },
   copy: { flex: 1 },
-  title: { color: colors.ink, fontSize: 18, fontWeight: "900" as const },
+  title: { fontSize: 18, fontWeight: "900" as const },
   iconButton: {
     width: 40,
     height: 40,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
@@ -74,7 +72,6 @@ const local = {
     height: 11,
     borderLeftWidth: 2,
     borderBottomWidth: 2,
-    borderColor: colors.ink,
     transform: [{ rotate: "45deg" }],
     marginLeft: 4,
   },

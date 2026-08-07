@@ -1,4 +1,4 @@
-import { colors, useTheme } from "@/components/ui";
+import { useTheme } from "@/components/ui";
 import { classifyAdLink, resolveAdImageUrl } from "@/lib/adUrls";
 import {
   classifyBannerSwipe,
@@ -475,7 +475,7 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
           >
             <Image
               source={{ uri: handoff.banner.imageUrl }}
-              style={styles.image}
+              style={[styles.image, { backgroundColor: theme.colors.panelSoft }]}
               contentFit="cover"
             />
           </View>
@@ -500,11 +500,12 @@ function BannerSlide({
   onLoad: (id: number) => void;
   onError: (id: number) => void;
 }) {
+  const theme = useTheme();
   const link = classifyAdLink(banner.link_url);
   const image = (
     <Image
       source={{ uri: banner.imageUrl }}
-      style={styles.image}
+      style={[styles.image, { backgroundColor: theme.colors.panelSoft }]}
       contentFit="cover"
       accessible={active && !link}
       accessibilityLabel={active && !link ? banner.title : undefined}
@@ -577,7 +578,6 @@ const styles = StyleSheet.create({
   image: {
     width: "100%",
     height: "100%",
-    backgroundColor: colors.panelSoft,
   },
   handoff: {
     ...StyleSheet.absoluteFill,

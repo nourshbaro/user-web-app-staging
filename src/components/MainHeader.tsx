@@ -1,7 +1,7 @@
 import { Image, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HeaderActions } from "@/components/HeaderActions";
-import { colors, useTheme } from "@/components/ui";
+import { useTheme } from "@/components/ui";
 
 export function MainHeader() {
   const theme = useTheme();
@@ -32,7 +32,6 @@ const local = {
     marginTop: -14,
     alignSelf: "center" as const,
     borderBottomWidth: 1,
-    borderBottomColor: colors.line,
     backgroundColor: "#FFFFFF",
     flexDirection: "row" as const,
     alignItems: "center" as const,

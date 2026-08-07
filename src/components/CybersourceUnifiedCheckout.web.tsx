@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
-import { colors, styles } from "@/components/ui";
+import { useTheme } from "@/components/ui";
 import { config } from "@/lib/config";
 
 declare global {
@@ -31,6 +31,7 @@ type Props = {
 };
 
 export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError }: Props) {
+  const theme = useTheme();
   const clientRef = useRef<UCClient | null>(null);
   const checkoutRef = useRef<UCCheckout | null>(null);
   const mountingRef = useRef(false);
@@ -112,8 +113,8 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
 
   return (
     <View style={local.wrap}>
-      {status === "loading" ? <Text style={styles.muted}>Loading secure payment form...</Text> : null}
-      {status === "error" && error ? <Text style={local.errorText}>{error}</Text> : null}
+      {status === "loading" ? <Text style={theme.styles.muted}>Loading secure payment form...</Text> : null}
+      {status === "error" && error ? <Text style={[local.errorText, { color: theme.colors.danger }]}>{error}</Text> : null}
       <View nativeID="uc-payment-buttons" style={local.buttons} />
       <View nativeID="uc-payment-form" style={local.form} />
     </View>
@@ -124,5 +125,5 @@ const local = {
   wrap: { gap: 8 },
   buttons: { minHeight: 44 },
   form: { width: "100%" as const },
-  errorText: { color: colors.danger, fontSize: 13, lineHeight: 18 },
+  errorText: { fontSize: 13, lineHeight: 18 },
 };

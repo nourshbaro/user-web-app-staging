@@ -1,6 +1,6 @@
 import { AppBanner } from "@/components/AppBanner";
 import { MatchCard } from "@/components/MatchCard";
-import { Empty, Loading, colors, useResponsive, useTheme } from "@/components/ui";
+import { Empty, Loading, useResponsive, useTheme } from "@/components/ui";
 import { useToast } from "@/context/ToastContext";
 import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
 import { matchesService } from "@/services/matches";
@@ -124,7 +124,7 @@ export function MatchesList({ limit, filterable = false, showAppBanner = false }
       {filterable ? (
         <View style={[local.filterCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
           <Pressable onPress={() => setFiltersOpen((value) => !value)} style={local.filterToggle}>
-            <SymbolView name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as any} size={20} tintColor={theme.colors.primary} fallback={<Text style={local.filterIcon}>F</Text>} />
+            <SymbolView name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as any} size={20} tintColor={theme.colors.primary} fallback={<Text style={[local.filterIcon, { color: theme.colors.primary }]}>F</Text>} />
             <Text style={[local.filterTitle, { color: theme.colors.ink }]}>Filter Matches</Text>
             {hasFilters ? (
               <Pressable
@@ -226,8 +226,8 @@ function Dropdown({
       {open ? (
         <View style={[local.optionsPanel, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }]}>
           {options.map((option) => (
-            <Pressable key={option.value ?? "all"} onPress={() => onSelect(option.value)} style={[local.optionRow, option.value === undefined && local.optionRowActive]}>
-              <Text numberOfLines={1} style={[local.optionText, option.value === undefined && local.optionTextActive]}>{option.label}</Text>
+            <Pressable key={option.value ?? "all"} onPress={() => onSelect(option.value)} style={[local.optionRow, option.value === undefined && { backgroundColor: theme.colors.primary }]}>
+              <Text numberOfLines={1} style={[local.optionText, { color: theme.colors.muted }, option.value === undefined && local.optionTextActive]}>{option.label}</Text>
             </Pressable>
           ))}
         </View>
@@ -388,8 +388,6 @@ const local = {
   filterCard: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
     overflow: "hidden" as const,
     marginTop: 8,
   },
@@ -400,8 +398,8 @@ const local = {
     gap: 12,
     paddingHorizontal: 14,
   },
-  filterIcon: { color: colors.primary, fontSize: 18, fontWeight: "900" as const },
-  filterTitle: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: "900" as const },
+  filterIcon: { fontSize: 18, fontWeight: "900" as const },
+  filterTitle: { flex: 1, fontSize: 13, fontWeight: "900" as const },
   clearButton: {
     width: 32,
     height: 32,
@@ -412,7 +410,6 @@ const local = {
   },
   filterBody: {
     borderTopWidth: 1,
-    borderTopColor: colors.line,
     padding: 12,
     gap: 12,
   },
@@ -420,7 +417,6 @@ const local = {
   fieldWrap: { gap: 5 },
   fieldWrapWide: { flex: 1, minWidth: 0 },
   fieldLabel: {
-    color: colors.secondary,
     fontSize: 12,
     fontWeight: "900" as const,
     textTransform: "uppercase" as const,
@@ -430,40 +426,33 @@ const local = {
     minHeight: 44,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
     flexDirection: "row" as const,
     alignItems: "center" as const,
     paddingHorizontal: 12,
     gap: 8,
   },
-  selectText: { flex: 1, minWidth: 0, color: colors.muted, fontSize: 13, fontWeight: "700" as const },
-  selectChevron: { color: colors.muted, fontSize: 18, lineHeight: 18 },
+  selectText: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: "700" as const },
+  selectChevron: { fontSize: 18, lineHeight: 18 },
   optionsPanel: {
     borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
   },
   optionRow: {
     minHeight: 26,
     justifyContent: "center" as const,
     paddingHorizontal: 12,
   },
-  optionRowActive: { backgroundColor: colors.primary },
-  optionText: { color: colors.muted, fontSize: 13 },
+  optionText: { fontSize: 13 },
   optionTextActive: { color: "#FFFFFF", fontWeight: "900" as const },
   dateInputWrap: {
     minHeight: 44,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
     flexDirection: "row" as const,
     alignItems: "center" as const,
     paddingHorizontal: 12,
     gap: 8,
   },
-  dateInputText: { flex: 1, minWidth: 0, color: colors.ink, fontSize: 13, fontWeight: "700" as const },
+  dateInputText: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: "700" as const },
   calendarOverlay: {
     flex: 1,
     backgroundColor: "rgba(21,26,44,0.44)",
@@ -476,8 +465,6 @@ const local = {
     maxWidth: 380,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
     padding: 14,
     gap: 12,
   },
@@ -493,9 +480,9 @@ const local = {
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
-  calendarTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" as const },
+  calendarTitle: { fontSize: 16, fontWeight: "900" as const },
   weekRow: { flexDirection: "row" as const },
-  weekLabel: { flex: 1, textAlign: "center" as const, color: colors.muted, fontSize: 11, fontWeight: "900" as const },
+  weekLabel: { flex: 1, textAlign: "center" as const, fontSize: 11, fontWeight: "900" as const },
   calendarGrid: { flexDirection: "row" as const, flexWrap: "wrap" as const },
   calendarDay: {
     width: "14.2857%" as const,
@@ -505,26 +492,25 @@ const local = {
     borderRadius: 8,
   },
   calendarDayDisabled: { opacity: 0.38 },
-  calendarDayText: { color: colors.ink, fontSize: 13, fontWeight: "800" as const },
+  calendarDayText: { fontSize: 13, fontWeight: "800" as const },
   calendarDayTextSelected: { color: "#FFFFFF" },
   calendarActions: { alignItems: "flex-end" as const },
   calendarButton: {
     minHeight: 38,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.line,
     justifyContent: "center" as const,
     paddingHorizontal: 14,
   },
-  calendarButtonText: { color: colors.ink, fontSize: 13, fontWeight: "900" as const },
+  calendarButtonText: { fontSize: 13, fontWeight: "900" as const },
   listBar: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
     justifyContent: "space-between" as const,
     paddingTop: 2,
   },
-  listTitle: { color: colors.ink, fontSize: 17, fontWeight: "900" as const },
-  resultCount: { color: colors.muted, fontSize: 12, fontWeight: "800" as const, textTransform: "uppercase" as const },
+  listTitle: { fontSize: 17, fontWeight: "900" as const },
+  resultCount: { fontSize: 12, fontWeight: "800" as const, textTransform: "uppercase" as const },
   matchGrid: {
     width: "100%" as const,
     flexDirection: "row" as const,

@@ -1,6 +1,6 @@
 import { AppHeader } from "@/components/AppHeader";
 import { CybersourceUnifiedCheckout } from "@/components/CybersourceUnifiedCheckout";
-import { Button, Card, Empty, Input, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
+import { Button, Card, Empty, Input, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
@@ -97,6 +97,7 @@ export default function CheckoutScreen() {
   const auth = useAuth();
   const responsive = useResponsive();
   const theme = useTheme();
+  const local = useMemo(() => createCheckoutStyles(theme.colors), [theme.colors]);
   const toast = useToast();
   const [name, setName] = useState(auth.user?.name ?? "");
   const [email, setEmail] = useState(auth.user?.email ?? "");
@@ -327,32 +328,32 @@ export default function CheckoutScreen() {
 
   const renderOrderSummary = () => (
     <Card>
-      <View style={styles.row}>
-        <Text style={styles.h2}>Order summary</Text>
+      <View style={theme.styles.row}>
+        <Text style={theme.styles.h2}>Order summary</Text>
         <Text style={local.timer}>{minutesSeconds(cart.secondsLeft)}</Text>
       </View>
-      <Text style={styles.muted}>{ticketSlots.length} ticket holder{ticketSlots.length === 1 ? "" : "s"}</Text>
+      <Text style={theme.styles.muted}>{ticketSlots.length} ticket holder{ticketSlots.length === 1 ? "" : "s"}</Text>
       {groupedItems.map((item) => (
         <View key={item.key} style={[local.summaryItem, { borderTopColor: theme.colors.line }]}>
           <View style={{ flex: 1 }}>
             <Text numberOfLines={1} style={[local.summaryTitle, { color: theme.colors.ink }]}>{item.zone_name ?? "Ticket"}</Text>
-            <Text numberOfLines={1} style={styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
-            <Text style={styles.muted}>{item.seats.length ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}` : `Qty ${item.quantity}`}</Text>
+            <Text numberOfLines={1} style={theme.styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
+            <Text style={theme.styles.muted}>{item.seats.length ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}` : `Qty ${item.quantity}`}</Text>
           </View>
           <Text style={[local.summaryPrice, { color: theme.colors.ink }]}>{formatMoney(item.subtotal, item.currency)}</Text>
         </View>
       ))}
       <View style={[local.summaryTotal, { borderTopColor: theme.colors.line }]}>
-        <Text style={styles.h2}>Total</Text>
-        <Text style={styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
+        <Text style={theme.styles.h2}>Total</Text>
+        <Text style={theme.styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
       </View>
     </Card>
   );
 
   const renderPaymentMethod = () => (
     <Card>
-      <Text style={styles.h2}>Payment method</Text>
-      <Text style={styles.muted}>Choose how you want to pay.</Text>
+      <Text style={theme.styles.h2}>Payment method</Text>
+      <Text style={theme.styles.muted}>Choose how you want to pay.</Text>
       <View style={local.paymentGrid}>
         {paymentOptions.map((option) => {
           const active = paymentMethod === option.id;
@@ -373,7 +374,7 @@ export default function CheckoutScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[local.paymentTitle, { color: theme.colors.ink }]}>{option.title}</Text>
-                <Text style={styles.muted}>{option.detail}</Text>
+                <Text style={theme.styles.muted}>{option.detail}</Text>
               </View>
             </Pressable>
           );
@@ -384,7 +385,7 @@ export default function CheckoutScreen() {
 
   const renderPaymentActions = () => (
     <Card>
-      <Text style={styles.h2}>Payment</Text>
+      <Text style={theme.styles.h2}>Payment</Text>
       <View style={[local.paymentNotice, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
         <Text style={[local.paymentNoticeText, { color: theme.colors.secondary }]}>
           {paymentMethod === "cybersource"
@@ -411,7 +412,7 @@ export default function CheckoutScreen() {
       {paymentMethod === "blue" ? (
         <Button title={loading ? "Submitting..." : "Confirm and pay"} disabled={loading || !name || !email || !isCompleteLebanonPhone(phone) || !ticketSlots.length} onPress={() => void submit()} />
       ) : loading ? (
-        <Text style={styles.muted}>Confirming your order...</Text>
+        <Text style={theme.styles.muted}>Confirming your order...</Text>
       ) : null}
       {/* {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null} */}
     </Card>
@@ -428,9 +429,9 @@ export default function CheckoutScreen() {
             <View style={[local.checkoutLayout, isWide && local.checkoutLayoutWide]}>
               <View style={[local.checkoutMain, isWide && local.checkoutMainWide]}>
                 <Card>
-                  <View style={styles.row}>
-                    <Text style={styles.h2}>Billing</Text>
-                    {billingInfoLoading ? <Text style={styles.muted}>Loading saved info...</Text> : null}
+                  <View style={theme.styles.row}>
+                    <Text style={theme.styles.h2}>Billing</Text>
+                    {billingInfoLoading ? <Text style={theme.styles.muted}>Loading saved info...</Text> : null}
                   </View>
                   <Input label="Name" value={name} onChangeText={setName} autoCapitalize="words" editable={!isCheckoutLocked} />
                   <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!isCheckoutLocked} />
@@ -450,8 +451,8 @@ export default function CheckoutScreen() {
                 </Card>
 
                 <Card>
-                  <Text style={styles.h2}>Ticket holders</Text>
-                  <Text style={styles.muted}>Name printed on each ticket.</Text>
+                  <Text style={theme.styles.h2}>Ticket holders</Text>
+                  <Text style={theme.styles.muted}>Name printed on each ticket.</Text>
                   {ticketSlots.map((slot) => (
                     <Input
                       key={slot.key}
@@ -465,8 +466,8 @@ export default function CheckoutScreen() {
                 </Card>
 
                 <Card>
-                  <Text style={styles.h2}>Payment method</Text>
-                  <Text style={styles.muted}>Choose how you want to pay.</Text>
+                  <Text style={theme.styles.h2}>Payment method</Text>
+                  <Text style={theme.styles.muted}>Choose how you want to pay.</Text>
                   <View style={local.paymentGrid}>
                     {paymentOptions.map((option) => {
                       const active = paymentMethod === option.id;
@@ -487,7 +488,7 @@ export default function CheckoutScreen() {
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={[local.paymentTitle, { color: theme.colors.ink }]}>{option.title}</Text>
-                            <Text style={styles.muted}>{option.detail}</Text>
+                            <Text style={theme.styles.muted}>{option.detail}</Text>
                           </View>
                         </Pressable>
                       );
@@ -498,29 +499,29 @@ export default function CheckoutScreen() {
 
               <View style={[local.checkoutAside, isWide && local.checkoutAsideWide]}>
                 <Card>
-                  <View style={styles.row}>
-                    <Text style={styles.h2}>Order summary</Text>
+                  <View style={theme.styles.row}>
+                    <Text style={theme.styles.h2}>Order summary</Text>
                     <Text style={local.timer}>{minutesSeconds(cart.secondsLeft)}</Text>
                   </View>
-                  <Text style={styles.muted}>{ticketSlots.length} ticket holder{ticketSlots.length === 1 ? "" : "s"}</Text>
+                  <Text style={theme.styles.muted}>{ticketSlots.length} ticket holder{ticketSlots.length === 1 ? "" : "s"}</Text>
                   {groupedItems.map((item) => (
                     <View key={item.key} style={[local.summaryItem, { borderTopColor: theme.colors.line }]}>
                       <View style={{ flex: 1 }}>
                         <Text numberOfLines={1} style={[local.summaryTitle, { color: theme.colors.ink }]}>{item.zone_name ?? "Ticket"}</Text>
-                        <Text numberOfLines={1} style={styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
-                        <Text style={styles.muted}>{item.seats.length ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}` : `Qty ${item.quantity}`}</Text>
+                        <Text numberOfLines={1} style={theme.styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
+                        <Text style={theme.styles.muted}>{item.seats.length ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}` : `Qty ${item.quantity}`}</Text>
                       </View>
                       <Text style={[local.summaryPrice, { color: theme.colors.ink }]}>{formatMoney(item.subtotal, item.currency)}</Text>
                     </View>
                   ))}
                   <View style={[local.summaryTotal, { borderTopColor: theme.colors.line }]}>
-                    <Text style={styles.h2}>Total</Text>
-                    <Text style={styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
+                    <Text style={theme.styles.h2}>Total</Text>
+                    <Text style={theme.styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
                   </View>
                 </Card>
 
                 <Card>
-                  <Text style={styles.h2}>Payment</Text>
+                  <Text style={theme.styles.h2}>Payment</Text>
                   <View style={[local.paymentNotice, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
                     <Text style={[local.paymentNoticeText, { color: theme.colors.secondary }]}>
                       {paymentMethod === "cybersource"
@@ -547,7 +548,7 @@ export default function CheckoutScreen() {
                   {paymentMethod === "blue" ? (
                     <Button title={loading ? "Submitting..." : "Confirm and pay"} disabled={loading || !name || !email || !isCompleteLebanonPhone(phone) || !ticketSlots.length} onPress={() => void submit()} />
                   ) : loading ? (
-                    <Text style={styles.muted}>Confirming your order...</Text>
+                    <Text style={theme.styles.muted}>Confirming your order...</Text>
                   ) : null}
                   {/* {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null} */}
                 </Card>
@@ -559,9 +560,9 @@ export default function CheckoutScreen() {
       {loading ? (
         <View style={local.overlay}>
           <View style={local.overlayPanel}>
-            <ActivityIndicator color={colors.primary} />
+            <ActivityIndicator color={theme.colors.primary} />
             <Text style={local.overlayTitle}>Confirming your order...</Text>
-            <Text style={styles.muted}>Please do not close this page.</Text>
+            <Text style={theme.styles.muted}>Please do not close this page.</Text>
           </View>
         </View>
       ) : null}
@@ -569,7 +570,8 @@ export default function CheckoutScreen() {
   );
 }
 
-const local = {
+function createCheckoutStyles(colors: ThemeColors) {
+  return {
   shell: { flex: 1, alignSelf: "center" as const },
   checkoutLayout: { gap: 12 },
   checkoutLayoutWide: {
@@ -661,7 +663,8 @@ const local = {
     gap: 8,
   },
   overlayTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" as const },
-};
+  };
+}
 
 function WalletGlyph({ active }: { active: boolean }) {
   const theme = useTheme();
@@ -692,22 +695,20 @@ const localGlyph = {
     height: 18,
     borderRadius: 5,
     borderWidth: 2,
-    borderColor: colors.ink,
     justifyContent: "center" as const,
     paddingHorizontal: 4,
   },
-  walletLine: { height: 2, borderRadius: 1, backgroundColor: colors.ink },
+  walletLine: { height: 2, borderRadius: 1 },
   card: {
     width: 24,
     height: 17,
     borderRadius: 4,
     borderWidth: 2,
-    borderColor: colors.ink,
     paddingTop: 4,
     paddingHorizontal: 3,
   },
-  cardStripe: { height: 2, borderRadius: 1, backgroundColor: colors.ink },
-  cardDot: { width: 5, height: 2, borderRadius: 1, backgroundColor: colors.ink, marginTop: 4 },
+  cardStripe: { height: 2, borderRadius: 1 },
+  cardDot: { width: 5, height: 2, borderRadius: 1, marginTop: 4 },
   activeBorder: { borderColor: "#FFFFFF" },
   activeFill: { backgroundColor: "#FFFFFF" },
 };

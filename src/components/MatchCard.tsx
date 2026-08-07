@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { Image, Pressable, Text, View, type DimensionValue } from "react-native";
-import { Card, colors, styles, useTheme } from "@/components/ui";
+import { Card, useTheme } from "@/components/ui";
 import { storageUrl } from "@/lib/config";
 import { formatDate, formatTime } from "@/lib/format";
 import type { ApiMatch } from "@/types";
@@ -16,20 +16,20 @@ export function MatchCard({ match, width = "100%" }: { match: ApiMatch; width?: 
       <Pressable onPress={() => router.push({ pathname: "/match/[id]", params: { id: String(match.id) } })}>
         <Card>
         <View style={[local.competitionBar, { borderBottomColor: theme.colors.line }]}>
-          <Text style={styles.sectionLabel}>{formatDate(match.match_date)}</Text>
-          <View style={styles.badge}><Text style={styles.badgeText}>{match.status ?? "scheduled"}</Text></View>
+          <Text style={theme.styles.sectionLabel}>{formatDate(match.match_date)}</Text>
+          <View style={theme.styles.badge}><Text style={theme.styles.badgeText}>{match.status ?? "scheduled"}</Text></View>
         </View>
         <View style={local.teamsRow}>
           <TeamPill name={match.home_team?.name ?? "Home"} shortName={homeShort} logoUrl={storageUrl(match.home_team?.logo)} />
           <View style={local.vsBlock}>
             <View style={[local.vsCircle, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}><Text style={[local.vsText, { color: theme.colors.muted }]}>VS</Text></View>
-            <Text style={local.timeText}>{formatTime(match.kickoff_at)}</Text>
+            <Text style={[local.timeText, { color: theme.colors.primary }]}>{formatTime(match.kickoff_at)}</Text>
           </View>
           <TeamPill name={match.away_team?.name ?? "Away"} shortName={awayShort} logoUrl={storageUrl(match.away_team?.logo)} />
         </View>
-        <View style={styles.row}>
-          <Text style={styles.muted} numberOfLines={1}>{match.stadium?.name ?? "Stadium TBC"}</Text>
-          <View style={local.ticketButton}><Text style={local.ticketText}>Tickets</Text></View>
+        <View style={theme.styles.row}>
+          <Text style={theme.styles.muted} numberOfLines={1}>{match.stadium?.name ?? "Stadium TBC"}</Text>
+          <View style={[local.ticketButton, { backgroundColor: theme.colors.primary }]}><Text style={local.ticketText}>Tickets</Text></View>
         </View>
         </Card>
       </Pressable>
@@ -46,7 +46,7 @@ function TeamPill({ name, shortName, logoUrl }: { name: string; shortName: strin
         {logoUrl ? (
           <Image source={{ uri: logoUrl }} style={local.teamLogoImage} resizeMode="contain" />
         ) : (
-          <Text style={local.teamLogoText}>{shortName}</Text>
+          <Text style={[local.teamLogoText, { color: theme.colors.primary }]}>{shortName}</Text>
         )}
       </View>
       <Text numberOfLines={2} style={[local.teamName, { color: theme.colors.secondary }]}>{name}</Text>
@@ -70,29 +70,25 @@ const local = {
     width: 58,
     height: 58,
     borderRadius: 12,
-    backgroundColor: colors.panelSoft,
     borderWidth: 1,
-    borderColor: colors.line,
     alignItems: "center" as const,
     justifyContent: "center" as const,
     overflow: "hidden" as const,
   },
   teamLogoImage: { width: 46, height: 46 },
-  teamLogoText: { color: colors.primary, fontSize: 14, fontWeight: "900" as const },
-  teamName: { color: colors.ink, fontSize: 12, fontWeight: "900" as const, textAlign: "center" as const, minHeight: 32 },
+  teamLogoText: { fontSize: 14, fontWeight: "900" as const },
+  teamName: { fontSize: 12, fontWeight: "900" as const, textAlign: "center" as const, minHeight: 32 },
   vsBlock: { width: 54, alignItems: "center" as const, gap: 5 },
   vsCircle: {
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: colors.panelSoft,
     borderWidth: 1,
-    borderColor: colors.line,
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
-  vsText: { color: colors.muted, fontSize: 11, fontWeight: "900" as const },
-  timeText: { color: colors.primary, fontSize: 11, fontWeight: "800" as const },
-  ticketButton: { backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9 },
+  vsText: { fontSize: 11, fontWeight: "900" as const },
+  timeText: { fontSize: 11, fontWeight: "800" as const },
+  ticketButton: { borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9 },
   ticketText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800" as const },
 };

@@ -1,6 +1,6 @@
 import { Text, View } from "react-native";
 import { MainHeader } from "@/components/MainHeader";
-import { Card, Screen, colors, styles, useResponsive, useTheme } from "@/components/ui";
+import { Card, Screen, useResponsive, useTheme } from "@/components/ui";
 
 export default function TournamentScreen() {
   const responsive = useResponsive();
@@ -14,7 +14,7 @@ export default function TournamentScreen() {
           <Card>
             <View style={local.comingSoon}>
               <Text style={[local.title, { color: theme.colors.ink }]}>Coming Soon</Text>
-              <Text style={[styles.muted, local.copy]}>Tournament information will be available here.</Text>
+              <Text style={[theme.styles.muted, local.copy]}>Tournament information will be available here.</Text>
             </View>
           </Card>
         </View>
@@ -32,6 +32,6 @@ const local = {
     justifyContent: "center" as const,
     gap: 8,
   },
-  title: { color: colors.ink, fontSize: 28, fontWeight: "900" as const },
+  title: { fontSize: 28, fontWeight: "900" as const },
   copy: { textAlign: "center" as const },
 };

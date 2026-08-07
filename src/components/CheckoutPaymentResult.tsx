@@ -1,4 +1,4 @@
-import { Button, Card, Screen, styles, useResponsive, useTheme } from "@/components/ui";
+import { Button, Card, Screen, useResponsive, useTheme } from "@/components/ui";
 import type { CheckoutResultParams } from "@/lib/checkoutResultParams";
 import {
   getCheckoutResultMetadata,
@@ -79,7 +79,7 @@ function ResultDetail({ label, value }: { label: string; value: string }) {
 
   return (
     <View style={[local.detail, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
-      <Text style={[styles.muted, local.detailLabel]}>{label}</Text>
+      <Text style={[theme.styles.muted, local.detailLabel]}>{label}</Text>
       <Text style={[local.detailValue, { color: theme.colors.ink }]}>{value}</Text>
     </View>
   );

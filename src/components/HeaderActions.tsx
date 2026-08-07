@@ -1,6 +1,6 @@
 import { SymbolView } from "expo-symbols";
 import { Pressable, Text, View } from "react-native";
-import { colors, useTheme } from "@/components/ui";
+import { useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
 import { useCartSheet } from "@/context/CartSheetContext";
 import { groupCartItems } from "@/lib/cartDisplay";
@@ -19,6 +19,7 @@ export function HeaderActions({ hideCart = false }: HeaderActionsProps) {
     ...local.iconButton,
     backgroundColor: theme.isDark ? theme.colors.panelSoft : "#F1F5F9",
     borderColor: theme.colors.line,
+    shadowColor: theme.colors.ink,
     shadowOpacity: theme.isDark ? 0.26 : 0.08,
   };
 
@@ -37,7 +38,15 @@ export function HeaderActions({ hideCart = false }: HeaderActionsProps) {
           <HeaderIcon name={{ ios: "cart", android: "shopping_cart", web: "shopping_cart" }} color={cartCount > 0 ? theme.colors.primary : theme.colors.secondary} />
           {cartCount > 0 ? (
             <>
-              <View style={[local.cartBadge, { borderColor: theme.colors.bg }]}>
+              <View
+                style={[
+                  local.cartBadge,
+                  {
+                    backgroundColor: theme.colors.primary,
+                    borderColor: theme.colors.bg,
+                  },
+                ]}
+              >
                 <Text style={local.cartBadgeText}>{cartCount}</Text>
               </View>
               <View style={[local.cartTimerBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.bg }]}>
@@ -66,11 +75,8 @@ const local = {
     height: 40,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
     alignItems: "center" as const,
     justifyContent: "center" as const,
-    shadowColor: colors.ink,
     shadowOpacity: 0.08,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
@@ -88,9 +94,7 @@ const local = {
     height: 18,
     borderRadius: 9,
     paddingHorizontal: 5,
-    backgroundColor: colors.primary,
     borderWidth: 2,
-    borderColor: colors.bg,
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
@@ -108,9 +112,7 @@ const local = {
     height: 18,
     borderRadius: 9,
     paddingHorizontal: 5,
-    backgroundColor: colors.primary,
     borderWidth: 2,
-    borderColor: colors.bg,
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
