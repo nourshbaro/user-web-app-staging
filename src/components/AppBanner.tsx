@@ -2,10 +2,15 @@ import { useTheme } from "@/components/ui";
 import { classifyAdLink, resolveAdImageUrl } from "@/lib/adUrls";
 import {
   classifyBannerSwipe,
+  createBannerImageInstanceKey,
+  createBannerTransitionAuthority,
   isHorizontalBannerGesture,
   normalizeBannerIndex,
   shouldAutoRotateBanners,
+  type BannerDisplayIdentity,
+  type BannerInstanceRole,
   type BannerSwipeDirection,
+  type BannerTransitionOwnership,
 } from "@/lib/appBannerCarousel";
 import { APP_BANNER_REQUEST_KEY, adsService } from "@/services/ads";
 import type { AppBannerAd } from "@/types/ads";
@@ -14,7 +19,6 @@ import { router, type Href } from "expo-router";
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -42,6 +46,8 @@ type DisplayBanner = AppBannerAd & {
 type BannerHandoff = {
   banner: DisplayBanner;
   targetIndex: number;
+  ownership: BannerTransitionOwnership;
+  visible: boolean;
 };
 
 export function AppBanner() {
@@ -107,10 +113,14 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
   const [timerResetKey, setTimerResetKey] = useState(0);
   const [animating, setAnimating] = useState(false);
   const [suppressPress, setSuppressPress] = useState(false);
+  // Banner-level loading remains a warm-up/scheduling hint. Exact native view
+  // display ownership is tracked separately by role, source, and generation.
   const [loadedIds, setLoadedIds] = useState<Set<number>>(() => new Set());
   const [handoff, setHandoff] = useState<BannerHandoff | null>(null);
   const [dragX] = useState(() => new Animated.Value(0));
   const transitionInProgressRef = useRef(false);
+  const transitionAuthorityRef = useRef(createBannerTransitionAuthority());
+  const displayedInstancesRef = useRef(new Map<BannerInstanceRole, string>());
   const draggingRef = useRef(false);
   const mountedRef = useRef(true);
   const prefetchedUrlsRef = useRef(new Set<string>());
@@ -128,6 +138,7 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
   ];
 
   useEffect(() => {
+    const transitionAuthority = transitionAuthorityRef.current;
     mountedRef.current = true;
     let active = true;
 
@@ -155,6 +166,7 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
     return () => {
       active = false;
       mountedRef.current = false;
+      transitionAuthority.invalidate();
       transitionInProgressRef.current = false;
       draggingRef.current = false;
       dragX.stopAnimation();
@@ -180,26 +192,19 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
     }
   }, [nextBanner, previousBanner]);
 
-  useLayoutEffect(() => {
-    if (!handoff) return;
-
-    if (safeActiveIndex !== handoff.targetIndex) {
-      const commitFrame = requestAnimationFrame(() => {
-        if (mountedRef.current) setActiveIndex(handoff.targetIndex);
-      });
-      return () => cancelAnimationFrame(commitFrame);
+  useEffect(() => {
+    if (
+      !handoff?.visible
+      || safeActiveIndex === handoff.targetIndex
+      || !transitionAuthorityRef.current.isCurrent(handoff.ownership)
+    ) {
+      return;
     }
-    dragX.setValue(0);
-    const frame = requestAnimationFrame(() => {
-      if (mountedRef.current) {
-        setHandoff(null);
-        setAnimating(false);
-        transitionInProgressRef.current = false;
-        setTimerResetKey((value) => value + 1);
-      }
-    });
 
-    return () => cancelAnimationFrame(frame);
+    // The visible handoff has already painted because effects run after commit.
+    // Only now may the track return to center and positional sources reconcile.
+    setActiveIndex(handoff.targetIndex);
+    dragX.setValue(0);
   }, [dragX, handoff, safeActiveIndex]);
 
   const releasePressSuppression = useCallback(() => {
@@ -208,9 +213,64 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
 
   const stopAnimation = useCallback(() => {
     dragX.stopAnimation();
+    transitionAuthorityRef.current.invalidate();
     transitionInProgressRef.current = false;
     setAnimating(false);
   }, [dragX]);
+
+  const instanceKey = useCallback((
+    role: BannerInstanceRole,
+    item: DisplayBanner,
+  ) => createBannerImageInstanceKey(role, item.id, item.imageUrl), []);
+
+  const handleInstanceDisplay = useCallback((
+    role: BannerInstanceRole,
+    item: DisplayBanner,
+    ownership?: BannerTransitionOwnership,
+  ) => {
+    displayedInstancesRef.current.set(role, instanceKey(role, item));
+    if (!ownership || !mountedRef.current) return;
+
+    const identity: BannerDisplayIdentity = {
+      generation: ownership.generation,
+      bannerId: item.id,
+      imageUrl: item.imageUrl,
+      role,
+    };
+    if (role === "handoff") {
+      if (!transitionAuthorityRef.current.acceptHandoffDisplay(identity)) return;
+      setHandoff((current) => (
+        current && current.ownership.generation === ownership.generation
+          ? { ...current, visible: true }
+          : current
+      ));
+      return;
+    }
+    if (role !== "current" || !transitionAuthorityRef.current.acceptCurrentDisplay(identity)) {
+      return;
+    }
+    setHandoff(null);
+    setAnimating(false);
+    transitionInProgressRef.current = false;
+    setTimerResetKey((value) => value + 1);
+  }, [instanceKey]);
+
+  const isDisplayed = useCallback((
+    role: "previous" | "next",
+    item: DisplayBanner | undefined,
+  ) => Boolean(
+    item
+    && displayedInstancesRef.current.get(role) === instanceKey(role, item)
+  ), [instanceKey]);
+
+  const handleInstanceLoadStart = useCallback((
+    role: "previous" | "current" | "next",
+    item: DisplayBanner,
+  ) => {
+    if (displayedInstancesRef.current.get(role) === instanceKey(role, item)) {
+      displayedInstancesRef.current.delete(role);
+    }
+  }, [instanceKey]);
 
   const moveToIndex = useCallback((
     targetIndex: number,
@@ -223,12 +283,17 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
     ) return;
     const normalizedTarget = normalizeBannerIndex(targetIndex, availableBanners.length);
     const destinationBanner = availableBanners[normalizedTarget];
+    const adjacentRole = direction === "next" ? "next" : "previous";
 
     if (normalizedTarget === safeActiveIndex) {
       dragX.setValue(0);
       return;
     }
-    if (!destinationBanner || !loadedIds.has(destinationBanner.id)) {
+    if (
+      !destinationBanner
+      || !loadedIds.has(destinationBanner.id)
+      || !isDisplayed(adjacentRole, destinationBanner)
+    ) {
       dragX.setValue(0);
       setTimerResetKey((value) => value + 1);
       return;
@@ -236,6 +301,12 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
 
     const duration = reduceMotionEnabled || screenReaderEnabled ? 0 : SLIDE_DURATION_MS;
     const destination = direction === "next" ? -viewportWidth : viewportWidth;
+    const ownership = transitionAuthorityRef.current.begin(
+      destinationBanner.id,
+      destinationBanner.imageUrl,
+      direction,
+    );
+    if (!ownership) return;
     transitionInProgressRef.current = true;
     setAnimating(true);
     Animated.timing(dragX, {
@@ -244,16 +315,24 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (!finished || !mountedRef.current) {
+        transitionAuthorityRef.current.invalidate();
         transitionInProgressRef.current = false;
         setAnimating(false);
         return;
       }
-      setHandoff({ banner: destinationBanner, targetIndex: normalizedTarget });
+      if (!transitionAuthorityRef.current.isCurrent(ownership)) return;
+      setHandoff({
+        banner: destinationBanner,
+        targetIndex: normalizedTarget,
+        ownership,
+        visible: false,
+      });
     });
   }, [
     availableBanners,
     dragX,
     loadedIds,
+    isDisplayed,
     reduceMotionEnabled,
     safeActiveIndex,
     screenReaderEnabled,
@@ -309,13 +388,33 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
   ]);
 
   const handleImageError = useCallback((id: number) => {
-    stopAnimation();
+    dragX.stopAnimation();
+    transitionAuthorityRef.current.invalidate();
     dragX.setValue(0);
-    setHandoff(null);
     const remainingBanners = availableBanners.filter((item) => item.id !== id);
     const nextActiveIndex = id === banner?.id
       ? normalizeBannerIndex(safeActiveIndex, remainingBanners.length)
       : Math.max(0, remainingBanners.findIndex((item) => item.id === banner?.id));
+    const recoveryBanner = remainingBanners[nextActiveIndex];
+    const keepSafeHandoff = Boolean(handoff?.visible && recoveryBanner);
+    const recoveryOwnership = keepSafeHandoff
+      ? transitionAuthorityRef.current.beginCurrentRecovery(
+        recoveryBanner.id,
+        recoveryBanner.imageUrl,
+      )
+      : null;
+    transitionInProgressRef.current = Boolean(recoveryOwnership);
+    setAnimating(Boolean(recoveryOwnership));
+    setHandoff((current) => (
+      current && recoveryOwnership
+        ? {
+          ...current,
+          targetIndex: nextActiveIndex,
+          ownership: recoveryOwnership,
+          visible: true,
+        }
+        : null
+    ));
     setActiveIndex(nextActiveIndex);
     setFailedIds((current) => {
       if (current.has(id)) return current;
@@ -330,7 +429,7 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
       return next;
     });
     setTimerResetKey((value) => value + 1);
-  }, [availableBanners, banner?.id, dragX, safeActiveIndex, stopAnimation]);
+  }, [availableBanners, banner?.id, dragX, handoff?.visible, safeActiveIndex]);
 
   const handleImageLoad = useCallback((id: number) => {
     setLoadedIds((current) => {
@@ -362,7 +461,10 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
       setSuppressPress(true);
     },
     onPanResponderMove: (_, gesture) => {
-      if (!reduceMotionEnabled) dragX.setValue(gesture.dx);
+      if (reduceMotionEnabled) return;
+      const role = gesture.dx < 0 ? "next" : "previous";
+      const item = role === "next" ? nextBanner : previousBanner;
+      dragX.setValue(isDisplayed(role, item) ? gesture.dx : 0);
     },
     onPanResponderRelease: (_, gesture) => {
       const direction = classifyBannerSwipe(
@@ -392,7 +494,10 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
   }), [
     availableBanners.length,
     dragX,
+    isDisplayed,
     moveToIndex,
+    nextBanner,
+    previousBanner,
     reduceMotionEnabled,
     releasePressSuppression,
     safeActiveIndex,
@@ -434,8 +539,11 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
               banner={previousBanner}
               width={viewportWidth}
               active={false}
+              role="previous"
               suppressPress={suppressPress}
               onLoad={handleImageLoad}
+              onLoadStart={handleInstanceLoadStart}
+              onDisplay={handleInstanceDisplay}
               onError={handleImageError}
             />
             <BannerSlide
@@ -443,8 +551,16 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
               banner={banner}
               width={viewportWidth}
               active
+              role="current"
               suppressPress={suppressPress}
               onLoad={handleImageLoad}
+              onLoadStart={handleInstanceLoadStart}
+              onDisplay={handleInstanceDisplay}
+              displayOwnership={
+                handoff?.visible && safeActiveIndex === handoff.targetIndex
+                  ? handoff.ownership
+                  : undefined
+              }
               onError={handleImageError}
             />
             <BannerSlide
@@ -452,8 +568,11 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
               banner={nextBanner}
               width={viewportWidth}
               active={false}
+              role="next"
               suppressPress={suppressPress}
               onLoad={handleImageLoad}
+              onLoadStart={handleInstanceLoadStart}
+              onDisplay={handleInstanceDisplay}
               onError={handleImageError}
             />
           </Animated.View>
@@ -461,8 +580,11 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
           <BannerSlide
             banner={banner}
             active
+            role="current"
             suppressPress={suppressPress}
             onLoad={handleImageLoad}
+            onLoadStart={handleInstanceLoadStart}
+            onDisplay={handleInstanceDisplay}
             onError={handleImageError}
           />
         )}
@@ -471,12 +593,32 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
             pointerEvents="none"
-            style={styles.handoff}
+            // Preparation must not cover the displayed adjacent destination.
+            // Only this exact handoff Image's onDisplay promotes the overlay.
+            style={[styles.handoff, !handoff.visible && styles.hiddenHandoff]}
           >
             <Image
+              key={createBannerImageInstanceKey(
+                "handoff",
+                handoff.banner.id,
+                handoff.banner.imageUrl,
+                handoff.ownership.generation,
+              )}
+              recyclingKey={createBannerImageInstanceKey(
+                "handoff",
+                handoff.banner.id,
+                handoff.banner.imageUrl,
+                handoff.ownership.generation,
+              )}
               source={{ uri: handoff.banner.imageUrl }}
               style={[styles.image, { backgroundColor: theme.colors.panelSoft }]}
               contentFit="cover"
+              onDisplay={() => handleInstanceDisplay(
+                "handoff",
+                handoff.banner,
+                handoff.ownership,
+              )}
+              onError={() => handleImageError(handoff.banner.id)}
             />
           </View>
         ) : null}
@@ -489,28 +631,44 @@ function BannerSlide({
   banner,
   width,
   active,
+  role,
   suppressPress,
   onLoad,
+  onLoadStart,
+  onDisplay,
+  displayOwnership,
   onError,
 }: {
   banner: DisplayBanner;
   width?: number;
   active: boolean;
+  role: "previous" | "current" | "next";
   suppressPress: boolean;
   onLoad: (id: number) => void;
+  onLoadStart: (role: "previous" | "current" | "next", banner: DisplayBanner) => void;
+  onDisplay: (
+    role: BannerInstanceRole,
+    banner: DisplayBanner,
+    ownership?: BannerTransitionOwnership,
+  ) => void;
+  displayOwnership?: BannerTransitionOwnership;
   onError: (id: number) => void;
 }) {
   const theme = useTheme();
   const link = classifyAdLink(banner.link_url);
   const image = (
     <Image
+      key={createBannerImageInstanceKey(role, banner.id, banner.imageUrl)}
+      recyclingKey={createBannerImageInstanceKey(role, banner.id, banner.imageUrl)}
       source={{ uri: banner.imageUrl }}
       style={[styles.image, { backgroundColor: theme.colors.panelSoft }]}
       contentFit="cover"
       accessible={active && !link}
       accessibilityLabel={active && !link ? banner.title : undefined}
       accessibilityRole={active && !link ? "image" : undefined}
+      onLoadStart={() => onLoadStart(role, banner)}
       onLoad={() => onLoad(banner.id)}
+      onDisplay={() => onDisplay(role, banner, displayOwnership)}
       onError={() => onError(banner.id)}
     />
   );
@@ -581,5 +739,9 @@ const styles = StyleSheet.create({
   },
   handoff: {
     ...StyleSheet.absoluteFill,
+    zIndex: 1,
+  },
+  hiddenHandoff: {
+    opacity: 0,
   },
 });

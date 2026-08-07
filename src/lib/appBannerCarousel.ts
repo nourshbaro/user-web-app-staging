@@ -1,4 +1,111 @@
 export type BannerSwipeDirection = "next" | "previous";
+export type BannerInstanceRole = "previous" | "current" | "next" | "handoff";
+
+export function createBannerImageInstanceKey(
+  role: BannerInstanceRole,
+  bannerId: number,
+  imageUrl: string,
+  generation?: number,
+) {
+  return JSON.stringify([role, bannerId, imageUrl, generation ?? null]);
+}
+
+export type BannerDisplayIdentity = {
+  generation: number;
+  bannerId: number;
+  imageUrl: string;
+  role: BannerInstanceRole;
+};
+
+export type BannerTransitionOwnership = {
+  generation: number;
+  bannerId: number;
+  imageUrl: string;
+  direction: BannerSwipeDirection;
+  adjacentRole: "previous" | "next";
+  phase: "handoff" | "current";
+};
+
+export function createBannerTransitionAuthority() {
+  let generation = 0;
+  let ownership: BannerTransitionOwnership | null = null;
+
+  const matches = (
+    identity: BannerDisplayIdentity,
+    role: BannerInstanceRole,
+  ) => Boolean(
+    ownership
+    && identity.generation === ownership.generation
+    && identity.bannerId === ownership.bannerId
+    && identity.imageUrl === ownership.imageUrl
+    && identity.role === role
+  );
+
+  return {
+    begin(
+      bannerId: number,
+      imageUrl: string,
+      direction: BannerSwipeDirection,
+    ) {
+      if (ownership) return null;
+      generation += 1;
+      ownership = {
+        generation,
+        bannerId,
+        imageUrl,
+        direction,
+        adjacentRole: direction === "next" ? "next" : "previous",
+        phase: "handoff",
+      };
+      return { ...ownership };
+    },
+    beginCurrentRecovery(bannerId: number, imageUrl: string) {
+      if (ownership) return null;
+      generation += 1;
+      ownership = {
+        generation,
+        bannerId,
+        imageUrl,
+        direction: "next",
+        adjacentRole: "next",
+        phase: "current",
+      };
+      return { ...ownership };
+    },
+    acceptHandoffDisplay(identity: BannerDisplayIdentity) {
+      if (!ownership || ownership.phase !== "handoff" || !matches(identity, "handoff")) {
+        return false;
+      }
+      ownership = { ...ownership, phase: "current" };
+      return true;
+    },
+    acceptCurrentDisplay(identity: BannerDisplayIdentity) {
+      if (!ownership || ownership.phase !== "current" || !matches(identity, "current")) {
+        return false;
+      }
+      ownership = null;
+      return true;
+    },
+    isCurrent(candidate: BannerTransitionOwnership | null) {
+      return Boolean(
+        candidate
+        && ownership
+        && candidate.generation === ownership.generation
+        && candidate.bannerId === ownership.bannerId
+        && candidate.imageUrl === ownership.imageUrl
+        && candidate.direction === ownership.direction
+        && candidate.adjacentRole === ownership.adjacentRole
+      );
+    },
+    current() {
+      return ownership ? { ...ownership } : null;
+    },
+    invalidate() {
+      generation += 1;
+      ownership = null;
+    },
+  };
+}
 
 const HORIZONTAL_ACTIVATION_DISTANCE = 10;
 const HORIZONTAL_DOMINANCE_RATIO = 1.35;
