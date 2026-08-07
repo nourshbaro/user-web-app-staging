@@ -93,6 +93,52 @@ test("newest same-filter request wins", () => {
   assert.equal(harness.state.data, "fresh");
 });
 
+test("newer match success remains authoritative after older success", () => {
+  const harness = createPublicationHarness("match-a");
+  const matchA = harness.start("match-a");
+  const matchB = harness.start("match-b");
+
+  matchB.succeed("B");
+  matchA.succeed("A");
+
+  assert.deepEqual(harness.state, { data: "B", error: null, loading: false, toasts: [] });
+});
+
+test("stale match error and finalization cannot affect the newer match", () => {
+  const harness = createPublicationHarness("match-a");
+  const matchA = harness.start("match-a");
+  const matchB = harness.start("match-b");
+
+  matchB.succeed("B");
+  matchA.fail("A failed");
+  matchA.finish();
+
+  assert.deepEqual(harness.state, { data: "B", error: null, loading: false, toasts: [] });
+});
+
+test("same-match newer refresh supersedes the older detail request", () => {
+  const harness = createPublicationHarness("match-a");
+  const initial = harness.start("match-a");
+  const refresh = harness.start("match-a");
+
+  refresh.succeed("fresh A");
+  initial.succeed("old A");
+
+  assert.equal(harness.state.data, "fresh A");
+});
+
+test("unmount invalidates the current match request", () => {
+  const harness = createPublicationHarness("match-a");
+  const request = harness.start("match-a");
+
+  harness.unmount();
+  request.succeed("A");
+  request.fail("A failed");
+  request.finish();
+
+  assert.deepEqual(harness.state, { data: null, error: null, loading: true, toasts: [] });
+});
+
 test("unmount invalidates pending filter success", () => {
   const harness = createPublicationHarness(filter("a"));
   const request = harness.start(filter("a"));

@@ -6,13 +6,14 @@ import { useToast } from "@/context/ToastContext";
 import { storageUrl } from "@/lib/config";
 import { formatDate, formatMoney, formatTime, matchTitle } from "@/lib/format";
 import { createSeatLayout, getContainRect, getPolygonPoints, getPolygonPointsAttribute } from "@/lib/mapGeometry";
+import { getEffectiveSelectedSeats, getOwnedMapHeight, type OwnedMapMeasurement } from "@/lib/matchLifecycle";
 import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
 import { getSeatAccessibility } from "@/lib/seatAccessibility";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, ApiSeat, ApiZone } from "@/types";
 import { Image as ExpoImage } from "expo-image";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, Image, Platform, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import Svg, { Polygon } from "react-native-svg";
 
@@ -25,9 +26,11 @@ export default function MatchDetail() {
   const responsive = useResponsive();
   const theme = useTheme();
   const [match, setMatch] = useState<ApiMatch | null>(null);
+  const [matchIdentity, setMatchIdentity] = useState<string | null>(null);
   const [selectedZone, setSelectedZone] = useState<ApiZone | null>(null);
   const [seatSnapshot, setSeatSnapshot] = useState<{ identity: string; seats: ApiSeat[] } | null>(null);
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
+  const [selectedSeatsIdentity, setSelectedSeatsIdentity] = useState<string | null>(null);
   const [selectedZoneMatchId, setSelectedZoneMatchId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -36,7 +39,10 @@ export default function MatchDetail() {
   const [error, setError] = useState<string | null>(null);
   const zoneScrollRef = useRef<ScrollView>(null);
   const zoneChipLayouts = useRef(new Map<number, { x: number; width: number }>());
+  const matchRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const seatRequestAuthority = useMemo(() => createRequestAuthority(), []);
+  const selectedZoneRef = useRef<ApiZone | null>(null);
+  const selectedZoneMatchIdRef = useRef<string | null>(null);
   const cart = useCart();
   const { openCartSheet } = useCartSheet();
   const toast = useToast();
@@ -57,6 +63,10 @@ export default function MatchDetail() {
   );
   const routeMatchId = String(id ?? "");
   const selectedZoneBelongsToMatch = selectedZoneMatchId === routeMatchId;
+  const activeZoneIdentity = createRequestIdentity([
+    routeMatchId,
+    selectedZoneBelongsToMatch ? selectedZone?.id : null,
+  ]);
   const activeSeatIdentity = createRequestIdentity([
     routeMatchId,
     selectedZoneBelongsToMatch ? selectedZone?.id : null,
@@ -64,29 +74,93 @@ export default function MatchDetail() {
     selectedZoneBelongsToMatch ? selectedZone?.has_seats : false,
   ]);
   const visibleSeats = seatSnapshot?.identity === activeSeatIdentity ? seatSnapshot.seats : [];
-  const zones = match?.stadium?.zones ?? [];
-  const mapImageUrl = storageUrl(match?.stadium?.mapImageUrl ?? match?.stadium?.map_image);
+  const effectiveSelectedSeats = getEffectiveSelectedSeats(
+    selectedSeats,
+    selectedSeatsIdentity,
+    activeZoneIdentity,
+    cartSeatIds,
+  );
+  const matchBelongsToRoute = matchIdentity === routeMatchId;
+  const zones = matchBelongsToRoute ? match?.stadium?.zones ?? [] : [];
+  const mapImageUrl = storageUrl(
+    matchBelongsToRoute ? match?.stadium?.mapImageUrl ?? match?.stadium?.map_image : undefined,
+  );
   const mapViewHeight = useMapViewHeight(mapImageUrl, zones);
 
-  const loadMatch = (force = false) => {
-    if (!force) setLoading(true);
-    return matchesService.details(id, force)
+  const commitZone = useCallback((zone: ApiZone | null, ownerMatchId: string) => {
+    const sameZone =
+      selectedZoneMatchIdRef.current === ownerMatchId
+      && selectedZoneRef.current?.id === zone?.id;
+    const nextSelectionIdentity = createRequestIdentity([ownerMatchId, zone?.id]);
+
+    if (!sameZone) seatRequestAuthority.invalidate();
+    selectedZoneRef.current = zone;
+    selectedZoneMatchIdRef.current = ownerMatchId;
+    setSelectedZone(zone);
+    setSelectedZoneMatchId(ownerMatchId);
+
+    if (!sameZone) {
+      setSelectedSeats([]);
+      setSelectedSeatsIdentity(nextSelectionIdentity);
+      setSeatSnapshot(null);
+    }
+  }, [seatRequestAuthority]);
+
+  const loadMatch = useCallback((force = false) => {
+    const requestIdentity = routeMatchId;
+    const ticket = matchRequestAuthority.begin(requestIdentity);
+    if (!force) {
+      setLoading(true);
+      setMatch(null);
+      setMatchIdentity(null);
+    }
+    setError(null);
+    return matchesService.details(requestIdentity, force)
       .then((data) => {
-        setSelectedZoneMatchId(String(id ?? ""));
+        if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
+        const currentZone =
+          selectedZoneMatchIdRef.current === requestIdentity
+            ? selectedZoneRef.current
+            : null;
+        const nextZone =
+          data.stadium?.zones?.find((zone) => zone.id === currentZone?.id)
+          ?? data.stadium?.zones?.[0]
+          ?? null;
         setMatch(data);
-        setSelectedZone((current) => data.stadium?.zones?.find((zone) => zone.id === current?.id) ?? data.stadium?.zones?.[0] ?? null);
+        setMatchIdentity(requestIdentity);
+        commitZone(nextZone, requestIdentity);
       })
       .catch((err) => {
+        if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
         const message = err instanceof Error ? err.message : "Could not load match.";
         setError(message);
         toast.showToast({ variant: "error", title: "Could not load match", message });
       })
-      .finally(() => { setLoading(false); setRefreshing(false); });
-  };
+      .finally(() => {
+        if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
+        setLoading(false);
+        setRefreshing(false);
+      });
+  }, [commitZone, matchRequestAuthority, routeMatchId, toast]);
 
   useEffect(() => {
-    void loadMatch();
-  }, [id]);
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) return loadMatch();
+    });
+    return () => {
+      active = false;
+    };
+  }, [loadMatch]);
+
+  useEffect(() => {
+    matchRequestAuthority.mount();
+    return () => matchRequestAuthority.unmount();
+  }, [matchRequestAuthority]);
+
+  useLayoutEffect(() => {
+    matchRequestAuthority.invalidate(routeMatchId);
+  }, [matchRequestAuthority, routeMatchId]);
 
   useEffect(() => {
     seatRequestAuthority.mount();
@@ -96,11 +170,6 @@ export default function MatchDetail() {
   useLayoutEffect(() => {
     seatRequestAuthority.invalidate(activeSeatIdentity);
   }, [activeSeatIdentity, seatRequestAuthority]);
-
-  useEffect(() => {
-    setSelectedSeats([]);
-    setSeatSnapshot(null);
-  }, [selectedZone?.id]);
 
   useEffect(() => {
     const requestIdentity = activeSeatIdentity;
@@ -140,14 +209,10 @@ export default function MatchDetail() {
     return () => clearTimeout(timeout);
   }, [activeSeatIdentity, routeMatchId, seatRequestAuthority, selectedZone?.has_seats, selectedZone?.id, selectedZoneBelongsToMatch, toast]);
 
-  useEffect(() => {
-    if (!selectedSeats.length || !cartSeatIds.size) return;
-    setSelectedSeats((current) => current.filter((seatId) => !cartSeatIds.has(seatId)));
-  }, [cartSeatIds, selectedSeats.length]);
-
   const handleBack = () => {
-    if (selectedSeats.length) {
+    if (effectiveSelectedSeats.length) {
       setSelectedSeats([]);
+      setSelectedSeatsIdentity(activeZoneIdentity);
       return;
     }
     router.replace("/");
@@ -159,16 +224,17 @@ export default function MatchDetail() {
       await cart.addItem({
         match_id: Number(id),
         stadium_zone_id: selectedZone.id,
-        ...(selectedZone.has_seats ? { seat_ids: selectedSeats } : { quantity }),
+        ...(selectedZone.has_seats ? { seat_ids: effectiveSelectedSeats } : { quantity }),
       });
       toast.showToast({
         variant: "success",
         title: "Added to cart",
         message: selectedZone.has_seats
-          ? `${selectedSeats.length} seat${selectedSeats.length === 1 ? "" : "s"} reserved in ${selectedZone.name}.`
+          ? `${effectiveSelectedSeats.length} seat${effectiveSelectedSeats.length === 1 ? "" : "s"} reserved in ${selectedZone.name}.`
           : `${quantity} ticket${quantity === 1 ? "" : "s"} reserved in ${selectedZone.name}.`,
       });
       setSelectedSeats([]);
+      setSelectedSeatsIdentity(activeZoneIdentity);
       openCartSheet();
     } catch (err) {
       toast.showToast({
@@ -179,7 +245,7 @@ export default function MatchDetail() {
     }
   };
 
-  if (loading) {
+  if (loading || (match !== null && !matchBelongsToRoute)) {
     return (
       <Screen>
         <Stack.Screen options={{ headerShown: false }} />
@@ -191,7 +257,7 @@ export default function MatchDetail() {
     );
   }
 
-  if (!match) {
+  if (!match || !matchBelongsToRoute) {
     return (
       <Screen>
         <Stack.Screen options={{ headerShown: false }} />
@@ -203,15 +269,12 @@ export default function MatchDetail() {
     );
   }
 
-  const canAdd = selectedZone && (!selectedZone.has_seats || selectedSeats.length > 0);
+  const canAdd = selectedZone && (!selectedZone.has_seats || effectiveSelectedSeats.length > 0);
   const mapWidth = Math.min(responsive.contentWidth - 32, 560);
   const mapHeight = Math.round(mapWidth * mapViewHeight / MAP_VIEW_W);
   const seatMapSize = mapWidth;
   const selectZone = (zone: ApiZone, revealInList = false) => {
-    const nextIdentity = createRequestIdentity([routeMatchId, zone.id, cartItemsSignature, zone.has_seats]);
-    seatRequestAuthority.invalidate(nextIdentity);
-    setSelectedZoneMatchId(routeMatchId);
-    setSelectedZone(zone);
+    commitZone(zone, routeMatchId);
     if (!revealInList) return;
     requestAnimationFrame(() => {
       const layout = zoneChipLayouts.current.get(zone.id);
@@ -288,7 +351,7 @@ export default function MatchDetail() {
                   <Text style={theme.styles.h2}>Seat map</Text>
                   <Text style={theme.styles.muted}>{selectedZone.name} - {formatMoney(selectedZone.price, selectedZone.currency)} per seat</Text>
                 </View>
-                <Text style={local.countText}>{selectedSeats.length} selected</Text>
+                <Text style={local.countText}>{effectiveSelectedSeats.length} selected</Text>
               </View>
               {seatLoading ? (
                 <Text
@@ -303,12 +366,21 @@ export default function MatchDetail() {
               <SeatMap
                 seats={visibleSeats}
                 zoneName={selectedZone.name}
-                selectedIds={selectedSeats}
+                selectedIds={effectiveSelectedSeats}
                 cartSeatIds={cartSeatIds}
                 size={seatMapSize}
                 onToggleSeat={(seat) => {
                   if (!isSeatAvailable(seat) || cartSeatIds.has(seat.id)) return;
-                  setSelectedSeats((current) => current.includes(seat.id) ? current.filter((item) => item !== seat.id) : [...current, seat.id]);
+                  setSelectedSeatsIdentity(activeZoneIdentity);
+                  setSelectedSeats((current) => {
+                    const actionable =
+                      selectedSeatsIdentity === activeZoneIdentity
+                        ? current.filter((seatId) => !cartSeatIds.has(seatId))
+                        : [];
+                    return actionable.includes(seat.id)
+                      ? actionable.filter((item) => item !== seat.id)
+                      : [...actionable, seat.id];
+                  });
                 }}
               />
               <SeatLegend />
@@ -427,11 +499,9 @@ function parseSvgViewHeight(svgText: string) {
 
 function useMapViewHeight(mapImageUrl: string | undefined, zones: ApiZone[]) {
   const fallbackHeight = useMemo(() => getFallbackMapViewHeight(zones), [zones]);
-  const [viewHeight, setViewHeight] = useState(fallbackHeight);
-
-  useEffect(() => {
-    setViewHeight(fallbackHeight);
-  }, [fallbackHeight]);
+  const mapIdentity = createRequestIdentity([mapImageUrl, fallbackHeight]);
+  const [measurement, setMeasurement] = useState<OwnedMapMeasurement | null>(null);
+  const viewHeight = getOwnedMapHeight(measurement, mapIdentity, fallbackHeight);
 
   useEffect(() => {
     if (!mapImageUrl) return;
@@ -439,7 +509,7 @@ function useMapViewHeight(mapImageUrl: string | undefined, zones: ApiZone[]) {
     let cancelled = false;
     const applyHeight = (nextHeight: number | null | undefined) => {
       if (!cancelled && nextHeight && Number.isFinite(nextHeight) && nextHeight > 0) {
-        setViewHeight(nextHeight);
+        setMeasurement({ identity: mapIdentity, height: nextHeight });
       }
     };
 
@@ -461,7 +531,7 @@ function useMapViewHeight(mapImageUrl: string | undefined, zones: ApiZone[]) {
     return () => {
       cancelled = true;
     };
-  }, [fallbackHeight, mapImageUrl]);
+  }, [mapIdentity, mapImageUrl]);
 
   return viewHeight;
 }
