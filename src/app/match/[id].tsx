@@ -720,10 +720,6 @@ function isSeatAvailable(seat: ApiSeat) {
   return seat.status === "available";
 }
 
-function getSeatLabel(seat: ApiSeat) {
-  return seat.label ?? `${seat.row}${seat.number}`;
-}
-
 function SeatMap({
   seats,
   zoneName,

@@ -209,7 +209,7 @@ function Dropdown({
   label: string;
   value: string;
   open: boolean;
-  options: Array<{ label: string; value?: string }>;
+  options: { label: string; value?: string }[];
   onToggle: () => void;
   onSelect: (value?: string) => void;
   wide?: boolean;
@@ -346,7 +346,7 @@ function addMonths(date: Date, months: number) {
 function getCalendarDays(month: Date) {
   const first = startOfMonth(month);
   const last = new Date(month.getFullYear(), month.getMonth() + 1, 0);
-  const days: Array<Date | null> = Array.from({ length: first.getDay() }, () => null);
+  const days: (Date | null)[] = Array.from({ length: first.getDay() }, () => null);
   for (let day = 1; day <= last.getDate(); day += 1) {
     days.push(new Date(month.getFullYear(), month.getMonth(), day));
   }
