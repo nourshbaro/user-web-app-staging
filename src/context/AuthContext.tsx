@@ -2,7 +2,7 @@ import { router } from "expo-router";
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "react-native";
 import { authService } from "@/services/auth";
-import { getToken, onUnauthenticated } from "@/services/api";
+import { captureAuthenticationSnapshot, isAuthenticationSnapshotCurrent, onUnauthenticated } from "@/services/api";
 import { clearUserScopedCaches } from "@/lib/userScopedCache";
 import type { User } from "@/types";
 
@@ -42,8 +42,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const refreshAuth = useCallback(async () => {
     try {
-      const [storedToken, storedUser] = await Promise.all([getToken(), authService.currentUser()]);
-      applySession(storedToken, storedUser);
+      const authentication = await captureAuthenticationSnapshot();
+      const storedUser = await authService.currentUser();
+      if (!isAuthenticationSnapshotCurrent(authentication)) return;
+      applySession(authentication.token, storedUser);
     } finally {
       setReady(true);
     }
