@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { createAuthenticationAuthority, type AuthenticationSnapshot } from "@/lib/authSessionOwnership";
 import { storage } from "@/lib/storage";
 import { Platform } from "react-native";
 
@@ -6,7 +7,14 @@ const TOKEN_KEY = "lfa_portal_token";
 type UnauthenticatedListener = () => void;
 type ApiRequestInit = RequestInit & { skipUnauthenticatedNotify?: boolean };
 const unauthenticatedListeners = new Set<UnauthenticatedListener>();
+const authenticationAuthority = createAuthenticationAuthority();
+let authenticationMutation = Promise.resolve();
 
+function enqueueAuthenticationMutation(operation: () => Promise<void>) {
+  const pending = authenticationMutation.then(operation, operation);
+  authenticationMutation = pending.catch(() => { });
+  return pending;
+}
 export class ApiError extends Error {
   status: number;
   body: any;
@@ -30,15 +38,80 @@ export class ApiTransportError extends Error {
 }
 
 export async function getToken() {
-  return storage.get(TOKEN_KEY);
+  return (await captureAuthenticationSnapshot()).token;
 }
 
 export async function setToken(token: string) {
-  await storage.set(TOKEN_KEY, token);
+  const ownership = authenticationAuthority.replace(token);
+  await enqueueAuthenticationMutation(async () => {
+    if (!authenticationAuthority.isCurrent(ownership)) return;
+    await storage.set(TOKEN_KEY, token);
+  });
 }
 
 export async function clearToken() {
-  await storage.remove(TOKEN_KEY);
+  authenticationAuthority.replace(null);
+  await enqueueAuthenticationMutation(() => storage.remove(TOKEN_KEY));
+}
+
+export async function clearAuthentication(cleanup?: () => Promise<void>) {
+  authenticationAuthority.replace(null);
+  await enqueueAuthenticationMutation(async () => {
+    if (cleanup) await cleanup();
+    await storage.remove(TOKEN_KEY);
+  });
+}
+
+export async function captureAuthenticationSnapshot(): Promise<AuthenticationSnapshot> {
+  while (true) {
+    const generation = authenticationAuthority.currentGeneration();
+    await authenticationMutation;
+    if (generation !== authenticationAuthority.currentGeneration()) continue;
+    const token = await storage.get(TOKEN_KEY);
+    if (generation === authenticationAuthority.currentGeneration()) {
+      return { generation, token };
+    }
+  }
+}
+
+export function isAuthenticationSnapshotCurrent(snapshot: AuthenticationSnapshot) {
+  return authenticationAuthority.isCurrent(snapshot);
+}
+
+export async function beginAuthenticationLogout(cleanup?: () => Promise<void>) {
+  const ownership = authenticationAuthority.replace(null);
+  let logoutToken: string | null = null;
+
+  await enqueueAuthenticationMutation(async () => {
+    if (!authenticationAuthority.isCurrent(ownership)) return;
+    logoutToken = await storage.get(TOKEN_KEY);
+    if (cleanup) await cleanup();
+    await storage.remove(TOKEN_KEY);
+  });
+
+  return { ...ownership, token: logoutToken };
+}
+
+export async function invalidateAuthentication(
+  snapshot: AuthenticationSnapshot,
+  options: { notify?: boolean; cleanup?: () => Promise<void> } = {},
+) {
+  const claim = authenticationAuthority.claim(snapshot);
+  if (!claim) return false;
+
+  try {
+    await enqueueAuthenticationMutation(async () => {
+      if (!authenticationAuthority.isCurrent(claim)) return;
+      if (options.cleanup) await options.cleanup();
+      await storage.remove(TOKEN_KEY);
+    });
+  } catch {
+    return false;
+  }
+
+  if (!authenticationAuthority.isCurrent(claim)) return false;
+  if (options.notify !== false) notifyUnauthenticated();
+  return true;
 }
 
 export function onUnauthenticated(listener: UnauthenticatedListener) {
@@ -53,7 +126,8 @@ export function notifyUnauthenticated() {
 }
 
 export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
-  const token = await getToken();
+  const authentication = await captureAuthenticationSnapshot();
+  const token = authentication.token;
   const controller = new AbortController();
   let didTimeout = false;
   const timeout = setTimeout(() => {
@@ -80,8 +154,7 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
 
     if (!response.ok) {
       if (!skipUnauthenticatedNotify && (response.status === 401 || response.status === 403)) {
-        await clearToken();
-        notifyUnauthenticated();
+        await invalidateAuthentication(authentication);
       }
       const message = body?.message ?? body?.error ?? `Request failed with ${response.status}`;
       throw new ApiError(message, response.status, body);

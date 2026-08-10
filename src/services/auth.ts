@@ -1,6 +1,15 @@
 import { Platform } from "react-native";
 import { config } from "@/lib/config";
-import { ApiError, apiRequest, clearToken, getToken, notifyUnauthenticated, setToken, unwrapData } from "@/services/api";
+import {
+  ApiError,
+  apiRequest,
+  beginAuthenticationLogout,
+  captureAuthenticationSnapshot,
+  clearAuthentication,
+  invalidateAuthentication,
+  setToken,
+  unwrapData,
+} from "@/services/api";
 import { storage } from "@/lib/storage";
 import type { User } from "@/types";
 
@@ -82,16 +91,17 @@ export const authService = {
   },
 
   async logout() {
-    try {
-      await apiRequest("/auth/logout", { method: "POST" });
-    } catch {}
-    await clearToken();
-    await storage.remove(USER_KEY);
+   const logoutOwnership = await beginAuthenticationLogout(() => storage.remove(USER_KEY));
+    void apiRequest("/auth/logout", {
+        method: "POST",
+        skipUnauthenticatedNotify: true,
+        headers: logoutOwnership.token ? { Authorization: `Bearer ${logoutOwnership.token}` } : undefined,
+      })
+      .catch(() => {});
   },
 
   async clearSession() {
-    await clearToken();
-    await storage.remove(USER_KEY);
+    await clearAuthentication(() => storage.remove(USER_KEY));
   },
 };
 
@@ -112,7 +122,8 @@ export const profileService = {
     return unwrapData(await apiRequest(`/portal/tickets/${encodeURIComponent(String(ticketCode))}`)) as Record<string, unknown>;
   },
   async orderPdf(orderId: string | number) {
-    const token = await getToken();
+     const authentication = await captureAuthenticationSnapshot();
+    const token = authentication.token;
     const encodedId = encodeURIComponent(String(orderId));
     const url = Platform.OS === "web" ? `/api/portal/orders/${encodedId}/pdf` : `${config.apiBaseUrl}/portal/orders/${encodedId}/pdf`;
 
@@ -127,8 +138,7 @@ export const profileService = {
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       if (response.status === 401 || response.status === 403) {
-        await clearToken();
-        notifyUnauthenticated();
+        await invalidateAuthentication(authentication);
       }
       throw new Error(body?.message ?? body?.error ?? "Failed to download PDF.");
     }
