@@ -7,14 +7,79 @@ import {
   captureAuthenticationSnapshot,
   clearAuthentication,
   invalidateAuthentication,
+  restoreAuthentication,
   setToken,
   unwrapData,
+  type PersistedAuthenticationValue,
 } from "@/services/api";
 import { storage } from "@/lib/storage";
 import type { User } from "@/types";
 
 const USER_KEY = "lfa_portal_user";
 export type OtpTarget = string | { userId?: string | null; email?: string | null };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasValidOptionalUserFields(value: Record<string, unknown>) {
+  if (
+    "id" in value
+    && (typeof value.id !== "number" || !Number.isFinite(value.id))
+  ) {
+    return false;
+  }
+
+  if ("name" in value && typeof value.name !== "string") {
+    return false;
+  }
+
+  if ("email" in value && typeof value.email !== "string") {
+    return false;
+  }
+
+  if (
+    "email_verified_at" in value
+    && value.email_verified_at !== null
+    && typeof value.email_verified_at !== "string"
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function decodePersistedUser(value: string | null): PersistedAuthenticationValue<User> {
+  if (value === null) return { status: "missing" };
+
+  let candidate: unknown;
+
+  try {
+    candidate = JSON.parse(value);
+  } catch {
+    return { status: "invalid" };
+  }
+
+  if (!isRecord(candidate) || !hasValidOptionalUserFields(candidate)) {
+    return { status: "invalid" };
+  }
+
+  const hasId = typeof candidate.id === "number" && Number.isFinite(candidate.id);
+  const hasEmail = typeof candidate.email === "string" && candidate.email.trim().length > 0;
+
+  if (!hasId && !hasEmail) {
+    return { status: "invalid" };
+  }
+
+  return {
+    status: "valid",
+    value: candidate as User,
+  };
+}
+
+async function readPersistedUser() {
+  return decodePersistedUser(await storage.get(USER_KEY));
+}
 
 function readToken(payload: any): string | null {
   return payload?.token ?? payload?.access_token ?? payload?.data?.token ?? payload?.data?.access_token ?? null;
@@ -34,8 +99,20 @@ function otpTargetBody(target: OtpTarget) {
 
 export const authService = {
   async currentUser() {
-    const value = await storage.get(USER_KEY);
-    return value ? JSON.parse(value) as User : null;
+    const persistedUser = await readPersistedUser();
+
+    if (persistedUser.status === "invalid") {
+      throw new Error("Persisted user data is invalid.");
+    }
+
+    return persistedUser.status === "valid" ? persistedUser.value : null;
+  },
+
+  async restoreSession() {
+    return restoreAuthentication(
+      readPersistedUser,
+      () => storage.remove(USER_KEY),
+    );
   },
 
   async saveSession(payload: unknown) {

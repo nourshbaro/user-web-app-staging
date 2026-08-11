@@ -6,8 +6,26 @@ import { Platform } from "react-native";
 const TOKEN_KEY = "lfa_portal_token";
 type UnauthenticatedListener = () => void;
 type ApiRequestInit = RequestInit & { skipUnauthenticatedNotify?: boolean };
+export type PersistedAuthenticationValue<T> =
+  | { status: "missing" }
+  | { status: "valid"; value: T }
+  | { status: "invalid" };
+
+export type AuthenticationRestoration<T> =
+  | {
+    status: "authenticated";
+    authentication: AuthenticationSnapshot;
+    token: string;
+    user: T;
+  }
+  | {
+    status: "unauthenticated" | "invalid" | "storage-error";
+    authentication: AuthenticationSnapshot;
+  }
+  | { status: "stale" };
 const unauthenticatedListeners = new Set<UnauthenticatedListener>();
 const authenticationAuthority = createAuthenticationAuthority();
+let suppressedAuthenticationGeneration: number | null = null;
 let authenticationMutation = Promise.resolve();
 
 function enqueueAuthenticationMutation(operation: () => Promise<void>) {
@@ -15,6 +33,25 @@ function enqueueAuthenticationMutation(operation: () => Promise<void>) {
   authenticationMutation = pending.catch(() => { });
   return pending;
 }
+
+function replaceAuthentication(token: string | null) {
+  const ownership = authenticationAuthority.replace(token);
+  suppressedAuthenticationGeneration = null;
+  return ownership;
+}
+
+function suppressAuthentication(snapshot: AuthenticationSnapshot) {
+  const ownership = authenticationAuthority.claim(snapshot);
+  if (!ownership) return null;
+
+  suppressedAuthenticationGeneration = ownership.generation;
+  return { ...ownership, token: null };
+}
+
+function usableTokenForGeneration(generation: number, token: string | null) {
+  return suppressedAuthenticationGeneration === generation ? null : token;
+}
+
 export class ApiError extends Error {
   status: number;
   body: any;
@@ -42,7 +79,8 @@ export async function getToken() {
 }
 
 export async function setToken(token: string) {
-  const ownership = authenticationAuthority.replace(token);
+  const ownership = replaceAuthentication(token);
+
   await enqueueAuthenticationMutation(async () => {
     if (!authenticationAuthority.isCurrent(ownership)) return;
     await storage.set(TOKEN_KEY, token);
@@ -50,28 +88,141 @@ export async function setToken(token: string) {
 }
 
 export async function clearToken() {
-  authenticationAuthority.replace(null);
+  replaceAuthentication(null);
   await enqueueAuthenticationMutation(() => storage.remove(TOKEN_KEY));
 }
 
 export async function clearAuthentication(cleanup?: () => Promise<void>) {
-  authenticationAuthority.replace(null);
+  replaceAuthentication(null);
+
   await enqueueAuthenticationMutation(async () => {
-    if (cleanup) await cleanup();
     await storage.remove(TOKEN_KEY);
+    if (cleanup) await cleanup();
   });
 }
 
 export async function captureAuthenticationSnapshot(): Promise<AuthenticationSnapshot> {
   while (true) {
     const generation = authenticationAuthority.currentGeneration();
+
     await authenticationMutation;
-    if (generation !== authenticationAuthority.currentGeneration()) continue;
-    const token = await storage.get(TOKEN_KEY);
+
+    if (generation !== authenticationAuthority.currentGeneration()) {
+      continue;
+    }
+
+    const persistedToken = await storage.get(TOKEN_KEY);
+
     if (generation === authenticationAuthority.currentGeneration()) {
-      return { generation, token };
+      return {
+        generation,
+        token: usableTokenForGeneration(generation, persistedToken),
+      };
     }
   }
+}
+
+export async function restoreAuthentication<T>(
+  readUser: () => Promise<PersistedAuthenticationValue<T>>,
+  clearUser: () => Promise<void>,
+): Promise<AuthenticationRestoration<T>> {
+  const generation = authenticationAuthority.currentGeneration();
+
+  await authenticationMutation;
+
+  if (generation !== authenticationAuthority.currentGeneration()) {
+    return { status: "stale" };
+  }
+
+  let token: string | null = null;
+  let persistedUser: PersistedAuthenticationValue<T>;
+
+  try {
+    token = await storage.get(TOKEN_KEY);
+
+    if (generation !== authenticationAuthority.currentGeneration()) {
+      return { status: "stale" };
+    }
+
+    persistedUser = await readUser();
+  } catch {
+    const failureOwnership = suppressAuthentication({
+      generation,
+      token,
+    });
+
+    if (!failureOwnership) {
+      return { status: "stale" };
+    }
+
+    return {
+      status: "storage-error",
+      authentication: failureOwnership,
+    };
+  }
+
+  if (generation !== authenticationAuthority.currentGeneration()) {
+    return { status: "stale" };
+  }
+
+  if (suppressedAuthenticationGeneration === generation) {
+    return {
+      status: "unauthenticated",
+      authentication: { generation, token: null },
+    };
+  }
+
+  const authentication = { generation, token };
+
+  if (token && persistedUser.status === "valid") {
+    return {
+      status: "authenticated",
+      authentication,
+      token,
+      user: persistedUser.value,
+    };
+  }
+
+  if (!token && persistedUser.status === "missing") {
+    return {
+      status: "unauthenticated",
+      authentication,
+    };
+  }
+
+  const cleanupOwnership = suppressAuthentication(authentication);
+  if (!cleanupOwnership) {
+    return { status: "stale" };
+  }
+
+  let cleanupFailed = false;
+
+  await enqueueAuthenticationMutation(async () => {
+    if (!authenticationAuthority.isCurrent(cleanupOwnership)) return;
+
+    try {
+      await storage.remove(TOKEN_KEY);
+    } catch {
+      cleanupFailed = true;
+    }
+
+    if (!authenticationAuthority.isCurrent(cleanupOwnership)) return;
+
+    try {
+      await clearUser();
+    } catch {
+      cleanupFailed = true;
+    }
+  });
+
+  if (!authenticationAuthority.isCurrent(cleanupOwnership)) {
+    return { status: "stale" };
+  }
+
+  return {
+    status: cleanupFailed ? "storage-error" : "invalid",
+    authentication: cleanupOwnership,
+  };
 }
 
 export function isAuthenticationSnapshotCurrent(snapshot: AuthenticationSnapshot) {
@@ -79,14 +230,14 @@ export function isAuthenticationSnapshotCurrent(snapshot: AuthenticationSnapshot
 }
 
 export async function beginAuthenticationLogout(cleanup?: () => Promise<void>) {
-  const ownership = authenticationAuthority.replace(null);
+  const ownership = replaceAuthentication(null);
   let logoutToken: string | null = null;
 
   await enqueueAuthenticationMutation(async () => {
     if (!authenticationAuthority.isCurrent(ownership)) return;
     logoutToken = await storage.get(TOKEN_KEY);
-    if (cleanup) await cleanup();
     await storage.remove(TOKEN_KEY);
+    if (cleanup) await cleanup();
   });
 
   return { ...ownership, token: logoutToken };

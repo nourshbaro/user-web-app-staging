@@ -39,9 +39,15 @@ async function createHarness() {
     notifications: 0,
     removeCount: 0,
     failGet: false,
+    failGetKeys: new Set(),
     failRemove: false,
+    failRemoveKeys: new Set(),
+    getGates: new Map(),
+    getStarted: new Map(),
     removeGate: null,
     removeStarted: null,
+    removeGates: new Map(),
+    removeStartedByKey: new Map(),
     fetch(request, init) {
       const pending = deferred();
       this.fetches.push({ request, init, pending });
@@ -53,16 +59,39 @@ async function createHarness() {
   const storageUrl = toModuleUrl(`
     const state = globalThis[${JSON.stringify(key)}];
     export const storage = {
-      async get(key) {
-        if (state.failGet) throw new Error("storage get failed");
+            async get(key) {
+        const started = state.getStarted.get(key);
+        if (started) started.resolve();
+
+        const gate = state.getGates.get(key);
+        if (gate) await gate.promise;
+
+        if (state.failGet || state.failGetKeys.has(key)) {
+          throw new Error(\`storage get failed: \${key}\`);
+        }
+
         return state.values.get(key) ?? null;
       },
-      async set(key, value) { state.values.set(key, value); },
+      async set(key, value) {
+        state.values.set(key, value);
+      },
       async remove(key) {
         state.removeCount += 1;
+
         if (state.removeStarted) state.removeStarted.resolve();
+
+        const keyedStarted = state.removeStartedByKey.get(key);
+        if (keyedStarted) keyedStarted.resolve();
+
         if (state.removeGate) await state.removeGate.promise;
-        if (state.failRemove) throw new Error("storage remove failed");
+
+        const keyedGate = state.removeGates.get(key);
+        if (keyedGate) await keyedGate.promise;
+
+       if (state.failRemove || state.failRemoveKeys.has(key)) {
+          throw new Error("storage remove failed: ${key}");
+        }
+
         state.values.delete(key);
       },
     };
@@ -277,7 +306,7 @@ test("stale logout completion cannot clear a replacement login", async () => {
     await install(harness, "token-a", "A");
     const logout = harness.auth.authService.logout();
     const pending = await harness.waitForFetch();
-     await logout;
+    await logout;
     assert.equal(harness.state.values.has("lfa_portal_token"), false);
     assert.equal(harness.state.values.has("lfa_portal_user"), false);
     assert.equal(pending.init.headers.Authorization, "Bearer token-a");
@@ -354,6 +383,461 @@ test("skipUnauthenticatedNotify preserves its existing no-invalidation behavior"
     await assert.rejects(request, (error) => error.status === 401);
     assert.equal(harness.state.values.get("lfa_portal_token"), "token-a");
     assert.equal(harness.state.notifications, 0);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("malformed persisted user clears current token and user authority", async () => {
+  const harness = await createHarness();
+
+  try {
+    await harness.api.setToken("token-a");
+    harness.state.values.set("lfa_portal_user", "{not-json");
+
+    const restoration = await harness.auth.authService.restoreSession();
+
+    assert.equal(restoration.status, "invalid");
+    assert.equal(harness.state.values.has("lfa_portal_token"), false);
+    assert.equal(harness.state.values.has("lfa_portal_user"), false);
+
+    const request = harness.api.apiRequest("/cart");
+    const pending = await harness.waitForFetch();
+
+    assert.equal(pending.init.headers.Authorization, undefined);
+
+    pending.pending.resolve(response(200, { data: [] }));
+    await request;
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("token without a user clears both persisted authentication records", async () => {
+  const harness = await createHarness();
+
+  try {
+    await harness.api.setToken("token-a");
+
+    const restoration = await harness.auth.authService.restoreSession();
+
+    assert.equal(restoration.status, "invalid");
+    assert.equal(harness.state.values.has("lfa_portal_token"), false);
+    assert.equal(harness.state.values.has("lfa_portal_user"), false);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("user without a token clears both persisted authentication records", async () => {
+  const harness = await createHarness();
+
+  try {
+    harness.state.values.set(
+      "lfa_portal_user",
+      JSON.stringify({ id: 1, email: "user@example.test" }),
+    );
+
+    const restoration = await harness.auth.authService.restoreSession();
+
+    assert.equal(restoration.status, "invalid");
+    assert.equal(harness.state.values.has("lfa_portal_token"), false);
+    assert.equal(harness.state.values.has("lfa_portal_user"), false);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("valid token and minimally valid user restore normal transport authority", async () => {
+  const harness = await createHarness();
+
+  try {
+    await harness.api.setToken("token-a");
+    harness.state.values.set(
+      "lfa_portal_user",
+      JSON.stringify({ id: 1, name: "User A" }),
+    );
+
+    const restoration = await harness.auth.authService.restoreSession();
+
+    assert.equal(restoration.status, "authenticated");
+    assert.equal(restoration.token, "token-a");
+    assert.deepEqual(restoration.user, { id: 1, name: "User A" });
+    assert.equal(
+      harness.api.isAuthenticationSnapshotCurrent(restoration.authentication),
+      true,
+    );
+
+    const request = harness.api.apiRequest("/portal/orders");
+    const pending = await harness.waitForFetch();
+
+    assert.equal(
+      pending.init.headers.Authorization,
+      "Bearer token-a",
+    );
+
+    pending.pending.resolve(response(200, { data: [] }));
+    await request;
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("valid non-empty email is sufficient persisted user identity", async () => {
+  const harness = await createHarness();
+
+  try {
+    await harness.api.setToken("token-a");
+    harness.state.values.set(
+      "lfa_portal_user",
+      JSON.stringify({ email: "user@example.test" }),
+    );
+
+    const restoration = await harness.auth.authService.restoreSession();
+
+    assert.equal(restoration.status, "authenticated");
+    assert.deepEqual(restoration.user, {
+      email: "user@example.test",
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+for (const [name, invalidUser] of [
+  ["empty object", {}],
+  ["array", []],
+  ["string primitive", "hello"],
+  ["wrong id type", { id: "1" }],
+  ["wrong email type", { email: 123 }],
+]) {
+  test(`invalid persisted user shape is cleared: ${name}`, async () => {
+    const harness = await createHarness();
+
+    try {
+      await harness.api.setToken("token-a");
+      harness.state.values.set(
+        "lfa_portal_user",
+        JSON.stringify(invalidUser),
+      );
+
+      const restoration = await harness.auth.authService.restoreSession();
+
+      assert.equal(restoration.status, "invalid");
+      assert.equal(
+        harness.state.values.has("lfa_portal_token"),
+        false,
+      );
+      assert.equal(
+        harness.state.values.has("lfa_portal_user"),
+        false,
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+}
+
+test("stale restoration A cannot publish over replacement B", async () => {
+  const harness = await createHarness();
+
+  try {
+    await install(harness, "token-a", 1);
+
+    const userReadStarted = deferred();
+    const userReadGate = deferred();
+    harness.state.getStarted.set(
+      "lfa_portal_user",
+      userReadStarted,
+    );
+    harness.state.getGates.set(
+      "lfa_portal_user",
+      userReadGate,
+    );
+
+    const restorationA = harness.auth.authService.restoreSession();
+    await userReadStarted.promise;
+
+    await harness.auth.authService.saveSession({
+      token: "token-b",
+      user: { id: 2, email: "b@example.test" },
+    });
+
+    userReadGate.resolve();
+
+    const resultA = await restorationA;
+
+    assert.equal(resultA.status, "stale");
+    assert.equal(
+      harness.state.values.get("lfa_portal_token"),
+      "token-b",
+    );
+    assert.deepEqual(
+      JSON.parse(harness.state.values.get("lfa_portal_user")),
+      { id: 2, email: "b@example.test" },
+    );
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("malformed A cleanup cannot clear replacement B", async () => {
+  const harness = await createHarness();
+
+  try {
+    await harness.api.setToken("token-a");
+    harness.state.values.set("lfa_portal_user", "{not-json");
+
+    const userRemovalStarted = deferred();
+    const userRemovalGate = deferred();
+
+    harness.state.removeStartedByKey.set(
+      "lfa_portal_user",
+      userRemovalStarted,
+    );
+    harness.state.removeGates.set(
+      "lfa_portal_user",
+      userRemovalGate,
+    );
+
+    const restorationA = harness.auth.authService.restoreSession();
+    await userRemovalStarted.promise;
+
+    const replacementB = harness.auth.authService.saveSession({
+      token: "token-b",
+      user: { id: 2, email: "b@example.test" },
+    });
+
+    userRemovalGate.resolve();
+
+    const [resultA] = await Promise.all([
+      restorationA,
+      replacementB,
+    ]);
+
+    assert.equal(resultA.status, "stale");
+    assert.equal(
+      harness.state.values.get("lfa_portal_token"),
+      "token-b",
+    );
+    assert.deepEqual(
+      JSON.parse(harness.state.values.get("lfa_portal_user")),
+      { id: 2, email: "b@example.test" },
+    );
+  } finally {
+    harness.cleanup();
+  }
+});
+
+for (const failedKey of [
+  "lfa_portal_token",
+  "lfa_portal_user",
+]) {
+  test(`storage read failure remains fail-closed after recovery: ${failedKey}`, async () => {
+    const harness = await createHarness();
+
+    try {
+      await install(harness, "token-a", 1);
+      harness.state.failGetKeys.add(failedKey);
+
+      const restoration = await harness.auth.authService.restoreSession();
+
+      assert.equal(restoration.status, "storage-error");
+      assert.equal(
+        harness.api.isAuthenticationSnapshotCurrent(
+          restoration.authentication,
+        ),
+        true,
+      );
+
+      assert.equal(
+        harness.state.values.get("lfa_portal_token"),
+        "token-a",
+      );
+      assert.deepEqual(
+        JSON.parse(
+          harness.state.values.get("lfa_portal_user"),
+        ),
+        { id: 1 },
+      );
+      assert.equal(harness.state.removeCount, 0);
+
+      harness.state.failGetKeys.delete(failedKey);
+
+      const request = harness.api.apiRequest("/cart");
+      const pending = await harness.waitForFetch();
+
+      assert.equal(
+        pending.init.headers.Authorization,
+        undefined,
+      );
+
+      pending.pending.resolve(response(200, { data: [] }));
+      await request;
+    } finally {
+      harness.cleanup();
+    }
+  });
+}
+
+test("token cleanup failure cannot revive invalid transport authority", async () => {
+  const harness = await createHarness();
+
+  try {
+    await harness.api.setToken("token-a");
+    harness.state.values.set(
+      "lfa_portal_user",
+      "{not-json",
+    );
+    harness.state.failRemoveKeys.add("lfa_portal_token");
+
+    const restoration = await harness.auth.authService.restoreSession();
+
+    assert.equal(restoration.status, "storage-error");
+    assert.equal(
+      harness.state.values.get("lfa_portal_token"),
+      "token-a",
+    );
+    assert.equal(
+      harness.state.values.has("lfa_portal_user"),
+      false,
+    );
+
+    harness.state.failRemoveKeys.delete("lfa_portal_token");
+
+    const request = harness.api.apiRequest("/cart");
+    const pending = await harness.waitForFetch();
+
+    assert.equal(
+      pending.init.headers.Authorization,
+      undefined,
+    );
+
+    pending.pending.resolve(response(200, { data: [] }));
+    await request;
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("user cleanup failure remains fail-closed after token-first removal", async () => {
+  const harness = await createHarness();
+
+  try {
+    await harness.api.setToken("token-a");
+    harness.state.values.set(
+      "lfa_portal_user",
+      "{not-json",
+    );
+    harness.state.failRemoveKeys.add("lfa_portal_user");
+
+    const restoration = await harness.auth.authService.restoreSession();
+
+    assert.equal(restoration.status, "storage-error");
+    assert.equal(
+      harness.state.values.has("lfa_portal_token"),
+      false,
+    );
+    assert.equal(
+      harness.state.values.get("lfa_portal_user"),
+      "{not-json",
+    );
+
+    harness.state.failRemoveKeys.delete("lfa_portal_user");
+
+    const request = harness.api.apiRequest("/cart");
+    const pending = await harness.waitForFetch();
+
+    assert.equal(
+      pending.init.headers.Authorization,
+      undefined,
+    );
+
+    pending.pending.resolve(response(200, { data: [] }));
+    await request;
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("replacement login B lifts fail-closed restoration A", async () => {
+  const harness = await createHarness();
+
+  try {
+    await install(harness, "token-a", 1);
+    harness.state.failGetKeys.add("lfa_portal_user");
+
+    const restorationA = await harness.auth.authService.restoreSession();
+
+    assert.equal(restorationA.status, "storage-error");
+
+    harness.state.failGetKeys.delete("lfa_portal_user");
+
+    await harness.auth.authService.saveSession({
+      token: "token-b",
+      user: { id: 2, email: "b@example.test" },
+    });
+
+    const requestB = harness.api.apiRequest("/portal/orders");
+    const pendingB = await harness.waitForFetch();
+
+    assert.equal(
+      pendingB.init.headers.Authorization,
+      "Bearer token-b",
+    );
+
+    pendingB.pending.resolve(response(200, { data: [] }));
+    await requestB;
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("stale restoration A failure cannot suppress replacement B", async () => {
+  const harness = await createHarness();
+
+  try {
+    await install(harness, "token-a", 1);
+
+    const userReadStarted = deferred();
+    const userReadGate = deferred();
+
+    harness.state.getStarted.set(
+      "lfa_portal_user",
+      userReadStarted,
+    );
+    harness.state.getGates.set(
+      "lfa_portal_user",
+      userReadGate,
+    );
+
+    const restorationA = harness.auth.authService.restoreSession();
+    await userReadStarted.promise;
+
+    await harness.auth.authService.saveSession({
+      token: "token-b",
+      user: { id: 2, email: "b@example.test" },
+    });
+
+    harness.state.failGetKeys.add("lfa_portal_user");
+    userReadGate.resolve();
+
+    const resultA = await restorationA;
+
+    assert.equal(resultA.status, "stale");
+
+    harness.state.failGetKeys.delete("lfa_portal_user");
+
+    const requestB = harness.api.apiRequest("/portal/orders");
+    const pendingB = await harness.waitForFetch();
+
+    assert.equal(
+      pendingB.init.headers.Authorization,
+      "Bearer token-b",
+    );
+
+    pendingB.pending.resolve(response(200, { data: [] }));
+    await requestB;
   } finally {
     harness.cleanup();
   }
