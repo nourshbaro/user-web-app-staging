@@ -15,7 +15,7 @@
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
         "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
-        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.ticketing.com"
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa-ticketing.com"
       }
     },
     "preview": {
@@ -28,7 +28,7 @@
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
         "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
-        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.ticketing.com"
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa-ticketing.com"
       }
     },
     "production": {
@@ -41,7 +41,7 @@
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
         "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
-        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.ticketing.com"
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa-ticketing.com"
       }
     },
     "apk": {
@@ -53,7 +53,7 @@
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
         "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
-        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.ticketing.com"
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa-ticketing.com"
       },
       "android": {
         "buildType": "apk"
