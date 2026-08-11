@@ -8,52 +8,52 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_LFA_SITE_URL": "https://api.lfa-ticketing.com",
-        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api.lfa-ticketing.com/api",
-        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api.lfa-ticketing.com/storage",
+        "EXPO_PUBLIC_LFA_SITE_URL": "https://api-lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api-lfa.matrixvert.com/api",
+        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api-lfa.matrixvert.com/storage",
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
         "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
-        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa-ticketing.com"
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_LFA_SITE_URL": "https://api.lfa-ticketing.com",
-        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api.lfa-ticketing.com/api",
-        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api.lfa-ticketing.com/storage",
+        "EXPO_PUBLIC_LFA_SITE_URL": "https://api-lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api-lfa.matrixvert.com/api",
+        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api-lfa.matrixvert.com/storage",
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
         "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
-        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa-ticketing.com"
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_LFA_SITE_URL": "https://api.lfa-ticketing.com",
-        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api.lfa-ticketing.com/api",
-        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api.lfa-ticketing.com/storage",
+        "EXPO_PUBLIC_LFA_SITE_URL": "https://api-lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api-lfa.matrixvert.com/api",
+        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api-lfa.matrixvert.com/storage",
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
         "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
-        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa-ticketing.com"
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
       }
     },
     "apk": {
       "env": {
-        "EXPO_PUBLIC_LFA_SITE_URL": "https://api.lfa-ticketing.com",
-        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api.lfa-ticketing.com/api",
-        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api.lfa-ticketing.com/storage",
+        "EXPO_PUBLIC_LFA_SITE_URL": "https://api-lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api-lfa.matrixvert.com/api",
+        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api-lfa.matrixvert.com/storage",
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
         "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
-        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa-ticketing.com"
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
       },
       "android": {
         "buildType": "apk"

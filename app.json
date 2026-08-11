@@ -14,7 +14,7 @@
     "android": {
       "icon": "./assets/images/lfa-app-icon-android.png",
       "predictiveBackGestureEnabled": false,
-      "package": "com.lfaticketing.app"
+      "package": "com.lfamatrixvert.app"
     },
     "web": {
       "output": "server",
