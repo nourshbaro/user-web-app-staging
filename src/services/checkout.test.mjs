@@ -35,13 +35,13 @@ test.after(() => {
   delete globalThis[callsKey];
 });
 
-test("Blue checkout uses the mobile submit endpoint without changing its payload or response", async () => {
+test("Blue checkout preserves a canonical Lebanese phone and LB billing country", async () => {
   const payload = {
     checkout_session_id: "checkout-blue",
     billing: {
       name: "Blue Buyer",
       email: "blue@example.com",
-      phone: "+961 70 123 456",
+      phone: "+96171123456",
       country: "LB",
     },
     tickets_by_match: {
@@ -52,23 +52,26 @@ test("Blue checkout uses the mobile submit endpoint without changing its payload
 
   const response = await checkoutService.submit(payload);
   const call = takeOnlyCall();
+  const serializedPayload = JSON.parse(call.body);
 
   assert.equal(call.path, "/checkout/mobile/submit");
   assert.equal(call.method, "POST");
-  assert.deepEqual(JSON.parse(call.body), payload);
+  assert.deepEqual(serializedPayload, payload);
+  assert.equal(serializedPayload.billing.phone, "+96171123456");
+  assert.equal(serializedPayload.billing.country, "LB");
   assert.strictEqual(response, call);
   assert.doesNotMatch(call.path, /\/checkout\/web\/submit/);
   assert.doesNotMatch(call.path, /\/mobile\/checkout/);
   assert.doesNotMatch(call.path, /\/mobile\/mobile\//);
 });
 
-test("CyberSource checkout preserves the transient token on the shared mobile endpoint", async () => {
+test("CyberSource preserves a Palestinian phone, LB billing country, and transient token", async () => {
   const payload = {
     checkout_session_id: "checkout-card",
     billing: {
       name: "Card Buyer",
       email: "card@example.com",
-      phone: "+961 71 234 567",
+      phone: "+970599123456",
       country: "LB",
     },
     tickets_by_match: {
@@ -80,10 +83,41 @@ test("CyberSource checkout preserves the transient token on the shared mobile en
 
   await checkoutService.submit(payload);
   const call = takeOnlyCall();
+  const serializedPayload = JSON.parse(call.body);
 
   assert.equal(call.path, "/checkout/mobile/submit");
   assert.equal(call.method, "POST");
-  assert.deepEqual(JSON.parse(call.body), payload);
+  assert.deepEqual(serializedPayload, payload);
+  assert.equal(serializedPayload.billing.phone, "+970599123456");
+  assert.equal(serializedPayload.billing.country, "LB");
+  assert.deepEqual(serializedPayload.payment, {
+    transient_token: "transient-token",
+  });
+});
+
+test("checkout serialization preserves a French phone without changing billing country", async () => {
+  const payload = {
+    checkout_session_id: "checkout-france",
+    billing: {
+      name: "French Phone Buyer",
+      email: "france@example.com",
+      phone: "+33612345678",
+      country: "LB",
+    },
+    tickets_by_match: {
+      "126": [{ holder_name: "French Phone Holder" }],
+    },
+    payment_method: "blue",
+  };
+
+  await checkoutService.submit(payload);
+  const call = takeOnlyCall();
+  const serializedPayload = JSON.parse(call.body);
+
+  assert.deepEqual(serializedPayload, payload);
+  assert.equal(serializedPayload.billing.phone, "+33612345678");
+  assert.equal(serializedPayload.billing.country, "LB");
+  assert.notEqual(serializedPayload.billing.country, "FR");
 });
 
 test("capture context retains its endpoint, method, and request body", async () => {

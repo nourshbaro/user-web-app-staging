@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/AppHeader";
 import { CybersourceUnifiedCheckout } from "@/components/CybersourceUnifiedCheckout";
+import { InternationalPhoneInput } from "@/components/InternationalPhoneInput";
 import { Button, Card, Empty, Input, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
@@ -8,6 +9,7 @@ import { clearBluePaymentHandoff, createBluePaymentHandoff } from "@/lib/bluePay
 import { validateBluePaymentUrl } from "@/lib/bluePaymentRedirect";
 import { groupCartItems } from "@/lib/cartDisplay";
 import {
+  createCheckoutBilling,
   getActiveBillingForm,
   getActiveCaptureState,
   type BillingFormState,
@@ -16,6 +18,11 @@ import {
 import { checkoutResultRouteParams, parseCheckoutResultParams } from "@/lib/checkoutResultParams";
 import { config } from "@/lib/config";
 import { formatMoney, minutesSeconds } from "@/lib/format";
+import {
+  DEFAULT_PHONE_COUNTRY,
+  createEmptyPhoneValue,
+  initializePhoneValue,
+} from "@/lib/phoneNumber";
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import { profileService } from "@/services/auth";
 import { checkoutService } from "@/services/checkout";
@@ -31,9 +38,6 @@ const paymentOptions: { id: PaymentMethod; title: string; detail: string }[] = [
   { id: "blue", title: "Blue Wallet", detail: "Redirect to Blue to complete payment." },
   { id: "cybersource", title: "Credit / Debit Card", detail: "Visa and Mastercard secure checkout." },
 ];
-const LEBANON_DIAL_CODE = "+961";
-const LEBANON_COUNTRY_DIGITS = "961";
-const CHECKOUT_COUNTRY_CODE = "LB";
 const CHECKOUT_COUNTRY_LABEL = "Lebanon";
 
 function getCheckoutOrigin() {
@@ -46,22 +50,6 @@ function readCaptureContext(payload: unknown) {
   const record = payload as { capture_context?: unknown; data?: { capture_context?: unknown } };
   const value = record.data?.capture_context ?? record.capture_context;
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function formatLebanonPhone(value: string) {
-  const digitsOnly = value.replace(/\D/g, "");
-  if (!digitsOnly || LEBANON_COUNTRY_DIGITS.startsWith(digitsOnly)) return LEBANON_DIAL_CODE;
-
-  const localDigits = (digitsOnly.startsWith("961") ? digitsOnly.slice(3) : digitsOnly).slice(0, 8);
-  const part1 = localDigits.slice(0, 2);
-  const part2 = localDigits.slice(2, 5);
-  const part3 = localDigits.slice(5, 8);
-
-  return `${LEBANON_DIAL_CODE}${part1 ? ` ${part1}` : ""}${part2 ? ` ${part2}` : ""}${part3 ? ` ${part3}` : ""}`;
-}
-
-function isCompleteLebanonPhone(value: string) {
-  return /^\+961\s\d{2}\s\d{3}\s\d{3}$/.test(value);
 }
 
 function isRecord(value: unknown): value is BillingInfoPayload {
@@ -127,10 +115,22 @@ export default function CheckoutScreen() {
     owner: billingOwner,
     name: auth.user?.name ?? "",
     email: auth.user?.email ?? "",
-    phone: LEBANON_DIAL_CODE,
+    phoneCountry: DEFAULT_PHONE_COUNTRY,
+    phoneNationalValue: "",
+    canonicalPhone: null,
   }), [auth.user?.email, auth.user?.name, billingOwner]);
   const activeBillingForm = getActiveBillingForm(billingForm, billingOwner, billingFallback);
-  const { name, email, phone } = activeBillingForm;
+  const {
+    name,
+    email,
+    phoneCountry,
+    phoneNationalValue,
+    canonicalPhone,
+  } = activeBillingForm;
+  const phoneError =
+    phoneNationalValue && !canonicalPhone
+      ? "Enter a valid phone number for the selected phone country."
+      : undefined;
   const billingInfoLoading =
     billingOwner !== null
     && (billingRequestState?.owner !== billingOwner || billingRequestState.status === "loading");
@@ -204,19 +204,27 @@ export default function CheckoutScreen() {
       const payload = await profileService.billingInfo();
       if (!billingRequestAuthority.isCurrent(ticket)) return;
       const nextBillingInfo = readBillingInfo(payload);
+      const restoredPhone = initializePhoneValue(nextBillingInfo.phone);
+
       setBillingForm({
         owner,
         name: nextBillingInfo.name || profile.name,
         email: nextBillingInfo.email || profile.email,
-        phone: nextBillingInfo.phone ? formatLebanonPhone(nextBillingInfo.phone) : LEBANON_DIAL_CODE,
+        phoneCountry: restoredPhone.phoneCountry,
+        phoneNationalValue: restoredPhone.phoneNationalValue,
+        canonicalPhone: restoredPhone.canonicalPhone,
       });
     } catch {
       if (!billingRequestAuthority.isCurrent(ticket)) return;
+      const emptyPhone = createEmptyPhoneValue();
+
       setBillingForm({
         owner,
         name: profile.name,
         email: profile.email,
-        phone: LEBANON_DIAL_CODE,
+        phoneCountry: emptyPhone.phoneCountry,
+        phoneNationalValue: emptyPhone.phoneNationalValue,
+        canonicalPhone: emptyPhone.canonicalPhone,
       });
     } finally {
       if (!billingRequestAuthority.isCurrent(ticket)) return;
@@ -299,6 +307,21 @@ export default function CheckoutScreen() {
       return;
     }
 
+    const checkoutBilling = createCheckoutBilling(
+      name,
+      email,
+      canonicalPhone,
+    );
+
+    if (!checkoutBilling) {
+      toast.showToast({
+        variant: "warning",
+        title: "Valid phone required",
+        message: "Select a phone country and enter a valid phone number.",
+      });
+      return;
+    }
+
     if (paymentMethod === "cybersource" && !transientToken) {
       toast.showToast({
         variant: "warning",
@@ -322,7 +345,7 @@ export default function CheckoutScreen() {
 
       const response = await checkoutService.submit({
         checkout_session_id: cart.sessionId,
-        billing: { name, email, phone, country: CHECKOUT_COUNTRY_CODE },
+        billing: checkoutBilling,
         tickets_by_match: ticketsByMatch,
         payment_method: paymentMethod,
         ...(transientToken ? { payment: { transient_token: transientToken } } : {}),
@@ -412,17 +435,26 @@ export default function CheckoutScreen() {
                   </View>
                   <Input label="Name" value={name} onChangeText={(value) => updateBillingForm({ name: value })} autoCapitalize="words" editable={!isCheckoutLocked} />
                   <Input label="Email" value={email} onChangeText={(value) => updateBillingForm({ email: value })} keyboardType="email-address" autoCapitalize="none" editable={!isCheckoutLocked} />
-                  <Input
-                    label="Phone"
-                    value={phone}
-                    onChangeText={(value) => updateBillingForm({ phone: formatLebanonPhone(value) })}
-                    onFocus={() => {
-                      if (!phone.startsWith(LEBANON_DIAL_CODE)) updateBillingForm({ phone: LEBANON_DIAL_CODE });
+                  <InternationalPhoneInput
+                    value={{
+                      phoneCountry,
+                      phoneNationalValue,
+                      canonicalPhone,
+                      validation: canonicalPhone
+                        ? "valid"
+                        : phoneNationalValue
+                          ? "invalid"
+                          : "empty",
                     }}
-                    keyboardType="phone-pad"
-                    textContentType="telephoneNumber"
-                    placeholder="+961 XX XXX XXX"
-                    editable={!isCheckoutLocked}
+                    error={phoneError}
+                    disabled={isCheckoutLocked}
+                    onChange={(phoneValue) => {
+                      updateBillingForm({
+                        phoneCountry: phoneValue.phoneCountry,
+                        phoneNationalValue: phoneValue.phoneNationalValue,
+                        canonicalPhone: phoneValue.canonicalPhone,
+                      });
+                    }}
                   />
                   <Input label="Country" value={CHECKOUT_COUNTRY_LABEL} editable={false} />
                 </Card>
@@ -523,8 +555,17 @@ export default function CheckoutScreen() {
                     />
                   ) : null}
                   {paymentMethod === "blue" ? (
-                    <Button title={loading ? "Submitting..." : "Confirm and pay"} disabled={loading || !name || !email || !isCompleteLebanonPhone(phone) || !ticketSlots.length} onPress={() => void submit()} />
-                  ) : loading ? (
+                    <Button
+                      title={loading ? "Submitting..." : "Confirm and pay"}
+                      disabled={
+                        loading ||
+                        !name ||
+                        !email ||
+                        !canonicalPhone ||
+                        !ticketSlots.length
+                      }
+                      onPress={() => void submit()}
+                    />                  ) : loading ? (
                     <Text style={theme.styles.muted}>Confirming your order...</Text>
                   ) : null}
                   {/* {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null} */}
@@ -549,97 +590,97 @@ export default function CheckoutScreen() {
 
 function createCheckoutStyles(colors: ThemeColors) {
   return {
-  shell: { flex: 1, alignSelf: "center" as const },
-  checkoutLayout: { gap: 12 },
-  checkoutLayoutWide: {
-    flexDirection: "row" as const,
-    alignItems: "flex-start" as const,
-  },
-  checkoutMain: { gap: 12 },
-  checkoutMainWide: {
-    flex: 1,
-    minWidth: 0,
-  },
-  checkoutAside: { gap: 12 },
-  checkoutAsideWide: {
-    width: 350,
-    position: "sticky" as any,
-    top: 0,
-  },
-  timer: { color: colors.primary, fontSize: 13, fontWeight: "900" as const },
-  summaryItem: {
-    flexDirection: "row" as const,
-    alignItems: "flex-start" as const,
-    gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    paddingTop: 10,
-  },
-  summaryTotal: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    paddingTop: 12,
-  },
-  summaryTitle: { color: colors.ink, fontSize: 14, fontWeight: "900" as const },
-  summaryPrice: { color: colors.ink, fontSize: 13, fontWeight: "900" as const },
-  paymentGrid: { gap: 10 },
-  paymentOption: {
-    minHeight: 74,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
-    padding: 12,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 12,
-  },
-  paymentOptionActive: { borderColor: colors.primary, backgroundColor: "rgba(200,16,46,0.06)" },
-  paymentIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: colors.panelSoft,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  paymentIconActive: { backgroundColor: colors.primary },
-  paymentTitle: { color: colors.ink, fontSize: 14, fontWeight: "900" as const },
-  paymentNotice: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panelSoft,
-    padding: 12,
-  },
-  paymentNoticeText: { color: colors.secondary, fontSize: 13, lineHeight: 18 },
-  lockedControl: { opacity: 0.62 },
-  overlay: {
-    position: "absolute" as const,
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: "rgba(21,26,44,0.32)",
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-    padding: 24,
-  },
-  overlayPanel: {
-    width: "100%" as const,
-    maxWidth: 320,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
-    padding: 18,
-    alignItems: "center" as const,
-    gap: 8,
-  },
-  overlayTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" as const },
+    shell: { flex: 1, alignSelf: "center" as const },
+    checkoutLayout: { gap: 12 },
+    checkoutLayoutWide: {
+      flexDirection: "row" as const,
+      alignItems: "flex-start" as const,
+    },
+    checkoutMain: { gap: 12 },
+    checkoutMainWide: {
+      flex: 1,
+      minWidth: 0,
+    },
+    checkoutAside: { gap: 12 },
+    checkoutAsideWide: {
+      width: 350,
+      position: "sticky" as any,
+      top: 0,
+    },
+    timer: { color: colors.primary, fontSize: 13, fontWeight: "900" as const },
+    summaryItem: {
+      flexDirection: "row" as const,
+      alignItems: "flex-start" as const,
+      gap: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.line,
+      paddingTop: 10,
+    },
+    summaryTotal: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      justifyContent: "space-between" as const,
+      borderTopWidth: 1,
+      borderTopColor: colors.line,
+      paddingTop: 12,
+    },
+    summaryTitle: { color: colors.ink, fontSize: 14, fontWeight: "900" as const },
+    summaryPrice: { color: colors.ink, fontSize: 13, fontWeight: "900" as const },
+    paymentGrid: { gap: 10 },
+    paymentOption: {
+      minHeight: 74,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.panel,
+      padding: 12,
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 12,
+    },
+    paymentOptionActive: { borderColor: colors.primary, backgroundColor: "rgba(200,16,46,0.06)" },
+    paymentIcon: {
+      width: 42,
+      height: 42,
+      borderRadius: 14,
+      backgroundColor: colors.panelSoft,
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+    },
+    paymentIconActive: { backgroundColor: colors.primary },
+    paymentTitle: { color: colors.ink, fontSize: 14, fontWeight: "900" as const },
+    paymentNotice: {
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.panelSoft,
+      padding: 12,
+    },
+    paymentNoticeText: { color: colors.secondary, fontSize: 13, lineHeight: 18 },
+    lockedControl: { opacity: 0.62 },
+    overlay: {
+      position: "absolute" as const,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: "rgba(21,26,44,0.32)",
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+      padding: 24,
+    },
+    overlayPanel: {
+      width: "100%" as const,
+      maxWidth: 320,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.panel,
+      padding: 18,
+      alignItems: "center" as const,
+      gap: 8,
+    },
+    overlayTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" as const },
   };
 }
 
