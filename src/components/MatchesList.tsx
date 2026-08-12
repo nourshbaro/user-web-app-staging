@@ -2,6 +2,12 @@ import { AppBanner } from "@/components/AppBanner";
 import { MatchCard } from "@/components/MatchCard";
 import { Empty, Loading, useResponsive, useTheme } from "@/components/ui";
 import { useToast } from "@/context/ToastContext";
+import {
+  formatAccessibleDate,
+  getDateTriggerLabel,
+  getDropdownTriggerLabel,
+  isDropdownOptionSelected,
+} from "@/lib/matchFilterAccessibility";
 import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, FilterOption, MatchFilters } from "@/types";
@@ -123,27 +129,67 @@ export function MatchesList({ limit, filterable = false, showAppBanner = false }
 
       {filterable ? (
         <View style={[local.filterCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-          <Pressable onPress={() => setFiltersOpen((value) => !value)} style={local.filterToggle}>
-            <SymbolView name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as any} size={20} tintColor={theme.colors.primary} fallback={<Text style={[local.filterIcon, { color: theme.colors.primary }]}>F</Text>} />
-            <Text style={[local.filterTitle, { color: theme.colors.ink }]}>Filter Matches</Text>
+          <View style={local.filterHeader}>
+            <Pressable
+              onPress={() => setFiltersOpen((value) => !value)}
+              style={local.filterToggle}
+              accessibilityRole="button"
+              accessibilityLabel="Filter matches"
+              accessibilityState={{ expanded: filtersOpen }}
+            >
+              <SymbolView
+                accessible={false}
+                name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as any}
+                size={20}
+                tintColor={theme.colors.primary}
+                fallback={
+                  <Text accessible={false} style={[local.filterIcon, { color: theme.colors.primary }]}>
+                    F
+                  </Text>
+                }
+              />
+              <Text style={[local.filterTitle, { color: theme.colors.ink }]}>
+                Filter Matches
+              </Text>
+              {hasFilters ? <View accessible={false} style={local.clearButtonPlaceholder} /> : null}
+              <ChevronIcon open={filtersOpen} color={theme.colors.muted} />
+            </Pressable>
+
             {hasFilters ? (
               <Pressable
-                onPress={(event) => { event.stopPropagation(); clearFilters(); }}
-                style={[local.clearButton, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}
+                onPress={clearFilters}
+                style={[
+                  local.clearButton,
+                  local.clearButtonOverlay,
+                  {
+                    backgroundColor: theme.colors.panelSoft,
+                    borderColor: theme.colors.line,
+                  },
+                ]}
                 accessibilityRole="button"
                 accessibilityLabel="Clear match filters"
               >
-                <SymbolView name={{ ios: "xmark", android: "close", web: "close" } as any} size={15} tintColor={theme.colors.primary} fallback={<Text style={{ color: theme.colors.primary }}>X</Text>} />
+                <SymbolView
+                  accessible={false}
+                  name={{ ios: "xmark", android: "close", web: "close" } as any}
+                  size={15}
+                  tintColor={theme.colors.primary}
+                  fallback={
+                    <Text accessible={false} style={{ color: theme.colors.primary }}>
+                      X
+                    </Text>
+                  }
+                />
               </Pressable>
             ) : null}
-            <ChevronIcon open={filtersOpen} color={theme.colors.muted} />
-          </Pressable>
+          </View>
 
           {filtersOpen ? (
             <View style={[local.filterBody, wideFilters && local.filterBodyWide, { borderTopColor: theme.colors.line }]}>
               <Dropdown
                 label="Team"
                 value={selected.team ? filters.teams.find((team) => team.slug === selected.team)?.name ?? "Team" : "All teams"}
+                selectedValue={selected.team}
                 open={teamOpen}
                 options={[{ label: "All teams", value: undefined }, ...filters.teams.map((team) => ({ label: team.name, value: team.slug }))]}
                 onToggle={() => { setTeamOpen((value) => !value); setVenueOpen(false); }}
@@ -153,6 +199,7 @@ export function MatchesList({ limit, filterable = false, showAppBanner = false }
               <Dropdown
                 label="Venue"
                 value={selected.stadium ? filters.stadiums.find((stadium) => stadium.slug === selected.stadium)?.name ?? "Venue" : "All venues"}
+                selectedValue={selected.stadium}
                 open={venueOpen}
                 options={[{ label: "All venues", value: undefined }, ...filters.stadiums.map((stadium) => ({ label: stadium.name, value: stadium.slug }))]}
                 onToggle={() => { setVenueOpen((value) => !value); setTeamOpen(false); }}
@@ -161,9 +208,48 @@ export function MatchesList({ limit, filterable = false, showAppBanner = false }
               />
               <View style={[local.fieldWrap, wideFilters && local.fieldWrapWide]}>
                 <Text style={[local.fieldLabel, { color: theme.colors.secondary }]}>Match Date</Text>
-                <Pressable onPress={() => setCalendarOpen(true)} style={[local.dateInputWrap, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }]}>
-                  <Text style={[local.dateInputText, { color: dateText ? theme.colors.ink : theme.colors.muted }]}>{dateText || "Select date"}</Text>
-                  <SymbolView name={{ ios: "calendar", android: "calendar_month", web: "calendar_month" } as any} size={17} tintColor={theme.colors.ink} fallback={<Text style={{ color: theme.colors.ink }}>Cal</Text>} />
+                <Pressable
+                  onPress={() => setCalendarOpen(true)}
+                  style={[
+                    local.dateInputWrap,
+                    {
+                      borderColor: theme.colors.line,
+                      backgroundColor: theme.colors.panel,
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={getDateTriggerLabel(
+                    dateText ? parseDateValue(dateText) : null,
+                  )}
+                  accessibilityState={{ expanded: calendarOpen }}
+                >
+                  <Text
+                    style={[
+                      local.dateInputText,
+                      {
+                        color: dateText
+                          ? theme.colors.ink
+                          : theme.colors.muted,
+                      },
+                    ]}
+                  >
+                    {dateText || "Select date"}
+                  </Text>
+                  <SymbolView
+                    accessible={false}
+                    name={{
+                      ios: "calendar",
+                      android: "calendar_month",
+                      web: "calendar_month",
+                    } as any}
+                    size={17}
+                    tintColor={theme.colors.ink}
+                    fallback={
+                      <Text accessible={false} style={{ color: theme.colors.ink }}>
+                        Cal
+                      </Text>
+                    }
+                  />
                 </Pressable>
               </View>
               <CalendarModal
@@ -200,6 +286,7 @@ export function MatchesList({ limit, filterable = false, showAppBanner = false }
 function Dropdown({
   label,
   value,
+  selectedValue,
   open,
   options,
   onToggle,
@@ -208,6 +295,7 @@ function Dropdown({
 }: {
   label: string;
   value: string;
+  selectedValue?: string;
   open: boolean;
   options: { label: string; value?: string }[];
   onToggle: () => void;
@@ -218,18 +306,74 @@ function Dropdown({
 
   return (
     <View style={[local.fieldWrap, wide && local.fieldWrapWide]}>
-      <Text style={[local.fieldLabel, { color: theme.colors.secondary }]}>{label}</Text>
-      <Pressable onPress={onToggle} style={[local.selectInput, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }]}>
-        <Text numberOfLines={1} style={[local.selectText, { color: theme.colors.muted }]}>{value}</Text>
+      <Text style={[local.fieldLabel, { color: theme.colors.secondary }]}>
+        {label}
+      </Text>
+      <Pressable
+        onPress={onToggle}
+        style={[
+          local.selectInput,
+          {
+            borderColor: theme.colors.line,
+            backgroundColor: theme.colors.panel,
+          },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={getDropdownTriggerLabel(label, value)}
+        accessibilityState={{ expanded: open }}
+      >
+        <Text
+          numberOfLines={1}
+          style={[local.selectText, { color: theme.colors.muted }]}
+        >
+          {value}
+        </Text>
         <ChevronIcon open={open} color={theme.colors.muted} />
       </Pressable>
+
       {open ? (
-        <View style={[local.optionsPanel, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }]}>
-          {options.map((option) => (
-            <Pressable key={option.value ?? "all"} onPress={() => onSelect(option.value)} style={[local.optionRow, option.value === undefined && { backgroundColor: theme.colors.primary }]}>
-              <Text numberOfLines={1} style={[local.optionText, { color: theme.colors.muted }, option.value === undefined && local.optionTextActive]}>{option.label}</Text>
-            </Pressable>
-          ))}
+        <View
+          style={[
+            local.optionsPanel,
+            {
+              borderColor: theme.colors.line,
+              backgroundColor: theme.colors.panel,
+            },
+          ]}
+        >
+          {options.map((option) => {
+            const optionSelected = isDropdownOptionSelected(
+              selectedValue,
+              option.value,
+            );
+
+            return (
+              <Pressable
+                key={option.value ?? "all"}
+                onPress={() => onSelect(option.value)}
+                style={[
+                  local.optionRow,
+                  optionSelected && {
+                    backgroundColor: theme.colors.primary,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={option.label}
+                accessibilityState={{ selected: optionSelected }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    local.optionText,
+                    { color: theme.colors.muted },
+                    optionSelected && local.optionTextActive,
+                  ]}
+                >
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       ) : null}
     </View>
@@ -239,10 +383,28 @@ function Dropdown({
 function ChevronIcon({ open, color }: { open: boolean; color: string }) {
   return (
     <SymbolView
-      name={(open ? { ios: "chevron.up", android: "keyboard_arrow_up", web: "keyboard_arrow_up" } : { ios: "chevron.down", android: "keyboard_arrow_down", web: "keyboard_arrow_down" }) as any}
+      accessible={false}
+      name={(open
+        ? {
+          ios: "chevron.up",
+          android: "keyboard_arrow_up",
+          web: "keyboard_arrow_up",
+        }
+        : {
+          ios: "chevron.down",
+          android: "keyboard_arrow_down",
+          web: "keyboard_arrow_down",
+        }) as any}
       size={18}
       tintColor={color}
-      fallback={<Text style={[local.selectChevron, { color }]}>{open ? "Up" : "Down"}</Text>}
+      fallback={
+        <Text
+          accessible={false}
+          style={[local.selectChevron, { color }]}
+        >
+          {open ? "Up" : "Down"}
+        </Text>
+      }
     />
   );
 }
@@ -276,13 +438,56 @@ function CalendarModal({
             <Pressable
               disabled={!canGoPrevious}
               onPress={() => onMonthChange(addMonths(month, -1))}
-              style={[local.calendarNav, { opacity: canGoPrevious ? 1 : 0.35 }]}
+              style={[
+                local.calendarNav,
+                { opacity: canGoPrevious ? 1 : 0.35 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Previous month"
+              accessibilityState={{ disabled: !canGoPrevious }}
             >
-              <SymbolView name={{ ios: "chevron.left", android: "keyboard_arrow_left", web: "keyboard_arrow_left" } as any} size={20} tintColor={theme.colors.ink} fallback={<Text style={{ color: theme.colors.ink }}>Prev</Text>} />
+              <SymbolView
+                accessible={false}
+                name={{
+                  ios: "chevron.left",
+                  android: "keyboard_arrow_left",
+                  web: "keyboard_arrow_left",
+                } as any}
+                size={20}
+                tintColor={theme.colors.ink}
+                fallback={
+                  <Text accessible={false} style={{ color: theme.colors.ink }}>
+                    Prev
+                  </Text>
+                }
+              />
             </Pressable>
-            <Text style={[local.calendarTitle, { color: theme.colors.ink }]}>{monthLabel(month)}</Text>
-            <Pressable onPress={() => onMonthChange(addMonths(month, 1))} style={local.calendarNav}>
-              <SymbolView name={{ ios: "chevron.right", android: "keyboard_arrow_right", web: "keyboard_arrow_right" } as any} size={20} tintColor={theme.colors.ink} fallback={<Text style={{ color: theme.colors.ink }}>Next</Text>} />
+
+            <Text style={[local.calendarTitle, { color: theme.colors.ink }]}>
+              {monthLabel(month)}
+            </Text>
+
+            <Pressable
+              onPress={() => onMonthChange(addMonths(month, 1))}
+              style={local.calendarNav}
+              accessibilityRole="button"
+              accessibilityLabel="Next month"
+            >
+              <SymbolView
+                accessible={false}
+                name={{
+                  ios: "chevron.right",
+                  android: "keyboard_arrow_right",
+                  web: "keyboard_arrow_right",
+                } as any}
+                size={20}
+                tintColor={theme.colors.ink}
+                fallback={
+                  <Text accessible={false} style={{ color: theme.colors.ink }}>
+                    Next
+                  </Text>
+                }
+              />
             </Pressable>
           </View>
 
@@ -294,25 +499,52 @@ function CalendarModal({
 
           <View style={local.calendarGrid}>
             {days.map((date, index) => {
-              const disabled = !date || isBeforeDay(date, todayDate);
-              const selected = Boolean(date && selectedDate && isSameDay(date, selectedDate));
+              if (!date) {
+                return (
+                  <View
+                    key={`blank-${index}`}
+                    accessible={false}
+                    style={local.calendarDay}
+                  />
+                );
+              }
+
+              const disabled = isBeforeDay(date, todayDate);
+              const selected = Boolean(
+                selectedDate && isSameDay(date, selectedDate),
+              );
+
               return (
                 <Pressable
-                  key={date ? toDateInputValue(date) : `blank-${index}`}
+                  key={toDateInputValue(date)}
                   disabled={disabled}
-                  onPress={() => date && onSelect(date)}
+                  onPress={() => onSelect(date)}
                   style={[
                     local.calendarDay,
-                    selected && { backgroundColor: theme.colors.primary },
+                    selected && {
+                      backgroundColor: theme.colors.primary,
+                    },
                     disabled && local.calendarDayDisabled,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={formatAccessibleDate(date)}
+                  accessibilityState={{
+                    selected,
+                    disabled,
+                  }}
                 >
-                  <Text style={[
-                    local.calendarDayText,
-                    { color: disabled ? theme.colors.muted : theme.colors.ink },
-                    selected && local.calendarDayTextSelected,
-                  ]}>
-                    {date ? date.getDate() : ""}
+                  <Text
+                    style={[
+                      local.calendarDayText,
+                      {
+                        color: disabled
+                          ? theme.colors.muted
+                          : theme.colors.ink,
+                      },
+                      selected && local.calendarDayTextSelected,
+                    ]}
+                  >
+                    {date.getDate()}
                   </Text>
                 </Pressable>
               );
@@ -320,8 +552,22 @@ function CalendarModal({
           </View>
 
           <View style={local.calendarActions}>
-            <Pressable onPress={onClose} style={[local.calendarButton, { borderColor: theme.colors.line }]}>
-              <Text style={[local.calendarButtonText, { color: theme.colors.ink }]}>Close</Text>
+            <Pressable
+              onPress={onClose}
+              style={[
+                local.calendarButton,
+                { borderColor: theme.colors.line },
+              ]}
+              accessibilityRole="button"
+            >
+              <Text
+                style={[
+                  local.calendarButtonText,
+                  { color: theme.colors.ink },
+                ]}
+              >
+                Close
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -391,6 +637,9 @@ const local = {
     overflow: "hidden" as const,
     marginTop: 8,
   },
+  filterHeader: {
+    position: "relative" as const,
+  },
   filterToggle: {
     minHeight: 58,
     flexDirection: "row" as const,
@@ -407,6 +656,15 @@ const local = {
     borderWidth: 1,
     alignItems: "center" as const,
     justifyContent: "center" as const,
+  },
+  clearButtonPlaceholder: {
+    width: 32,
+    height: 32,
+  },
+  clearButtonOverlay: {
+    position: "absolute" as const,
+    top: 13,
+    right: 44,
   },
   filterBody: {
     borderTopWidth: 1,
