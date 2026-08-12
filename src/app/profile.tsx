@@ -14,6 +14,7 @@ import {
   getUserScopedCacheGeneration,
   onUserScopedCacheInvalidated,
 } from "@/lib/userScopedCache";
+import { createAuthSubmissionGuard } from "@/lib/authSubmissionGuard";
 import type { Order } from "@/types";
 
 type PortalItem = Record<string, any>;
@@ -387,6 +388,15 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+  const submissionGuard = useRef(createAuthSubmissionGuard());
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const showOtp = (payload: unknown, fallback: string, fallbackEmail = email.trim()) => {
     const userId = getUserId(payload);
@@ -399,6 +409,7 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
   };
 
   const submit = async () => {
+    if (!submissionGuard.current.tryAcquire()) return;
     setLoading(true);
     setMessage(null);
     try {
@@ -410,7 +421,9 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
           return;
         }
         await authService.verifyOtp(pendingOtpTarget, otp);
+        if (!mountedRef.current) return;
         await auth.refreshAuth();
+        if (!mountedRef.current) return;
         onSignedIn();
         return;
       }
@@ -421,26 +434,31 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
           return;
         }
         const payload = await authService.register(name.trim(), email.trim(), password, passwordConfirmation);
+        if (!mountedRef.current) return;
         showOtp(payload, "Account created. Enter the 6-digit OTP sent to your email.");
         return;
       }
 
       const trimmedEmail = email.trim();
       const verification = await authService.checkEmailVerification(trimmedEmail);
+      if (!mountedRef.current) return;
       if (verification && getVerificationStatus(verification) === false) {
         showOtp(verification, "Please verify your email. A new code has been sent.", trimmedEmail);
         return;
       }
 
       const payload = await authService.login(trimmedEmail, password);
+      if (!mountedRef.current) return;
       const userId = getUserId(payload);
       if (userId && !hasSessionToken(payload)) {
         showOtp(payload, "Please verify your email. A new code has been sent.", trimmedEmail);
         return;
       }
       await auth.refreshAuth();
+      if (!mountedRef.current) return;
       onSignedIn();
     } catch (err) {
+      if (!mountedRef.current) return;
       if (err instanceof ApiError && mode === "login" && getUserId(err.body)) {
         showOtp(err.body, "Please verify your email. A new code has been sent.", email.trim());
         return;
@@ -449,7 +467,8 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
       setMessage(nextMessage);
       toast.showToast({ variant: "error", title: "Unable to continue", message: nextMessage });
     } finally {
-      setLoading(false);
+      submissionGuard.current.release();
+      if (mountedRef.current) setLoading(false);
     }
   };
 

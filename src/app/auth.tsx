@@ -1,11 +1,12 @@
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Image, Pressable, ScrollView, Text, View } from "react-native";
 import { Button, Card, Input, Screen, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/services/api";
 import { authService, type OtpTarget } from "@/services/auth";
+import { createAuthSubmissionGuard } from "@/lib/authSubmissionGuard";
 
 type Mode = "login" | "register" | "otp";
 
@@ -61,6 +62,15 @@ export default function AuthScreen() {
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const submissionGuard = useRef(createAuthSubmissionGuard());
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const showOtp = (payload: unknown, fallback: string, fallbackEmail = email.trim()) => {
     const userId = getUserId(payload);
@@ -72,18 +82,21 @@ export default function AuthScreen() {
   };
 
   const submit = async () => {
+    if (!submissionGuard.current.tryAcquire()) return;
     setLoading(true);
     setMessage(null);
     try {
       if (mode === "login") {
         const trimmedEmail = email.trim();
         const verification = await authService.checkEmailVerification(trimmedEmail);
+        if (!mountedRef.current) return;
         if (verification && getVerificationStatus(verification) === false) {
           showOtp(verification, "Please verify your email. A new code has been sent.", trimmedEmail);
           return;
         }
 
         const payload = await authService.login(trimmedEmail, password);
+        if (!mountedRef.current) return;
         const userId = getUserId(payload);
         if (userId && !hasSessionToken(payload)) {
           showOtp(payload, "Please verify your email. A new code has been sent.", trimmedEmail);
@@ -99,6 +112,7 @@ export default function AuthScreen() {
           return;
         }
         const payload = await authService.register(name.trim(), email.trim(), password, passwordConfirmation);
+        if (!mountedRef.current) return;
         showOtp(payload, "Account created. Enter the 6-digit OTP sent to your email.");
         return;
       }
@@ -111,12 +125,15 @@ export default function AuthScreen() {
           return;
         }
         await authService.verifyOtp(pendingOtpTarget, otp);
+        if (!mountedRef.current) return;
       }
 
       await auth.refreshAuth();
+      if (!mountedRef.current) return;
       toast.showToast({ variant: "success", title: "Signed in", message: "Welcome back." });
       router.replace("/profile");
     } catch (err) {
+      if (!mountedRef.current) return;
       if (err instanceof ApiError && mode === "login" && getUserId(err.body)) {
         showOtp(err.body, "Please verify your email. A new code has been sent.", email.trim());
         return;
@@ -125,7 +142,8 @@ export default function AuthScreen() {
       setMessage(nextMessage);
       toast.showToast({ variant: "error", title: "Unable to continue", message: nextMessage });
     } finally {
-      setLoading(false);
+      submissionGuard.current.release();
+      if (mountedRef.current) setLoading(false);
     }
   };
 
