@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import { config } from "@/lib/config";
 import {
   ApiError,
+  ApiTransportError,
   apiRequest,
   beginAuthenticationLogout,
   captureAuthenticationSnapshot,
@@ -17,6 +18,8 @@ import type { User } from "@/types";
 
 const USER_KEY = "lfa_portal_user";
 export type OtpTarget = string | { userId?: string | null; email?: string | null };
+
+class PdfDownloadHttpError extends Error { }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -168,13 +171,13 @@ export const authService = {
   },
 
   async logout() {
-   const logoutOwnership = await beginAuthenticationLogout(() => storage.remove(USER_KEY));
+    const logoutOwnership = await beginAuthenticationLogout(() => storage.remove(USER_KEY));
     void apiRequest("/auth/logout", {
-        method: "POST",
-        skipUnauthenticatedNotify: true,
-        headers: logoutOwnership.token ? { Authorization: `Bearer ${logoutOwnership.token}` } : undefined,
-      })
-      .catch(() => {});
+      method: "POST",
+      skipUnauthenticatedNotify: true,
+      headers: logoutOwnership.token ? { Authorization: `Bearer ${logoutOwnership.token}` } : undefined,
+    })
+      .catch(() => { });
   },
 
   async clearSession() {
@@ -199,27 +202,66 @@ export const profileService = {
     return unwrapData(await apiRequest(`/portal/tickets/${encodeURIComponent(String(ticketCode))}`)) as Record<string, unknown>;
   },
   async orderPdf(orderId: string | number) {
-     const authentication = await captureAuthenticationSnapshot();
+    const authentication = await captureAuthenticationSnapshot();
     const token = authentication.token;
     const encodedId = encodeURIComponent(String(orderId));
-    const url = Platform.OS === "web" ? `/api/portal/orders/${encodedId}/pdf` : `${config.apiBaseUrl}/portal/orders/${encodedId}/pdf`;
+    const url = Platform.OS === "web"
+      ? `/api/portal/orders/${encodedId}/pdf`
+      : `${config.apiBaseUrl}/portal/orders/${encodedId}/pdf`;
+    const controller = new AbortController();
+    let didTimeout = false;
+    const timeout = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, Number.isFinite(config.timeoutMs) ? config.timeoutMs : 15000);
 
-    const response = await fetch(url, {
-      headers: {
-        Accept: "application/pdf,application/octet-stream,*/*",
-        ...(Platform.OS !== "web" && config.apiPassword ? { password: config.apiPassword } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/pdf,application/octet-stream,*/*",
+          ...(Platform.OS !== "web" && config.apiPassword ? { password: config.apiPassword } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
 
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      if (response.status === 401 || response.status === 403) {
-        await invalidateAuthentication(authentication);
+      if (!response.ok) {
+        let body: { message?: string; error?: string } | null = null;
+
+        try {
+          body = await response.json();
+        } catch (error) {
+          if (didTimeout) throw error;
+        }
+
+        if (response.status === 401 || response.status === 403) {
+          await invalidateAuthentication(authentication);
+        }
+
+        throw new PdfDownloadHttpError(
+          body?.message ?? body?.error ?? "Failed to download PDF.",
+        );
       }
-      throw new Error(body?.message ?? body?.error ?? "Failed to download PDF.");
-    }
 
-    return response;
+      return await response.arrayBuffer();
+    } catch (error) {
+      if (error instanceof PdfDownloadHttpError) throw error;
+
+      if (didTimeout) {
+        throw new ApiTransportError(
+          "The request timed out. Please try again.",
+          "timeout",
+          error,
+        );
+      }
+
+      throw new ApiTransportError(
+        "Unable to reach the server. Check your connection and try again.",
+        "network",
+        error,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   },
 };

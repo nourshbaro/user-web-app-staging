@@ -205,7 +205,7 @@ export default function ProfileScreen() {
     setDownloadingPdf(true);
     setError(null);
     try {
-      const response = await profileService.orderPdf(orderId);
+      const pdfBytes = await profileService.orderPdf(orderId);
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       if (Platform.OS !== "web") {
         const FileSystem = await import("expo-file-system");
@@ -217,13 +217,13 @@ export default function ProfileScreen() {
           uri: string;
         };
         file.create({ overwrite: true });
-        file.write(new Uint8Array(await response.arrayBuffer()));
+        file.write(new Uint8Array(pdfBytes));
         if (cacheGeneration !== getUserScopedCacheGeneration()) return;
         if (!(await Sharing.isAvailableAsync())) throw new Error("No app is available to open this PDF.");
         await Sharing.shareAsync(file.uri, { mimeType: "application/pdf", dialogTitle: `Order ${orderId}` });
         return;
       }
-      const blob = await response.blob();
+      const blob = new Blob([pdfBytes], { type: "application/pdf" });
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");

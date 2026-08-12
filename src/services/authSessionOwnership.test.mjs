@@ -23,15 +23,19 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function response(status, body = {}) {
+function response(status, body = {}, bytes = new ArrayBuffer(0)) {
   return {
     ok: status >= 200 && status < 300,
     status,
     json: async () => body,
+    arrayBuffer: async () => bytes,
   };
 }
 
-async function createHarness() {
+async function createHarness({
+  platform = "web",
+  timeoutMs = 15000,
+} = {}) {
   const key = `__authOwnership_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const state = {
     values: new Map(),
@@ -48,9 +52,44 @@ async function createHarness() {
     removeStarted: null,
     removeGates: new Map(),
     removeStartedByKey: new Map(),
+    platform,
+    timeoutMs,
+    nextTimerId: 1,
+    timers: new Map(),
+    setTimer(callback, delay) {
+      const id = this.nextTimerId++;
+      this.timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimer(id) {
+      this.timers.delete(id);
+    },
+    fireTimers() {
+      const pendingTimers = [...this.timers.entries()];
+      this.timers.clear();
+
+      for (const [, timer] of pendingTimers) {
+        timer.callback();
+      }
+    },
     fetch(request, init) {
       const pending = deferred();
       this.fetches.push({ request, init, pending });
+
+      const rejectForAbort = () => {
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        pending.reject(error);
+      };
+
+      if (init.signal?.aborted) {
+        rejectForAbort();
+      } else {
+        init.signal?.addEventListener("abort", rejectForAbort, {
+          once: true,
+        });
+      }
+
       return pending.promise;
     },
   };
@@ -96,20 +135,32 @@ async function createHarness() {
       },
     };
   `);
-  const configUrl = toModuleUrl(`export const config = {
-    timeoutMs: 15000,
-    apiBaseUrl: "https://api.example.test",
-    apiPassword: "public-password",
-  };`);
-  const reactNativeUrl = toModuleUrl(`export const Platform = { OS: "web" };`);
+  const configUrl = toModuleUrl(`
+    const state = globalThis[${JSON.stringify(key)}];
+    export const config = {
+      timeoutMs: state.timeoutMs,
+      apiBaseUrl: "https://api.example.test",
+      apiPassword: "public-password",
+    };
+  `);
+  const reactNativeUrl = toModuleUrl(`
+    const state = globalThis[${JSON.stringify(key)}];
+    export const Platform = { OS: state.platform };
+  `);
   const authorityUrl = toModuleUrl(transpile(authoritySource));
 
   const executableApi = transpile(apiSource)
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)
-    .replace('from "@/lib/authSessionOwnership"', `from ${JSON.stringify(authorityUrl)}`)
+    .replace(
+      'from "@/lib/authSessionOwnership"',
+      `from ${JSON.stringify(authorityUrl)}`,
+    )
     .replace('from "@/lib/storage"', `from ${JSON.stringify(storageUrl)}`)
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
-    .replaceAll("await fetch(", `await globalThis[${JSON.stringify(key)}].fetch(`);
+    .replaceAll(
+      "await fetch(",
+      `await globalThis[${JSON.stringify(key)}].fetch(`,
+    );
   const apiUrl = toModuleUrl(executableApi);
   const api = await import(apiUrl);
 
@@ -118,7 +169,18 @@ async function createHarness() {
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)
     .replace('from "@/services/api"', `from ${JSON.stringify(apiUrl)}`)
     .replace('from "@/lib/storage"', `from ${JSON.stringify(storageUrl)}`)
-    .replaceAll("await fetch(", `await globalThis[${JSON.stringify(key)}].fetch(`);
+    .replaceAll(
+      "setTimeout(",
+      `globalThis[${JSON.stringify(key)}].setTimer(`,
+    )
+    .replaceAll(
+      "clearTimeout(",
+      `globalThis[${JSON.stringify(key)}].clearTimer(`,
+    )
+    .replaceAll(
+      "await fetch(",
+      `await globalThis[${JSON.stringify(key)}].fetch(`,
+    );
   const auth = await import(toModuleUrl(executableAuth));
   const unsubscribe = api.onUnauthenticated(() => {
     state.notifications += 1;
@@ -281,6 +343,262 @@ test("ownership lookup failure starts no request and invalidates nothing", async
     harness.cleanup();
   }
 });
+
+test("stalled PDF fetch aborts with a timeout transport error", async () => {
+  const harness = await createHarness({ timeoutMs: 4321 });
+
+  try {
+    await install(harness, "token-a", 1);
+
+    const request = harness.auth.profileService.orderPdf("order-1");
+    const pending = await harness.waitForFetch();
+
+    assert.equal(pending.init.signal.aborted, false);
+    assert.equal(harness.state.timers.size, 1);
+    assert.equal(
+      [...harness.state.timers.values()][0].delay,
+      4321,
+    );
+
+    harness.state.fireTimers();
+
+    await assert.rejects(
+      request,
+      (error) => (
+        error instanceof harness.api.ApiTransportError
+        && error.category === "timeout"
+        && error.message === "The request timed out. Please try again."
+      ),
+    );
+
+    assert.equal(pending.init.signal.aborted, true);
+    assert.equal(harness.state.timers.size, 0);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("stalled PDF body consumption remains covered by the timeout", async () => {
+  const harness = await createHarness();
+  const bodyStarted = deferred();
+
+  try {
+    await install(harness, "token-a", 1);
+
+    const request = harness.auth.profileService.orderPdf("order-1");
+    const pending = await harness.waitForFetch();
+
+    pending.pending.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      arrayBuffer() {
+        bodyStarted.resolve();
+
+        return new Promise((resolve, reject) => {
+          pending.init.signal.addEventListener(
+            "abort",
+            () => {
+              const error = new Error("The operation was aborted.");
+              error.name = "AbortError";
+              reject(error);
+            },
+            { once: true },
+          );
+        });
+      },
+    });
+
+    await bodyStarted.promise;
+    assert.equal(harness.state.timers.size, 1);
+
+    harness.state.fireTimers();
+
+    await assert.rejects(
+      request,
+      (error) => (
+        error instanceof harness.api.ApiTransportError
+        && error.category === "timeout"
+      ),
+    );
+
+    assert.equal(pending.init.signal.aborted, true);
+    assert.equal(harness.state.timers.size, 0);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("PDF success returns exact bytes and clears its timeout", async () => {
+  const harness = await createHarness();
+  const expectedBytes = new Uint8Array([37, 80, 68, 70]).buffer;
+
+  try {
+    await install(harness, "token-a", 1);
+
+    const request = harness.auth.profileService.orderPdf("order 1");
+    const pending = await harness.waitForFetch();
+
+    assert.equal(
+      pending.request,
+      "/api/portal/orders/order%201/pdf",
+    );
+    assert.equal(
+      pending.init.headers.Accept,
+      "application/pdf,application/octet-stream,*/*",
+    );
+    assert.equal(
+      pending.init.headers.Authorization,
+      "Bearer token-a",
+    );
+    assert.equal(
+      pending.init.headers.password,
+      undefined,
+    );
+
+    pending.pending.resolve(
+      response(200, {}, expectedBytes),
+    );
+
+    const actualBytes = await request;
+
+    assert.equal(actualBytes, expectedBytes);
+    assert.equal(harness.state.timers.size, 0);
+    assert.equal(pending.init.signal.aborted, false);
+
+    harness.state.fireTimers();
+
+    assert.equal(pending.init.signal.aborted, false);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("native PDF request preserves API URL and password header", async () => {
+  const harness = await createHarness({ platform: "native" });
+  const expectedBytes = new Uint8Array([1, 2, 3]).buffer;
+
+  try {
+    await install(harness, "token-a", 1);
+
+    const request = harness.auth.profileService.orderPdf("order-1");
+    const pending = await harness.waitForFetch();
+
+    assert.equal(
+      pending.request,
+      "https://api.example.test/portal/orders/order-1/pdf",
+    );
+    assert.equal(
+      pending.init.headers.password,
+      "public-password",
+    );
+    assert.equal(
+      pending.init.headers.Authorization,
+      "Bearer token-a",
+    );
+
+    pending.pending.resolve(
+      response(200, {}, expectedBytes),
+    );
+
+    assert.equal(await request, expectedBytes);
+    assert.equal(harness.state.timers.size, 0);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("PDF network rejection uses network transport classification", async () => {
+  const harness = await createHarness();
+
+  try {
+    await install(harness, "token-a", 1);
+
+    const request = harness.auth.profileService.orderPdf("order-1");
+    const pending = await harness.waitForFetch();
+
+    pending.pending.reject(new Error("offline"));
+
+    await assert.rejects(
+      request,
+      (error) => (
+        error instanceof harness.api.ApiTransportError
+        && error.category === "network"
+        && error.message === "Unable to reach the server. Check your connection and try again."
+      ),
+    );
+
+    assert.equal(harness.state.timers.size, 0);
+    assert.equal(pending.init.signal.aborted, false);
+
+    harness.state.fireTimers();
+
+    assert.equal(pending.init.signal.aborted, false);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("PDF HTTP 5xx preserves its message without auth invalidation", async () => {
+  const harness = await createHarness();
+
+  try {
+    await install(harness, "token-a", 1);
+
+    const request = harness.auth.profileService.orderPdf("order-1");
+    const pending = await harness.waitForFetch();
+
+    pending.pending.resolve(
+      response(500, { message: "PDF unavailable" }),
+    );
+
+    await assert.rejects(request, /PDF unavailable/);
+
+    assert.equal(
+      harness.state.values.get("lfa_portal_token"),
+      "token-a",
+    );
+    assert.equal(harness.state.notifications, 0);
+    assert.equal(harness.state.timers.size, 0);
+
+    harness.state.fireTimers();
+
+    assert.equal(pending.init.signal.aborted, false);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+for (const status of [401, 403]) {
+  test(`current PDF ${status} invalidates current authentication`, async () => {
+    const harness = await createHarness();
+
+    try {
+      await install(harness, "token-a", 1);
+
+      const request = harness.auth.profileService.orderPdf("order-1");
+      const pending = await harness.waitForFetch();
+
+      pending.pending.resolve(
+        response(status, { message: "PDF authentication rejected" }),
+      );
+
+      await assert.rejects(
+        request,
+        /PDF authentication rejected/,
+      );
+
+      assert.equal(
+        harness.state.values.has("lfa_portal_token"),
+        false,
+      );
+      assert.equal(harness.state.notifications, 1);
+      assert.equal(harness.state.timers.size, 0);
+    } finally {
+      harness.cleanup();
+    }
+  });
+}
 
 for (const status of [401, 403]) {
   test(`PDF stale ${status} preserves the replacement session`, async () => {
