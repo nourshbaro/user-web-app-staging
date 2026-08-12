@@ -1,9 +1,8 @@
 import { config } from "@/lib/config";
 import { createAuthenticationAuthority, type AuthenticationSnapshot } from "@/lib/authSessionOwnership";
-import { storage } from "@/lib/storage";
 import { Platform } from "react-native";
+import { authTokenStorage } from "@/lib/authTokenStorage";
 
-const TOKEN_KEY = "lfa_portal_token";
 type UnauthenticatedListener = () => void;
 type ApiRequestInit = RequestInit & { skipUnauthenticatedNotify?: boolean };
 export type PersistedAuthenticationValue<T> =
@@ -83,20 +82,20 @@ export async function setToken(token: string) {
 
   await enqueueAuthenticationMutation(async () => {
     if (!authenticationAuthority.isCurrent(ownership)) return;
-    await storage.set(TOKEN_KEY, token);
+    await authTokenStorage.set(token);
   });
 }
 
 export async function clearToken() {
   replaceAuthentication(null);
-  await enqueueAuthenticationMutation(() => storage.remove(TOKEN_KEY));
+  await enqueueAuthenticationMutation(() => authTokenStorage.remove());
 }
 
 export async function clearAuthentication(cleanup?: () => Promise<void>) {
   replaceAuthentication(null);
 
   await enqueueAuthenticationMutation(async () => {
-    await storage.remove(TOKEN_KEY);
+    await authTokenStorage.remove();
     if (cleanup) await cleanup();
   });
 }
@@ -111,7 +110,7 @@ export async function captureAuthenticationSnapshot(): Promise<AuthenticationSna
       continue;
     }
 
-    const persistedToken = await storage.get(TOKEN_KEY);
+    const persistedToken = await authTokenStorage.get();
 
     if (generation === authenticationAuthority.currentGeneration()) {
       return {
@@ -138,7 +137,7 @@ export async function restoreAuthentication<T>(
   let persistedUser: PersistedAuthenticationValue<T>;
 
   try {
-    token = await storage.get(TOKEN_KEY);
+    token = await authTokenStorage.get();
 
     if (generation !== authenticationAuthority.currentGeneration()) {
       return { status: "stale" };
@@ -201,7 +200,7 @@ export async function restoreAuthentication<T>(
     if (!authenticationAuthority.isCurrent(cleanupOwnership)) return;
 
     try {
-      await storage.remove(TOKEN_KEY);
+      await authTokenStorage.remove();
     } catch {
       cleanupFailed = true;
     }
@@ -235,8 +234,8 @@ export async function beginAuthenticationLogout(cleanup?: () => Promise<void>) {
 
   await enqueueAuthenticationMutation(async () => {
     if (!authenticationAuthority.isCurrent(ownership)) return;
-    logoutToken = await storage.get(TOKEN_KEY);
-    await storage.remove(TOKEN_KEY);
+    logoutToken = await authTokenStorage.get();
+    await authTokenStorage.remove();
     if (cleanup) await cleanup();
   });
 
@@ -254,7 +253,7 @@ export async function invalidateAuthentication(
     await enqueueAuthenticationMutation(async () => {
       if (!authenticationAuthority.isCurrent(claim)) return;
       if (options.cleanup) await options.cleanup();
-      await storage.remove(TOKEN_KEY);
+      await authTokenStorage.remove();
     });
   } catch {
     return false;

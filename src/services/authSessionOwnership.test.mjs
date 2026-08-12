@@ -135,6 +135,25 @@ async function createHarness({
       },
     };
   `);
+
+  const authTokenStorageUrl = toModuleUrl(`
+    import { storage } from ${JSON.stringify(storageUrl)};
+
+    const TOKEN_KEY = "lfa_portal_token";
+
+    export const authTokenStorage = {
+      get() {
+        return storage.get(TOKEN_KEY);
+      },
+      set(token) {
+        return storage.set(TOKEN_KEY, token);
+      },
+      remove() {
+        return storage.remove(TOKEN_KEY);
+      },
+    };
+  `);
+
   const configUrl = toModuleUrl(`
     const state = globalThis[${JSON.stringify(key)}];
     export const config = {
@@ -155,7 +174,10 @@ async function createHarness({
       'from "@/lib/authSessionOwnership"',
       `from ${JSON.stringify(authorityUrl)}`,
     )
-    .replace('from "@/lib/storage"', `from ${JSON.stringify(storageUrl)}`)
+    .replace(
+      'from "@/lib/authTokenStorage"',
+      `from ${JSON.stringify(authTokenStorageUrl)}`,
+    )
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
     .replaceAll(
       "await fetch(",
