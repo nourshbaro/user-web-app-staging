@@ -6,7 +6,7 @@ import {
   ProfileDetailModal,
   type ProfileDetailState,
 } from "@/components/ProfileDetailModal";
-import { Button, Empty, Input, Loading, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
+import { Button, Input, Loading, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { formatMoney } from "@/lib/format";
@@ -84,7 +84,6 @@ export default function ProfileScreen() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [detail, setDetail] = useState<DetailState>(null);
-  const [error, setError] = useState<string | null>(null);
   const [activeList, setActiveList] = useState<"orders" | "tickets">("orders");
   const [renderedOwnerKey, setRenderedOwnerKey] = useState<string | null>(null);
   const requestIdRef = useRef(0);
@@ -103,7 +102,6 @@ export default function ProfileScreen() {
     setTicketsTotal(0);
     setRenderedOwnerKey(null);
     setDetail(null);
-    setError(null);
     setLoading(false);
     setRefreshing(false);
     setDetailLoading(false);
@@ -132,7 +130,6 @@ export default function ProfileScreen() {
     setTicketsTotal(0);
     setRenderedOwnerKey(null);
     setLoading(true);
-    setError(null);
     try {
       const [nextOrders, nextTickets] = await Promise.all([profileService.orders(), profileService.tickets()]);
       if (
@@ -157,7 +154,13 @@ export default function ProfileScreen() {
         requestId !== requestIdRef.current
         || cacheGeneration !== getUserScopedCacheGeneration()
       ) return;
-      setError(err instanceof Error ? err.message : "Could not load profile.");
+      const message =
+        err instanceof Error ? err.message : "Could not load profile.";
+      toast.showToast({
+        variant: "error",
+        title: "Could not load profile",
+        message,
+      });
     } finally {
       if (
         requestId === requestIdRef.current
@@ -167,7 +170,7 @@ export default function ProfileScreen() {
         setRefreshing(false);
       }
     }
-  }, [activeOwnerKey]);
+  }, [activeOwnerKey, toast]);
 
   useFocusEffect(useCallback(() => {
     void refreshAuth();
@@ -178,8 +181,19 @@ export default function ProfileScreen() {
   }, [activeOwnerKey, load, refreshAuth]));
 
   const logout = async () => {
-    await auth.logout();
-    router.replace("/");
+    try {
+      await auth.logout();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not log out.";
+      toast.showToast({
+        variant: "error",
+        title: "Could not log out",
+        message,
+      });
+    } finally {
+      router.replace("/");
+    }
   };
 
   const openOrder = async (order: Order & PortalItem) => {
@@ -187,14 +201,19 @@ export default function ProfileScreen() {
     if (!id || !activeOwnerKey) return;
     const cacheGeneration = getUserScopedCacheGeneration();
     setDetailLoading(true);
-    setError(null);
     try {
       const item = await profileService.order(id);
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
       setDetail({ type: "order", title: `Order ${displayValue(order, ["order_code", "order_number", "id"], `#${id}`)}`, item, pdfId: String(id) });
     } catch (err) {
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
-      setError(err instanceof Error ? err.message : "Could not load order details.");
+      const message =
+        err instanceof Error ? err.message : "Could not load order details.";
+      toast.showToast({
+        variant: "error",
+        title: "Could not load order",
+        message,
+      });
     } finally {
       if (cacheGeneration === getUserScopedCacheGeneration()) {
         setDetailLoading(false);
@@ -207,7 +226,6 @@ export default function ProfileScreen() {
     if (!code || !activeOwnerKey) return;
     const cacheGeneration = getUserScopedCacheGeneration();
     setDetailLoading(true);
-    setError(null);
     try {
       const item = await profileService.ticket(code);
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
@@ -215,7 +233,13 @@ export default function ProfileScreen() {
       setDetail({ type: "ticket", title: `Ticket ${code}`, item, pdfId });
     } catch (err) {
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
-      setError(err instanceof Error ? err.message : "Could not load ticket details.");
+       const message =
+        err instanceof Error ? err.message : "Could not load ticket details.";
+      toast.showToast({
+        variant: "error",
+        title: "Could not load ticket",
+        message,
+      });
     } finally {
       if (cacheGeneration === getUserScopedCacheGeneration()) {
         setDetailLoading(false);
@@ -224,14 +248,18 @@ export default function ProfileScreen() {
   };
 
   const downloadPdf = async (orderId?: string) => {
-    if (!orderId || !activeOwnerKey) {
-      setError("Order number is required to download the PDF.");
+    if (!activeOwnerKey) return;
+    if (!orderId) {
+      toast.showToast({
+        variant: "error",
+        title: "Could not download PDF",
+        message: "Order number is required to download the PDF.",
+      });
       return;
     }
 
     const cacheGeneration = getUserScopedCacheGeneration();
     setDownloadingPdf(true);
-    setError(null);
     try {
       const pdfBytes = await profileService.orderPdf(orderId);
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
@@ -261,7 +289,13 @@ export default function ProfileScreen() {
       window.URL.revokeObjectURL(url);
     } catch (err) {
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
-      setError(err instanceof Error ? err.message : "Failed to download PDF.");
+      const message =
+        err instanceof Error ? err.message : "Failed to download PDF.";
+      toast.showToast({
+        variant: "error",
+        title: "Could not download PDF",
+        message,
+      });
     } finally {
       if (cacheGeneration === getUserScopedCacheGeneration()) {
         setDownloadingPdf(false);
@@ -335,7 +369,6 @@ export default function ProfileScreen() {
 
                 {loading ? <View style={local.fullWidth}><View style={local.inlineLoader}><ActivityIndicator color={theme.colors.primary} /></View></View> : null}
                 {detailLoading ? <Text style={[local.loadingText, local.fullWidth]}>Loading details...</Text> : null}
-                {error ? <View style={local.fullWidth}><Empty title="Profile error" detail={error} /></View> : null}
 
                 {isWide || activeList === "orders" ? (
                   <View style={[local.profilePanel, { width: panelWidth }]}>
@@ -501,7 +534,6 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
         return;
       }
       const nextMessage = err instanceof ApiError || err instanceof Error ? err.message : "Please try again.";
-      setMessage(nextMessage);
       toast.showToast({ variant: "error", title: "Unable to continue", message: nextMessage });
     } finally {
       submissionGuard.current.release();
@@ -520,7 +552,6 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
       toast.showToast({ variant: "success", title: "OTP sent", message: nextMessage });
     } catch (err) {
       const nextMessage = err instanceof Error ? err.message : "Unable to resend OTP.";
-      setMessage(nextMessage);
       toast.showToast({ variant: "error", title: "Could not resend OTP", message: nextMessage });
     } finally {
       setResending(false);
