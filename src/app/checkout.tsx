@@ -9,6 +9,12 @@ import { clearBluePaymentHandoff, createBluePaymentHandoff } from "@/lib/bluePay
 import { validateBluePaymentUrl } from "@/lib/bluePaymentRedirect";
 import { groupCartItems } from "@/lib/cartDisplay";
 import {
+  beginCaptureContextRequest,
+  invalidateCaptureContextRequestRefs,
+  releaseCaptureContextRetry,
+  shouldInitializeCaptureContext,
+} from "@/lib/captureContextRequestGuard";
+import {
   createCheckoutBilling,
   getActiveBillingForm,
   getActiveCaptureState,
@@ -101,6 +107,7 @@ export default function CheckoutScreen() {
   const [billingRequestState, setBillingRequestState] = useState<{ owner: string; status: "loading" | "ready" } | null>(null);
   const [loading, setLoading] = useState(false);
   const captureSessionRef = useRef<string | null>(null);
+  const captureRetrySessionRef = useRef<string | null>(null);
   const captureRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const billingRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const billingProfileRef = useRef<{ owner: string | null; name: string; email: string }>({
@@ -173,8 +180,14 @@ export default function CheckoutScreen() {
   );
 
   const loadCaptureContext = useCallback(async (sessionId: string, force = false) => {
-    if (!force && captureSessionRef.current === sessionId) return;
-    captureSessionRef.current = sessionId;
+    const started = beginCaptureContextRequest(
+      captureSessionRef,
+      captureRetrySessionRef,
+      sessionId,
+      force,
+    );
+    if (!started) return;
+
     const ticket = captureRequestAuthority.begin(sessionId);
 
     setCaptureState({ sessionId, status: "loading" });
@@ -192,6 +205,8 @@ export default function CheckoutScreen() {
         status: "error",
         error: err instanceof Error ? err.message : "Could not prepare card payment.",
       });
+    } finally {
+      releaseCaptureContextRetry(captureRetrySessionRef, sessionId, force);
     }
   }, [captureRequestAuthority]);
 
@@ -242,7 +257,11 @@ export default function CheckoutScreen() {
 
   useLayoutEffect(() => {
     captureRequestAuthority.invalidate(cart.sessionId);
-    if (captureSessionRef.current !== cart.sessionId) captureSessionRef.current = null;
+    invalidateCaptureContextRequestRefs(
+      captureSessionRef,
+      captureRetrySessionRef,
+      cart.sessionId,
+    );
   }, [captureRequestAuthority, cart.sessionId]);
 
   useLayoutEffect(() => {
@@ -251,7 +270,7 @@ export default function CheckoutScreen() {
 
   useEffect(() => {
     const sessionId = cart.sessionId;
-    if (!sessionId) return;
+    if (!shouldInitializeCaptureContext(paymentMethod, sessionId)) return;
 
     let active = true;
     void Promise.resolve().then(() => {
@@ -260,7 +279,7 @@ export default function CheckoutScreen() {
     return () => {
       active = false;
     };
-  }, [cart.sessionId, loadCaptureContext]);
+  }, [cart.sessionId, loadCaptureContext, paymentMethod]);
 
   useEffect(() => {
     if (!billingOwner) return;
@@ -291,6 +310,7 @@ export default function CheckoutScreen() {
       captureRequestAuthority.unmount();
       billingRequestAuthority.unmount();
       captureSessionRef.current = null;
+      captureRetrySessionRef.current = null;
     };
   }, [billingRequestAuthority, captureRequestAuthority]);
 
