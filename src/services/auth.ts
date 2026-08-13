@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { config } from "@/lib/config";
+import { normalizePaginatedProfileResult } from "@/lib/profilePortal";
 import {
   ApiError,
   ApiTransportError,
@@ -14,7 +15,7 @@ import {
   type PersistedAuthenticationValue,
 } from "@/services/api";
 import { storage } from "@/lib/storage";
-import type { User } from "@/types";
+import type { Order, User } from "@/types";
 
 const USER_KEY = "lfa_portal_user";
 export type OtpTarget = string | { userId?: string | null; email?: string | null };
@@ -190,13 +191,17 @@ export const profileService = {
     return unwrapData(await apiRequest("/portal/billing-info"));
   },
   async orders() {
-    return unwrapData(await apiRequest("/portal/orders")) as any[];
+    return normalizePaginatedProfileResult<Order>(
+      await apiRequest("/portal/orders"),
+    );
   },
   async order(orderId: string | number) {
     return unwrapData(await apiRequest(`/portal/orders/${encodeURIComponent(String(orderId))}`)) as Record<string, unknown>;
   },
   async tickets() {
-    return unwrapData(await apiRequest("/portal/tickets")) as any[];
+    return normalizePaginatedProfileResult<Record<string, unknown>>(
+      await apiRequest("/portal/tickets"),
+    );
   },
   async ticket(ticketCode: string | number) {
     return unwrapData(await apiRequest(`/portal/tickets/${encodeURIComponent(String(ticketCode))}`)) as Record<string, unknown>;

@@ -6,6 +6,10 @@ import { Button, Empty, Input, Loading, Screen, useResponsive, useTheme, type Th
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { formatMoney } from "@/lib/format";
+import {
+  getTicketMatchName,
+  getTicketOrderReference,
+} from "@/lib/profilePortal";
 import { ApiError } from "@/services/api";
 import { authService, type OtpTarget } from "@/services/auth";
 import { profileService } from "@/services/auth";
@@ -20,7 +24,12 @@ import type { Order } from "@/types";
 type PortalItem = Record<string, any>;
 type DetailState = { type: "order" | "ticket"; title: string; item: PortalItem; pdfId?: string } | null;
 type GuestAuthMode = "login" | "register" | "otp";
-type ProfileData = { orders: Order[]; tickets: PortalItem[] };
+type ProfileData = {
+  orders: Order[];
+  ordersTotal: number;
+  tickets: PortalItem[];
+  ticketsTotal: number;
+};
 const profileCache = new UserScopedCache<ProfileData>();
 
 const readString = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
@@ -63,7 +72,9 @@ export default function ProfileScreen() {
   const isWide = responsive.width >= 760;
   const panelWidth: DimensionValue = isWide ? (responsive.contentWidth - 14) / 2 : "100%";
   const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersTotal, setOrdersTotal] = useState(0);
   const [tickets, setTickets] = useState<PortalItem[]>([]);
+  const [ticketsTotal, setTicketsTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -77,11 +88,15 @@ export default function ProfileScreen() {
   const refreshAuth = auth.refreshAuth;
   const visibleOrders = renderedOwnerKey === activeOwnerKey ? orders : [];
   const visibleTickets = renderedOwnerKey === activeOwnerKey ? tickets : [];
+  const visibleOrdersTotal = renderedOwnerKey === activeOwnerKey ? ordersTotal : 0;
+  const visibleTicketsTotal = renderedOwnerKey === activeOwnerKey ? ticketsTotal : 0;
 
   useEffect(() => onUserScopedCacheInvalidated(() => {
     requestIdRef.current += 1;
     setOrders([]);
+    setOrdersTotal(0);
     setTickets([]);
+    setTicketsTotal(0);
     setRenderedOwnerKey(null);
     setDetail(null);
     setError(null);
@@ -100,13 +115,17 @@ export default function ProfileScreen() {
     const cached = force ? null : profileCache.get(ownerKey);
     if (cached) {
       setOrders(cached.orders);
+      setOrdersTotal(cached.ordersTotal);
       setTickets(cached.tickets);
+      setTicketsTotal(cached.ticketsTotal);
       setRenderedOwnerKey(ownerKey);
       return;
     }
 
     setOrders([]);
+    setOrdersTotal(0);
     setTickets([]);
+    setTicketsTotal(0);
     setRenderedOwnerKey(null);
     setLoading(true);
     setError(null);
@@ -117,13 +136,17 @@ export default function ProfileScreen() {
         || cacheGeneration !== getUserScopedCacheGeneration()
       ) return;
 
-      const nextData = {
-        orders: Array.isArray(nextOrders) ? nextOrders : [],
-        tickets: Array.isArray(nextTickets) ? nextTickets : [],
+      const nextData: ProfileData = {
+        orders: nextOrders.items,
+        ordersTotal: nextOrders.total,
+        tickets: nextTickets.items,
+        ticketsTotal: nextTickets.total,
       };
       profileCache.set(ownerKey, nextData);
       setOrders(nextData.orders);
+      setOrdersTotal(nextData.ordersTotal);
       setTickets(nextData.tickets);
+      setTicketsTotal(nextData.ticketsTotal);
       setRenderedOwnerKey(ownerKey);
     } catch (err) {
       if (
@@ -256,115 +279,120 @@ export default function ProfileScreen() {
           refreshControl={auth.isAuthenticated ? <RefreshControl refreshing={refreshing} tintColor={theme.colors.primary} onRefresh={() => { setRefreshing(true); void load(true); }} /> : undefined}
         >
 
-        {!auth.isAuthenticated ? (
-          <View style={local.guestWrap}>
-            <GuestAuthForm onSignedIn={() => { toast.showToast({ variant: "success", title: "Signed in", message: "Welcome back." }); }} />
-          </View>
-        ) : (
-          <>
-            <View style={local.profileGrid}>
-              <View style={[local.profilePanel, { width: "100%" }]}>
-                <View style={[local.heroCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-                  <View style={local.heroTop}>
-                    <View style={local.identity}>
-                      <View
-                        style={[
-                          local.avatar,
-                          {
-                            backgroundColor: theme.isDark ? "#F8FAFC" : theme.colors.ink,
-                            borderColor: theme.isDark ? "rgba(255,255,255,0.14)" : theme.colors.line,
-                          },
-                        ]}
-                      >
-                        <Text style={[local.avatarText, { color: theme.isDark ? "#0F172A" : "#FFFFFF" }]}>
-                          {initials(auth.user?.name ?? auth.user?.email)}
-                        </Text>
-                      </View>
-                      <View style={local.identityText}>
-                        <Text style={local.eyebrow}>My account</Text>
-                        <Text style={[local.title, { color: theme.colors.ink }]} numberOfLines={1}>{auth.user?.name ?? "Supporter"}</Text>
-                      </View>
-                    </View>
-                    <Pressable onPress={() => void logout()} style={({ pressed }) => [local.logoutButton, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }, pressed && local.pressed]}>
-                      <Text style={[local.logoutText, { color: theme.colors.ink }]}>Logout</Text>
-                    </Pressable>
-                  </View>
-
-                  <Text style={[local.email, { color: theme.colors.secondary }]} numberOfLines={1}>{auth.user?.email}</Text>
-
-                  <View style={[local.statGrid, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
-                    <Pressable onPress={() => setActiveList("orders")} style={[local.statBox, !isWide && activeList === "orders" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
-                      <Text style={[local.statValue, { color: theme.colors.ink }]}>{visibleOrders.length}</Text>
-                      <Text style={[local.statLabel, { color: !isWide && activeList === "orders" ? theme.colors.primary : theme.colors.muted }]}>Orders</Text>
-                    </Pressable>
-                    <View style={[local.statDivider, { backgroundColor: theme.colors.line }]} />
-                    <Pressable onPress={() => setActiveList("tickets")} style={[local.statBox, !isWide && activeList === "tickets" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
-                      <Text style={[local.statValue, { color: theme.colors.ink }]}>{visibleTickets.length}</Text>
-                      <Text style={[local.statLabel, { color: !isWide && activeList === "tickets" ? theme.colors.primary : theme.colors.muted }]}>Tickets</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-
-              {loading ? <View style={local.fullWidth}><View style={local.inlineLoader}><ActivityIndicator color={theme.colors.primary} /></View></View> : null}
-              {detailLoading ? <Text style={[local.loadingText, local.fullWidth]}>Loading details...</Text> : null}
-              {error ? <View style={local.fullWidth}><Empty title="Profile error" detail={error} /></View> : null}
-
-              {isWide || activeList === "orders" ? (
-              <View style={[local.profilePanel, { width: panelWidth }]}>
-                <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-                  <View style={local.sectionHeader}>
-                    <Text style={[local.sectionTitle, { color: theme.colors.ink }]}>Orders</Text>
-                    <View style={local.countPill}><Text style={local.countText}>{visibleOrders.length}</Text></View>
-                  </View>
-                  {visibleOrders.length ? visibleOrders.map((order) => (
-                    <Pressable key={order.id} onPress={() => void openOrder(order as Order & PortalItem)} style={({ pressed }) => [local.listRow, { borderTopColor: theme.colors.line }, pressed && local.rowPressed]}>
-                      <View style={local.rowMain}>
-                        <View style={local.rowTitleLine}>
-                          <Text style={[local.rowTitle, { color: theme.colors.ink }]}>Order {displayValue(order as PortalItem, ["order_code", "order_number", "id"], `#${order.id}`)}</Text>
-                        </View>
-                        <Text style={[local.rowMeta, { color: theme.colors.secondary }]}>{formatMoney(order.total, order.currency ?? "USD")}</Text>
-                        <Text style={[local.rowSubMeta, { color: theme.colors.muted }]}>Paid {formatDateValue(displayValue(order as PortalItem, ["paid_at"], ""))}</Text>
-                      </View>
-                      <View style={local.rowSide}>
-                        <View style={local.viewPill}><Text style={local.viewPillText}>View</Text></View>
-                        <StatusPill status={order.status ?? "Pending"} />
-                      </View>
-                    </Pressable>
-                  )) : <Text style={[local.emptyText, { borderTopColor: theme.colors.line, color: theme.colors.muted }]}>No orders yet.</Text>}
-                </View>
-              </View>
-              ) : null}
-
-              {isWide || activeList === "tickets" ? (
-              <View style={[local.profilePanel, { width: panelWidth }]}>
-                <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-                  <View style={local.sectionHeader}>
-                    <Text style={[local.sectionTitle, { color: theme.colors.ink }]}>Tickets</Text>
-                    <View style={local.countPill}><Text style={local.countText}>{visibleTickets.length}</Text></View>
-                  </View>
-                  {visibleTickets.length ? visibleTickets.slice(0, 10).map((ticket, index) => (
-                    <Pressable key={ticket.id ?? ticket.ticket_code ?? index} onPress={() => void openTicket(ticket)} style={({ pressed }) => [local.listRow, { borderTopColor: theme.colors.line }, pressed && local.rowPressed]}>
-                      <View style={local.rowMain}>
-                        <View style={local.rowTitleLine}>
-                          <Text style={[local.rowTitle, { color: theme.colors.ink }]}>{displayValue(ticket, ["ticket_code", "code"], `Ticket ${index + 1}`)}</Text>
-                        </View>
-                        <Text style={[local.rowMeta, { color: theme.colors.secondary }]}>{ticket.match_title ?? ticket.match?.name ?? ticket.holder_name ?? "Match ticket"}</Text>
-                        <Text style={[local.rowSubMeta, { color: theme.colors.muted }]}>{ticket.zone?.name ?? ticket.seat?.label ?? ticket.order_code ?? "Tap for details"}</Text>
-                      </View>
-                      <View style={local.rowSide}>
-                        <View style={local.viewPill}><Text style={local.viewPillText}>View</Text></View>
-                        <StatusPill status={ticket.status ?? "Active"} />
-                      </View>
-                    </Pressable>
-                  )) : <Text style={[local.emptyText, { borderTopColor: theme.colors.line, color: theme.colors.muted }]}>No tickets yet.</Text>}
-                </View>
-              </View>
-              ) : null}
+          {!auth.isAuthenticated ? (
+            <View style={local.guestWrap}>
+              <GuestAuthForm onSignedIn={() => { toast.showToast({ variant: "success", title: "Signed in", message: "Welcome back." }); }} />
             </View>
-          </>
-        )}
-        <InfoSections />
+          ) : (
+            <>
+              <View style={local.profileGrid}>
+                <View style={[local.profilePanel, { width: "100%" }]}>
+                  <View style={[local.heroCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+                    <View style={local.heroTop}>
+                      <View style={local.identity}>
+                        <View
+                          style={[
+                            local.avatar,
+                            {
+                              backgroundColor: theme.isDark ? "#F8FAFC" : theme.colors.ink,
+                              borderColor: theme.isDark ? "rgba(255,255,255,0.14)" : theme.colors.line,
+                            },
+                          ]}
+                        >
+                          <Text style={[local.avatarText, { color: theme.isDark ? "#0F172A" : "#FFFFFF" }]}>
+                            {initials(auth.user?.name ?? auth.user?.email)}
+                          </Text>
+                        </View>
+                        <View style={local.identityText}>
+                          <Text style={local.eyebrow}>My account</Text>
+                          <Text style={[local.title, { color: theme.colors.ink }]} numberOfLines={1}>{auth.user?.name ?? "Supporter"}</Text>
+                        </View>
+                      </View>
+                      <Pressable onPress={() => void logout()} style={({ pressed }) => [local.logoutButton, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }, pressed && local.pressed]}>
+                        <Text style={[local.logoutText, { color: theme.colors.ink }]}>Logout</Text>
+                      </Pressable>
+                    </View>
+
+                    <Text style={[local.email, { color: theme.colors.secondary }]} numberOfLines={1}>{auth.user?.email}</Text>
+
+                    <View style={[local.statGrid, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
+                      <Pressable onPress={() => setActiveList("orders")} style={[local.statBox, !isWide && activeList === "orders" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
+                        <Text style={[local.statValue, { color: theme.colors.ink }]}>{visibleOrdersTotal}</Text>
+                        <Text style={[local.statLabel, { color: !isWide && activeList === "orders" ? theme.colors.primary : theme.colors.muted }]}>Orders</Text>
+                      </Pressable>
+                      <View style={[local.statDivider, { backgroundColor: theme.colors.line }]} />
+                      <Pressable onPress={() => setActiveList("tickets")} style={[local.statBox, !isWide && activeList === "tickets" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
+                        <Text style={[local.statValue, { color: theme.colors.ink }]}>{visibleTicketsTotal}</Text>
+                        <Text style={[local.statLabel, { color: !isWide && activeList === "tickets" ? theme.colors.primary : theme.colors.muted }]}>Tickets</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+
+                {loading ? <View style={local.fullWidth}><View style={local.inlineLoader}><ActivityIndicator color={theme.colors.primary} /></View></View> : null}
+                {detailLoading ? <Text style={[local.loadingText, local.fullWidth]}>Loading details...</Text> : null}
+                {error ? <View style={local.fullWidth}><Empty title="Profile error" detail={error} /></View> : null}
+
+                {isWide || activeList === "orders" ? (
+                  <View style={[local.profilePanel, { width: panelWidth }]}>
+                    <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+                      <View style={local.sectionHeader}>
+                        <Text style={[local.sectionTitle, { color: theme.colors.ink }]}>Orders</Text>
+                        <View style={local.countPill}><Text style={local.countText}>{visibleOrdersTotal}</Text></View>
+                      </View>
+                      {visibleOrders.length ? visibleOrders.map((order) => (
+                        <Pressable key={order.id} onPress={() => void openOrder(order as Order & PortalItem)} style={({ pressed }) => [local.listRow, { borderTopColor: theme.colors.line }, pressed && local.rowPressed]}>
+                          <View style={local.rowMain}>
+                            <View style={local.rowTitleLine}>
+                              <Text style={[local.rowTitle, { color: theme.colors.ink }]}>Order {displayValue(order as PortalItem, ["order_code", "order_number", "id"], `#${order.id}`)}</Text>
+                            </View>
+                            <Text style={[local.rowMeta, { color: theme.colors.secondary }]}>{formatMoney(order.total, order.currency ?? "USD")}</Text>
+                            <Text style={[local.rowSubMeta, { color: theme.colors.muted }]}>Paid {formatDateValue(displayValue(order as PortalItem, ["paid_at"], ""))}</Text>
+                          </View>
+                          <View style={local.rowSide}>
+                            <View style={local.viewPill}><Text style={local.viewPillText}>View</Text></View>
+                            <StatusPill status={order.status ?? "Pending"} />
+                          </View>
+                        </Pressable>
+                      )) : <Text style={[local.emptyText, { borderTopColor: theme.colors.line, color: theme.colors.muted }]}>No orders yet.</Text>}
+                    </View>
+                  </View>
+                ) : null}
+
+                {isWide || activeList === "tickets" ? (
+                  <View style={[local.profilePanel, { width: panelWidth }]}>
+                    <View style={[local.sectionCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+                      <View style={local.sectionHeader}>
+                        <Text style={[local.sectionTitle, { color: theme.colors.ink }]}>Tickets</Text>
+                        <View style={local.countPill}><Text style={local.countText}>{visibleTicketsTotal}</Text></View>
+                      </View>
+                      {visibleTickets.length ? visibleTickets.slice(0, 10).map((ticket, index) => {
+                        const ticketMatchName = getTicketMatchName(ticket);
+                        const ticketOrderReference = getTicketOrderReference(ticket);
+
+                        return (
+                          <Pressable key={ticket.id ?? ticket.ticket_code ?? index} onPress={() => void openTicket(ticket)} style={({ pressed }) => [local.listRow, { borderTopColor: theme.colors.line }, pressed && local.rowPressed]}>
+                            <View style={local.rowMain}>
+                              <View style={local.rowTitleLine}>
+                                <Text style={[local.rowTitle, { color: theme.colors.ink }]}>{displayValue(ticket, ["ticket_code", "code"], `Ticket ${index + 1}`)}</Text>
+                              </View>
+                              <Text style={[local.rowMeta, { color: theme.colors.secondary }]}>Match: {ticketMatchName ?? "Unavailable"}</Text>
+                              <Text style={[local.rowSubMeta, { color: theme.colors.muted }]}>Order: {ticketOrderReference ?? "Unavailable"}</Text>
+                            </View>
+                            <View style={local.rowSide}>
+                              <View style={local.viewPill}><Text style={local.viewPillText}>View</Text></View>
+                              <StatusPill status={ticket.status ?? "Active"} />
+                            </View>
+                          </Pressable>
+                        );
+                      }) : <Text style={[local.emptyText, { borderTopColor: theme.colors.line, color: theme.colors.muted }]}>No tickets yet.</Text>}
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            </>
+          )}
+          <InfoSections />
         </ScrollView>
       </View>
 
@@ -500,14 +528,14 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <View style={[local.authPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
       {mode !== "otp" ? (
-      <View style={[local.authTabs, { backgroundColor: theme.colors.panelSoft }]}>
-        <Pressable onPress={() => switchMode("login")} style={[local.authTab, mode === "login" && { backgroundColor: theme.colors.primary }]}>
-          <Text style={[local.authTabText, { color: mode === "login" ? "#FFFFFF" : theme.colors.secondary }]}>Login</Text>
-        </Pressable>
-        <Pressable onPress={() => switchMode("register")} style={[local.authTab, mode === "register" && { backgroundColor: theme.colors.primary }]}>
-          <Text style={[local.authTabText, { color: mode === "register" ? "#FFFFFF" : theme.colors.secondary }]}>Register</Text>
-        </Pressable>
-      </View>
+        <View style={[local.authTabs, { backgroundColor: theme.colors.panelSoft }]}>
+          <Pressable onPress={() => switchMode("login")} style={[local.authTab, mode === "login" && { backgroundColor: theme.colors.primary }]}>
+            <Text style={[local.authTabText, { color: mode === "login" ? "#FFFFFF" : theme.colors.secondary }]}>Login</Text>
+          </Pressable>
+          <Pressable onPress={() => switchMode("register")} style={[local.authTab, mode === "register" && { backgroundColor: theme.colors.primary }]}>
+            <Text style={[local.authTabText, { color: mode === "register" ? "#FFFFFF" : theme.colors.secondary }]}>Register</Text>
+          </Pressable>
+        </View>
       ) : null}
       {mode === "register" ? <Input label="Full name" value={name} onChangeText={setName} autoCapitalize="words" /> : null}
       {mode === "otp" ? (
@@ -579,7 +607,17 @@ function DetailModal({
   const theme = useTheme();
   const item = detail?.item;
   const normalized = detail?.type === "order" && isRecord(item?.order) ? item.order : item;
-  const entries = normalized ? Object.entries(normalized).filter(([key, value]) => shouldShowDetailField(key, value)) : [];
+  const ticketOrderReference = detail?.type === "ticket"
+    ? getTicketOrderReference(item)
+    : null;
+  const ticketMatchName = detail?.type === "ticket"
+    ? getTicketMatchName(item)
+    : null;
+  const entries = normalized
+    ? Object.entries(normalized).filter(([key, value]) =>
+      shouldShowDetailField(key, value)
+    )
+    : [];
   const items = Array.isArray(item?.items) ? item.items.filter(isRecord) : [];
   const tickets = Array.isArray(item?.tickets) ? item.tickets.filter(isRecord) : [];
 
@@ -610,6 +648,22 @@ function DetailModal({
 
           <ScrollView contentContainerStyle={local.detailContent} showsVerticalScrollIndicator={false}>
             {detail?.type === "ticket" && typeof item?.qr_image === "string" ? <QrImage value={item.qr_image} /> : null}
+
+            {detail?.type === "ticket" && ticketOrderReference ? (
+              <DetailField
+                fieldKey="order_code"
+                label="Order"
+                value={ticketOrderReference}
+              />
+            ) : null}
+
+            {detail?.type === "ticket" && ticketMatchName ? (
+              <DetailField
+                fieldKey="match"
+                label="Match"
+                value={ticketMatchName}
+              />
+            ) : null}
 
             {entries.map(([key, value]) => (
               <DetailField key={key} fieldKey={key} label={labelize(key)} value={value} />
@@ -786,549 +840,549 @@ function useProfileStyles() {
 
 function createProfileStyles(colors: ThemeColors) {
   return StyleSheet.create({
-  shell: {
-    flex: 1,
-    alignSelf: "center",
-  },
-  scroll: {
-    width: "100%",
-  },
-  content: {
-    alignSelf: "center",
-    width: "100%",
-    gap: 14,
-    paddingBottom: 32,
-    paddingTop: 4,
-  },
-  guestWrap: {
-    gap: 12,
-  },
-  authPanel: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
-    padding: 16,
-    gap: 12,
-  },
-  authTabs: {
-    flexDirection: "row",
-    borderRadius: 8,
-    backgroundColor: colors.panelSoft,
-    padding: 4,
-    gap: 4,
-  },
-  authTab: {
-    flex: 1,
-    minHeight: 38,
-    borderRadius: 6,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  authTabActive: {
-    backgroundColor: colors.primary,
-  },
-  authTabText: {
-    color: colors.secondary,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  authTabTextActive: {
-    color: "#FFFFFF",
-  },
-  message: {
-    color: colors.secondary,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  otpInput: {
-    textAlign: "center",
-    fontSize: 20,
-    fontWeight: "800",
-    letterSpacing: 8,
-  },
-  footerText: {
-    color: colors.secondary,
-    textAlign: "center",
-    fontSize: 14,
-  },
-  footerLink: {
-    color: colors.primary,
-    fontWeight: "900",
-  },
-  infoSections: {
-    gap: 8,
-  },
-  infoRow: {
-    minHeight: 52,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panel,
-    justifyContent: "center",
-    paddingHorizontal: 14,
-  },
-  infoTitle: {
-    color: colors.ink,
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  profileGrid: {
-    width: "100%",
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 14,
-    alignItems: "flex-start",
-  },
-  profilePanel: {
-    minWidth: 0,
-  },
-  fullWidth: {
-    width: "100%",
-  },
-  heroCard: {
-    overflow: "hidden",
-    borderRadius: 24,
-    backgroundColor: colors.panel,
-    borderWidth: 1,
-    borderColor: "rgba(219,224,232,0.95)",
-    padding: 18,
-    gap: 16,
-    shadowColor: colors.ink,
-    shadowOpacity: 0.1,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 4,
-  },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  identity: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 18,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.ink,
-  },
-  avatarText: {
-    color: "#FFFFFF",
-    fontSize: 17,
-    fontWeight: "900",
-  },
-  identityText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 11,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-  },
-  title: {
-    color: colors.ink,
-    fontSize: 25,
-    fontWeight: "900",
-    lineHeight: 31,
-  },
-  email: {
-    color: colors.secondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  logoutButton: {
-    minHeight: 40,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panelSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 14,
-  },
-  logoutText: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  pressed: {
-    opacity: 0.78,
-  },
-  statGrid: {
-    minHeight: 72,
-    borderRadius: 18,
-    backgroundColor: colors.panelSoft,
-    borderWidth: 1,
-    borderColor: colors.line,
-    flexDirection: "row",
-    alignItems: "center",
-    overflow: "hidden",
-  },
-  statBox: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 3,
-    alignSelf: "stretch",
-  },
-  statDivider: {
-    width: 1,
-    alignSelf: "stretch",
-    backgroundColor: colors.line,
-  },
-  statValue: {
-    color: colors.ink,
-    fontSize: 24,
-    fontWeight: "900",
-  },
-  statLabel: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-  },
-  inlineLoader: {
-    minHeight: 48,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loadingText: {
-    color: colors.muted,
-    fontSize: 13,
-    textAlign: "center",
-    fontWeight: "700",
-  },
-  sectionCard: {
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.96)",
-    borderWidth: 1,
-    borderColor: colors.line,
-    padding: 16,
-    gap: 10,
-    shadowColor: colors.ink,
-    shadowOpacity: 0.07,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingBottom: 4,
-  },
-  sectionTitle: {
-    color: colors.ink,
-    fontSize: 20,
-    fontWeight: "900",
-  },
-  countPill: {
-    minWidth: 28,
-    height: 28,
-    borderRadius: 14,
-    paddingHorizontal: 9,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(200,16,46,0.08)",
-  },
-  countText: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  listRow: {
-    minHeight: 72,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    paddingTop: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  rowPressed: {
-    opacity: 0.72,
-  },
-  rowMain: {
-    flex: 1,
-    minWidth: 0,
-    gap: 4,
-  },
-  rowSide: {
-    width: 76,
-    alignItems: "flex-end",
-    justifyContent: "center",
-    gap: 8,
-  },
-  rowTitleLine: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  rowTitle: {
-    flex: 1,
-    color: colors.ink,
-    fontSize: 15,
-    fontWeight: "800",
-  },
-  viewPill: {
-    borderRadius: 999,
-    backgroundColor: "rgba(200,16,46,0.08)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    minWidth: 52,
-    alignItems: "center",
-  },
-  viewPillText: {
-    color: colors.primary,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  rowMeta: {
-    color: colors.secondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "700",
-  },
-  rowSubMeta: {
-    color: colors.muted,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "rgba(200,16,46,0.08)",
-    minWidth: 52,
-    alignItems: "center",
-  },
-  statusPillSuccess: {
-    backgroundColor: "rgba(0,122,61,0.11)",
-  },
-  statusPillWarning: {
-    backgroundColor: "rgba(200,168,75,0.16)",
-  },
-  statusText: {
-    color: colors.primaryDark,
-    fontSize: 11,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  statusTextSuccess: {
-    color: colors.green,
-  },
-  statusTextWarning: {
-    color: "#8A6A1D",
-  },
-  emptyText: {
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    color: colors.muted,
-    fontSize: 14,
-    lineHeight: 20,
-    paddingTop: 12,
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(21,26,44,0.48)",
-  },
-  modalSheet: {
-    maxHeight: "88%",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    backgroundColor: colors.panel,
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 8,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
-    paddingBottom: 14,
-  },
-  modalTitleWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  modalEyebrow: {
-    color: colors.primary,
-    fontSize: 11,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 0.7,
-  },
-  modalTitle: {
-    color: colors.ink,
-    fontSize: 21,
-    fontWeight: "900",
-    lineHeight: 27,
-  },
-  modalActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  pdfButton: {
-    minHeight: 38,
-    borderRadius: 13,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 13,
-  },
-  pdfText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  buttonDisabled: {
-    opacity: 0.58,
-  },
-  closeButton: {
-    minHeight: 38,
-    borderRadius: 13,
-    backgroundColor: colors.panelSoft,
-    borderWidth: 1,
-    borderColor: colors.line,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 12,
-  },
-  closeText: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  detailContent: {
-    gap: 10,
-    paddingVertical: 14,
-    paddingBottom: 28,
-  },
-  detailField: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panelSoft,
-    padding: 12,
-    gap: 5,
-  },
-  detailLabel: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  detailValue: {
-    color: colors.ink,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: "700",
-  },
-  qrWrap: {
-    alignItems: "center",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.panelSoft,
-    padding: 14,
-    gap: 8,
-  },
-  qrWrapCompact: {
-    alignSelf: "center",
-    padding: 10,
-    marginBottom: 4,
-  },
-  qrImage: {
-    width: 190,
-    height: 190,
-    borderRadius: 12,
-    backgroundColor: "#FFFFFF",
-  },
-  qrImageCompact: {
-    width: 136,
-    height: 136,
-  },
-  qrCaption: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  qrEmpty: {
-    minHeight: 120,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: colors.line,
-    backgroundColor: colors.panelSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 14,
-  },
-  qrEmptyText: {
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  detailGroup: {
-    gap: 9,
-  },
-  detailGroupTitle: {
-    color: colors.ink,
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  nestedCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: "rgba(255,255,255,0.95)",
-    padding: 12,
-    gap: 8,
-  },
-  nestedRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  nestedLabel: {
-    flex: 0.42,
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  nestedValue: {
-    flex: 0.58,
-    color: colors.ink,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "700",
-    textAlign: "right",
-  },
+    shell: {
+      flex: 1,
+      alignSelf: "center",
+    },
+    scroll: {
+      width: "100%",
+    },
+    content: {
+      alignSelf: "center",
+      width: "100%",
+      gap: 14,
+      paddingBottom: 32,
+      paddingTop: 4,
+    },
+    guestWrap: {
+      gap: 12,
+    },
+    authPanel: {
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.panel,
+      padding: 16,
+      gap: 12,
+    },
+    authTabs: {
+      flexDirection: "row",
+      borderRadius: 8,
+      backgroundColor: colors.panelSoft,
+      padding: 4,
+      gap: 4,
+    },
+    authTab: {
+      flex: 1,
+      minHeight: 38,
+      borderRadius: 6,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    authTabActive: {
+      backgroundColor: colors.primary,
+    },
+    authTabText: {
+      color: colors.secondary,
+      fontSize: 13,
+      fontWeight: "900",
+    },
+    authTabTextActive: {
+      color: "#FFFFFF",
+    },
+    message: {
+      color: colors.secondary,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    otpInput: {
+      textAlign: "center",
+      fontSize: 20,
+      fontWeight: "800",
+      letterSpacing: 8,
+    },
+    footerText: {
+      color: colors.secondary,
+      textAlign: "center",
+      fontSize: 14,
+    },
+    footerLink: {
+      color: colors.primary,
+      fontWeight: "900",
+    },
+    infoSections: {
+      gap: 8,
+    },
+    infoRow: {
+      minHeight: 52,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.panel,
+      justifyContent: "center",
+      paddingHorizontal: 14,
+    },
+    infoTitle: {
+      color: colors.ink,
+      fontSize: 15,
+      fontWeight: "900",
+    },
+    profileGrid: {
+      width: "100%",
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 14,
+      alignItems: "flex-start",
+    },
+    profilePanel: {
+      minWidth: 0,
+    },
+    fullWidth: {
+      width: "100%",
+    },
+    heroCard: {
+      overflow: "hidden",
+      borderRadius: 24,
+      backgroundColor: colors.panel,
+      borderWidth: 1,
+      borderColor: "rgba(219,224,232,0.95)",
+      padding: 18,
+      gap: 16,
+      shadowColor: colors.ink,
+      shadowOpacity: 0.1,
+      shadowRadius: 22,
+      shadowOffset: { width: 0, height: 12 },
+      elevation: 4,
+    },
+    heroTop: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    identity: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+    },
+    avatar: {
+      width: 52,
+      height: 52,
+      borderRadius: 18,
+      borderWidth: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: colors.ink,
+    },
+    avatarText: {
+      color: "#FFFFFF",
+      fontSize: 17,
+      fontWeight: "900",
+    },
+    identityText: {
+      flex: 1,
+      minWidth: 0,
+    },
+    eyebrow: {
+      color: colors.primary,
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+      letterSpacing: 0.6,
+    },
+    title: {
+      color: colors.ink,
+      fontSize: 25,
+      fontWeight: "900",
+      lineHeight: 31,
+    },
+    email: {
+      color: colors.secondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    logoutButton: {
+      minHeight: 40,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.panelSoft,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 14,
+    },
+    logoutText: {
+      color: colors.ink,
+      fontSize: 13,
+      fontWeight: "900",
+    },
+    pressed: {
+      opacity: 0.78,
+    },
+    statGrid: {
+      minHeight: 72,
+      borderRadius: 18,
+      backgroundColor: colors.panelSoft,
+      borderWidth: 1,
+      borderColor: colors.line,
+      flexDirection: "row",
+      alignItems: "center",
+      overflow: "hidden",
+    },
+    statBox: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 3,
+      alignSelf: "stretch",
+    },
+    statDivider: {
+      width: 1,
+      alignSelf: "stretch",
+      backgroundColor: colors.line,
+    },
+    statValue: {
+      color: colors.ink,
+      fontSize: 24,
+      fontWeight: "900",
+    },
+    statLabel: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: "800",
+      textTransform: "uppercase",
+      letterSpacing: 0.6,
+    },
+    inlineLoader: {
+      minHeight: 48,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    loadingText: {
+      color: colors.muted,
+      fontSize: 13,
+      textAlign: "center",
+      fontWeight: "700",
+    },
+    sectionCard: {
+      borderRadius: 22,
+      backgroundColor: "rgba(255,255,255,0.96)",
+      borderWidth: 1,
+      borderColor: colors.line,
+      padding: 16,
+      gap: 10,
+      shadowColor: colors.ink,
+      shadowOpacity: 0.07,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 3,
+    },
+    sectionHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingBottom: 4,
+    },
+    sectionTitle: {
+      color: colors.ink,
+      fontSize: 20,
+      fontWeight: "900",
+    },
+    countPill: {
+      minWidth: 28,
+      height: 28,
+      borderRadius: 14,
+      paddingHorizontal: 9,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "rgba(200,16,46,0.08)",
+    },
+    countText: {
+      color: colors.primary,
+      fontSize: 12,
+      fontWeight: "900",
+    },
+    listRow: {
+      minHeight: 72,
+      borderTopWidth: 1,
+      borderTopColor: colors.line,
+      paddingTop: 12,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    rowPressed: {
+      opacity: 0.72,
+    },
+    rowMain: {
+      flex: 1,
+      minWidth: 0,
+      gap: 4,
+    },
+    rowSide: {
+      width: 76,
+      alignItems: "flex-end",
+      justifyContent: "center",
+      gap: 8,
+    },
+    rowTitleLine: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    rowTitle: {
+      flex: 1,
+      color: colors.ink,
+      fontSize: 15,
+      fontWeight: "800",
+    },
+    viewPill: {
+      borderRadius: 999,
+      backgroundColor: "rgba(200,16,46,0.08)",
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      minWidth: 52,
+      alignItems: "center",
+    },
+    viewPillText: {
+      color: colors.primary,
+      fontSize: 11,
+      lineHeight: 14,
+      fontWeight: "900",
+      textTransform: "uppercase",
+    },
+    rowMeta: {
+      color: colors.secondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: "700",
+    },
+    rowSubMeta: {
+      color: colors.muted,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    statusPill: {
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      backgroundColor: "rgba(200,16,46,0.08)",
+      minWidth: 52,
+      alignItems: "center",
+    },
+    statusPillSuccess: {
+      backgroundColor: "rgba(0,122,61,0.11)",
+    },
+    statusPillWarning: {
+      backgroundColor: "rgba(200,168,75,0.16)",
+    },
+    statusText: {
+      color: colors.primaryDark,
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+    },
+    statusTextSuccess: {
+      color: colors.green,
+    },
+    statusTextWarning: {
+      color: "#8A6A1D",
+    },
+    emptyText: {
+      borderTopWidth: 1,
+      borderTopColor: colors.line,
+      color: colors.muted,
+      fontSize: 14,
+      lineHeight: 20,
+      paddingTop: 12,
+    },
+    modalOverlay: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: "rgba(21,26,44,0.48)",
+    },
+    modalSheet: {
+      maxHeight: "88%",
+      borderTopLeftRadius: 28,
+      borderTopRightRadius: 28,
+      backgroundColor: colors.panel,
+      paddingHorizontal: 18,
+      paddingTop: 18,
+      paddingBottom: 8,
+    },
+    modalHeader: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.line,
+      paddingBottom: 14,
+    },
+    modalTitleWrap: {
+      flex: 1,
+      minWidth: 0,
+    },
+    modalEyebrow: {
+      color: colors.primary,
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+      letterSpacing: 0.7,
+    },
+    modalTitle: {
+      color: colors.ink,
+      fontSize: 21,
+      fontWeight: "900",
+      lineHeight: 27,
+    },
+    modalActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    pdfButton: {
+      minHeight: 38,
+      borderRadius: 13,
+      backgroundColor: colors.primary,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 13,
+    },
+    pdfText: {
+      color: "#FFFFFF",
+      fontSize: 13,
+      fontWeight: "900",
+    },
+    buttonDisabled: {
+      opacity: 0.58,
+    },
+    closeButton: {
+      minHeight: 38,
+      borderRadius: 13,
+      backgroundColor: colors.panelSoft,
+      borderWidth: 1,
+      borderColor: colors.line,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 12,
+    },
+    closeText: {
+      color: colors.ink,
+      fontSize: 13,
+      fontWeight: "900",
+    },
+    detailContent: {
+      gap: 10,
+      paddingVertical: 14,
+      paddingBottom: 28,
+    },
+    detailField: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.panelSoft,
+      padding: 12,
+      gap: 5,
+    },
+    detailLabel: {
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    detailValue: {
+      color: colors.ink,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: "700",
+    },
+    qrWrap: {
+      alignItems: "center",
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.panelSoft,
+      padding: 14,
+      gap: 8,
+    },
+    qrWrapCompact: {
+      alignSelf: "center",
+      padding: 10,
+      marginBottom: 4,
+    },
+    qrImage: {
+      width: 190,
+      height: 190,
+      borderRadius: 12,
+      backgroundColor: "#FFFFFF",
+    },
+    qrImageCompact: {
+      width: 136,
+      height: 136,
+    },
+    qrCaption: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: "800",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    qrEmpty: {
+      minHeight: 120,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderStyle: "dashed",
+      borderColor: colors.line,
+      backgroundColor: colors.panelSoft,
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 14,
+    },
+    qrEmptyText: {
+      color: colors.muted,
+      fontSize: 13,
+      fontWeight: "800",
+    },
+    detailGroup: {
+      gap: 9,
+    },
+    detailGroupTitle: {
+      color: colors.ink,
+      fontSize: 15,
+      fontWeight: "900",
+    },
+    nestedCard: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: "rgba(255,255,255,0.95)",
+      padding: 12,
+      gap: 8,
+    },
+    nestedRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    nestedLabel: {
+      flex: 0.42,
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+    },
+    nestedValue: {
+      flex: 0.58,
+      color: colors.ink,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: "700",
+      textAlign: "right",
+    },
   });
 }

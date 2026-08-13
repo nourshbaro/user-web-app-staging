@@ -13,6 +13,7 @@ async function loadAuthService(apiModuleSource) {
   const reactNativeUrl = moduleUrl('export const Platform = { OS: "web" };');
   const configUrl = moduleUrl("export const config = { timeoutMs: 15000, apiBaseUrl: '' };");
   const storageUrl = moduleUrl("export const storage = { get: async () => null, set: async () => {}, remove: async () => {} };");
+  const profilePortalUrl = moduleUrl("export const normalizePaginatedProfileResult = (payload) => payload;");
   const apiUrl = moduleUrl(apiModuleSource);
   const source = await readFile(new URL("../services/auth.ts", import.meta.url), "utf8");
   const executable = ts.transpileModule(source, {
@@ -20,6 +21,7 @@ async function loadAuthService(apiModuleSource) {
   }).outputText
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)
+    .replace('from "@/lib/profilePortal"', `from ${JSON.stringify(profilePortalUrl)}`)
     .replace('from "@/lib/storage"', `from ${JSON.stringify(storageUrl)}`)
     .replace('from "@/services/api"', `from ${JSON.stringify(apiUrl)}`);
   const [authModule, apiModule] = await Promise.all([

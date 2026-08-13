@@ -167,6 +167,9 @@ async function createHarness({
     export const Platform = { OS: state.platform };
   `);
   const authorityUrl = toModuleUrl(transpile(authoritySource));
+  const profilePortalUrl = toModuleUrl(
+    "export const normalizePaginatedProfileResult = (payload) => payload;",
+  );
 
   const executableApi = transpile(apiSource)
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)
@@ -189,6 +192,7 @@ async function createHarness({
   const executableAuth = transpile(authSource)
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)
+    .replace('from "@/lib/profilePortal"', `from ${JSON.stringify(profilePortalUrl)}`)
     .replace('from "@/services/api"', `from ${JSON.stringify(apiUrl)}`)
     .replace('from "@/lib/storage"', `from ${JSON.stringify(storageUrl)}`)
     .replaceAll(
