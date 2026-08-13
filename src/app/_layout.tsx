@@ -47,11 +47,11 @@ function AppProviders() {
                 contentStyle: { backgroundColor: theme.colors.bg },
               }}
             >
-              <Stack.Screen name="index" options={{ headerShown: false }} />
-              <Stack.Screen name="matches" options={{ headerShown: false }} />
-              <Stack.Screen name="tournament" options={{ headerShown: false }} />
+              <Stack.Screen name="index" options={{ headerShown: false, animation: "none" }} />
+              <Stack.Screen name="matches" options={{ headerShown: false, animation: "none" }} />
+              <Stack.Screen name="tournament" options={{ headerShown: false, animation: "none" }} />
               <Stack.Screen name="auth" options={{ headerShown: false }} />
-              <Stack.Screen name="profile" options={{ headerShown: false }} />
+              <Stack.Screen name="profile" options={{ headerShown: false, animation: "none" }} />
               <Stack.Screen name="cart" options={{ headerShown: false }} />
               <Stack.Screen name="checkout" options={{ headerShown: false }} />
               <Stack.Screen name="match/[id]" options={{ headerShown: false }} />
