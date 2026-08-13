@@ -7,13 +7,13 @@ const componentSource = await readFile(
   "utf8",
 );
 
-test("closed phone-country selector displays the country name before its calling code", () => {
+test("closed phone-country selector displays the ISO code before its calling code", () => {
   assert.match(
     componentSource,
-    /styles\.countryCode[\s\S]*?\{phoneCountryName\}[\s\S]*?styles\.callingCode/,
+    /styles\.countryCode[\s\S]*?\{value\.phoneCountry\}[\s\S]*?styles\.callingCode[\s\S]*?\+\{callingCode\}/,
   );
   assert.doesNotMatch(
     componentSource,
-    /styles\.countryCode[\s\S]{0,200}?\{value\.phoneCountry\}/,
+    /styles\.countryCode[\s\S]{0,200}?\{phoneCountryName\}/,
   );
 });
