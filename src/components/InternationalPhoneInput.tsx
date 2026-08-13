@@ -97,7 +97,7 @@ export function InternationalPhoneInput({
                         numberOfLines={1}
                         style={[styles.countryCode, { color: theme.colors.ink }]}
                     >
-                        {value.phoneCountry}
+                        {callingCode}
                     </Text>
                     <Text
                         numberOfLines={1}
