@@ -22,6 +22,7 @@ import {
   type CaptureState,
 } from "@/lib/checkoutOwnership";
 import { checkoutResultRouteParams, parseCheckoutResultParams } from "@/lib/checkoutResultParams";
+import { createCheckoutSubmissionAuthority } from "@/lib/checkoutSubmissionAuthority";
 import { config } from "@/lib/config";
 import { formatMoney, minutesSeconds } from "@/lib/format";
 import {
@@ -32,6 +33,7 @@ import {
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import { profileService } from "@/services/auth";
 import { checkoutService } from "@/services/checkout";
+import type { CartSessionTicket } from "@/lib/cartSessionAuthority";
 import type { CheckoutSubmitRequest } from "@/types";
 import { router } from "expo-router";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -115,6 +117,10 @@ export default function CheckoutScreen() {
     name: auth.user?.name ?? "",
     email: auth.user?.email ?? "",
   });
+  const checkoutSubmissionAuthority = useMemo(
+    () => createCheckoutSubmissionAuthority(),
+    [],
+  )
   const submitInFlightRef = useRef(false);
   const blueHandoffStartedRef = useRef(false);
   const billingOwner = auth.isReady && auth.isAuthenticated ? auth.userCacheKey : null;
@@ -297,25 +303,24 @@ export default function CheckoutScreen() {
     resetRouter.dismissAll?.();
   };
 
-  const completeCheckout = async (resultParams: ReturnType<typeof checkoutResultRouteParams>) => {
-    await cart.clearCart();
-    dismissAllRoutes();
-    router.replace({ pathname: "/checkout/success", params: resultParams });
-  };
-
   useEffect(() => {
     captureRequestAuthority.mount();
     billingRequestAuthority.mount();
+    checkoutSubmissionAuthority.mount();
     return () => {
       captureRequestAuthority.unmount();
       billingRequestAuthority.unmount();
+      checkoutSubmissionAuthority.unmount();
       captureSessionRef.current = null;
       captureRetrySessionRef.current = null;
     };
-  }, [billingRequestAuthority, captureRequestAuthority]);
+  }, [billingRequestAuthority, captureRequestAuthority, checkoutSubmissionAuthority]);
 
   const submit = async (transientToken?: string) => {
     if (!cart.sessionId || submitInFlightRef.current || blueHandoffStartedRef.current) return;
+
+    const cartSessionTicket = cart.captureCartSession();
+    if (!cartSessionTicket) return;
 
     const missingHolder = ticketSlots.find((slot) => !holderNames[slot.key]?.trim());
     if (missingHolder) {
@@ -354,6 +359,11 @@ export default function CheckoutScreen() {
       return;
     }
 
+    const submissionTicket = checkoutSubmissionAuthority.begin(
+      cartSessionTicket.sessionId as string,
+    );
+    let publicationCartTicket: CartSessionTicket = cartSessionTicket;
+
     try {
       submitInFlightRef.current = true;
       setLoading(true);
@@ -364,21 +374,41 @@ export default function CheckoutScreen() {
       }, {});
 
       const response = await checkoutService.submit({
-        checkout_session_id: cart.sessionId,
+        checkout_session_id: submissionTicket.sessionId,
         billing: checkoutBilling,
         tickets_by_match: ticketsByMatch,
         payment_method: paymentMethod,
         ...(transientToken ? { payment: { transient_token: transientToken } } : {}),
       });
 
+      if (
+        !checkoutSubmissionAuthority.isCurrent(submissionTicket)
+        || !cart.isCartSessionCurrent(cartSessionTicket)
+      ) return;
+
       if (paymentMethod === "blue") {
-        const validatedUrl = validateBluePaymentUrl(response.payment?.payment_url, config.bluePaymentAllowedOrigin);
+        const validatedUrl = validateBluePaymentUrl(
+          response.payment?.payment_url,
+          config.bluePaymentAllowedOrigin,
+        );
+
+        if (Platform.OS === "web" && typeof window === "undefined") {
+          throw new Error("Blue payment navigation is unavailable.");
+        }
+
+        const clearedCartTicket = await cart.clearCartIfSession(cartSessionTicket);
+        if (!clearedCartTicket) return;
+        publicationCartTicket = clearedCartTicket;
+
+        if (
+          !checkoutSubmissionAuthority.isCurrent(submissionTicket)
+          || !cart.isCartSessionCurrent(clearedCartTicket)
+        ) return;
+
         blueHandoffStartedRef.current = true;
 
         if (Platform.OS === "web") {
           try {
-            await cart.clearCart();
-            if (typeof window === "undefined") throw new Error("Blue payment navigation is unavailable.");
             window.location.assign(validatedUrl);
           } catch (error) {
             blueHandoffStartedRef.current = false;
@@ -389,9 +419,11 @@ export default function CheckoutScreen() {
 
         const handoffId = createBluePaymentHandoff(validatedUrl);
         try {
-          await cart.clearCart();
           dismissAllRoutes();
-          router.replace({ pathname: "/checkout/blue/payment", params: { handoff: handoffId } });
+          router.replace({
+            pathname: "/checkout/blue/payment",
+            params: { handoff: handoffId },
+          });
         } catch (error) {
           clearBluePaymentHandoff(handoffId);
           blueHandoffStartedRef.current = false;
@@ -411,17 +443,40 @@ export default function CheckoutScreen() {
           ?? response.payment?.payment_reference,
         status: response.status ?? response.payment?.status,
       }));
-      await completeCheckout(resultParams);
+
+      if (
+        !checkoutSubmissionAuthority.isCurrent(submissionTicket)
+        || !cart.isCartSessionCurrent(cartSessionTicket)
+      ) return;
+
+      const clearedCartTicket = await cart.clearCartIfSession(cartSessionTicket);
+      if (!clearedCartTicket) return;
+      publicationCartTicket = clearedCartTicket;
+
+      if (
+        !checkoutSubmissionAuthority.isCurrent(submissionTicket)
+        || !cart.isCartSessionCurrent(clearedCartTicket)
+      ) return;
+
+      dismissAllRoutes();
+      router.replace({ pathname: "/checkout/success", params: resultParams });
     } catch (err) {
-      toast.showToast({
-        variant: "error",
-        title: "Checkout failed",
-        message: err instanceof Error ? err.message : "Please try again.",
-        duration: 6200,
-      });
+      if (
+        checkoutSubmissionAuthority.isCurrent(submissionTicket)
+        && cart.isCartSessionCurrent(publicationCartTicket)
+      ) {
+        toast.showToast({
+          variant: "error",
+          title: "Checkout failed",
+          message: err instanceof Error ? err.message : "Please try again.",
+          duration: 6200,
+        });
+      }
     } finally {
-      submitInFlightRef.current = false;
-      setLoading(false);
+      if (checkoutSubmissionAuthority.finish(submissionTicket)) {
+        submitInFlightRef.current = false;
+        setLoading(false);
+      }
     }
   };
 
@@ -585,9 +640,9 @@ export default function CheckoutScreen() {
                         !ticketSlots.length
                       }
                       onPress={() => void submit()}
-                    />                  ) : loading ? (
-                    <Text style={theme.styles.muted}>Confirming your order...</Text>
-                  ) : null}
+                    />) : loading ? (
+                      <Text style={theme.styles.muted}>Confirming your order...</Text>
+                    ) : null}
                   {/* {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null} */}
                 </Card>
               </View>
