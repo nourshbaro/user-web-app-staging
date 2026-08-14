@@ -14,7 +14,7 @@
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
-        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
+        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "http://161.97.169.240:3015",
         "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
       }
     },
@@ -27,7 +27,7 @@
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
-        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
+        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "http://161.97.169.240:3015",
         "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
       }
     },
@@ -40,7 +40,7 @@
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
-        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
+        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "http://161.97.169.240:3015",
         "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
       }
     },
@@ -52,7 +52,7 @@
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
         "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://api.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
-        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "https://payment.bluedfi.com",
+        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "http://161.97.169.240:3015",
         "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
       },
       "android": {

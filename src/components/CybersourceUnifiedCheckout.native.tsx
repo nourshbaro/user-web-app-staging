@@ -278,7 +278,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
         ) : null}
       </View>
 
-      <Text style={[local.footer, { color: theme.colors.muted }]}>Payments processed securely by Cybersource</Text>
+      <Text style={[local.footer, { color: theme.colors.muted }]}>Payments processed securely</Text>
     </View>
   );
 }

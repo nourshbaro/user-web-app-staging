@@ -3,13 +3,17 @@
     "name": "LFA Ticketing",
     "slug": "lfa-app",
     "owner": "jasquare",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "default",
     "icon": "./assets/images/lfa-app-icon.png",
     "scheme": "lfa-app",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/images/lfa-app-icon-ios.png"
+      "icon": "./assets/images/lfa-app-icon-ios.png",
+      "bundleIdentifier": "com.lfamatrixvert.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "icon": "./assets/images/lfa-app-icon-android.png",
