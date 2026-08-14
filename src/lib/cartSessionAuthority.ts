@@ -20,6 +20,9 @@ export function createCartSessionAuthority() {
     capture() {
       return sessionId === null ? null : currentTicket();
     },
+    captureCurrent() {
+      return currentTicket();
+    },
     replace(nextSessionId: string | null) {
       generation += 1;
       sessionId = nextSessionId;
@@ -44,6 +47,33 @@ export function createCartSessionAuthority() {
 }
 
 export type CartSessionAuthority = ReturnType<typeof createCartSessionAuthority>;
+
+export async function publishCartSessionIfCurrent({
+  authority,
+  expected,
+  persist,
+  canPublish,
+  publish,
+}: {
+  authority: CartSessionAuthority;
+  expected: CartSessionTicket;
+  persist: () => Promise<void>;
+  canPublish: () => boolean;
+  publish: () => void;
+}) {
+  if (!canPublish() || !authority.isCurrent(expected)) return false;
+
+  return authority.enqueuePersistence(async () => {
+    if (!canPublish() || !authority.isCurrent(expected)) return false;
+
+    await persist();
+
+    if (!canPublish() || !authority.isCurrent(expected)) return false;
+
+    publish();
+    return true;
+  });
+}
 
 export async function clearCartSessionIfCurrent({
   authority,

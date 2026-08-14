@@ -7,9 +7,11 @@ import {
   serializePersistedCartSession,
 } from "@/lib/cartPersistence";
 import { classifyCartRefreshFailure, createCartRefreshGuard } from "@/lib/cartRefreshPolicy";
+import { createCartOperationQueue } from "@/lib/cartOperationQueue";
 import {
   clearCartSessionIfCurrent,
   createCartSessionAuthority,
+  publishCartSessionIfCurrent,
   type CartSessionTicket,
 } from "@/lib/cartSessionAuthority";
 import { addWithSessionRecovery, createSingleFlight } from "@/lib/cartSessionRecovery";
@@ -62,13 +64,28 @@ export function CartProvider({ children }: PropsWithChildren) {
   const addMutationGuardRef = useRef(createSingleFlight());
   const mountedRef = useRef(true);
   const sessionAuthorityRef = useRef(createCartSessionAuthority());
+  const [operationQueue] = useState(() => createCartOperationQueue(setLoading));
 
-  const persistAuthoritativeCartSession = useCallback(
-    (response: Awaited<ReturnType<typeof cartService.get>>) => {
-      const persisted = serializePersistedCartSession(response.checkout_session_id, response.expires_at);
-      return sessionAuthorityRef.current.enqueuePersistence(
-        () => persisted ? storage.set(SESSION_KEY, persisted) : storage.remove(SESSION_KEY)
-      )
+  const publishCartResponseIfCurrent = useCallback(
+    (
+      expected: CartSessionTicket,
+      response: Awaited<ReturnType<typeof cartService.get>>,
+      publish: () => void,
+    ) => {
+      const persisted = serializePersistedCartSession(
+        response.checkout_session_id,
+        response.expires_at,
+      );
+
+      return publishCartSessionIfCurrent({
+        authority: sessionAuthorityRef.current,
+        expected,
+        persist: () => persisted
+          ? storage.set(SESSION_KEY, persisted)
+          : storage.remove(SESSION_KEY),
+        canPublish: () => mountedRef.current,
+        publish,
+      });
     },
     [],
   );
@@ -164,56 +181,83 @@ export function CartProvider({ children }: PropsWithChildren) {
     dismissEverythingAndGoHome();
   }, [resetCartDisplayState]);
 
-  const refreshCart = useCallback(async () => {
-    if (!sessionId) return;
+  const refreshCartForSession = useCallback(async (expected: CartSessionTicket) => {
+    if (
+      expected.sessionId === null
+      || !mountedRef.current
+      || !sessionAuthorityRef.current.isCurrent(expected)
+    ) return;
+
     const requestId = refreshGuardRef.current.begin();
+
     try {
-      const response = await cartService.get(sessionId);
-      if (!mountedRef.current || !refreshGuardRef.current.isCurrent(requestId)) return;
+      const response = await cartService.get(expected.sessionId);
+      if (
+        !mountedRef.current
+        || !refreshGuardRef.current.isCurrent(requestId)
+        || !sessionAuthorityRef.current.isCurrent(expected)
+      ) return;
+
       const nextItems = getCartItems(response.cart);
       if (!nextItems.length) {
-        await clearCart();
+        await clearCartIfSession(expected);
         return;
       }
-      await persistAuthoritativeCartSession(response);
-      if (!mountedRef.current || !refreshGuardRef.current.isCurrent(requestId)) return;
-      applyCart(response);
+
+      await publishCartResponseIfCurrent(expected, response, () => {
+        if (!refreshGuardRef.current.isCurrent(requestId)) return;
+        applyCart(response);
+      });
     } catch (error) {
-      if (!mountedRef.current || !refreshGuardRef.current.isCurrent(requestId)) return;
+      if (
+        !mountedRef.current
+        || !refreshGuardRef.current.isCurrent(requestId)
+        || !sessionAuthorityRef.current.isCurrent(expected)
+      ) return;
+
       const status = error instanceof ApiError ? error.status : null;
       const failure = classifyCartRefreshFailure(status);
       if (failure.shouldClearSession) {
-        await clearCart();
+        await clearCartIfSession(expected);
         return;
       }
+
       setCartRefreshError("We couldn't refresh your cart. Your reservation reference was kept; please try again.");
     }
-  }, [applyCart, clearCart, persistAuthoritativeCartSession, sessionId]);
+  }, [applyCart, clearCartIfSession, publishCartResponseIfCurrent]);
+
+  const refreshCart = useCallback(() => {
+    const expected = sessionAuthorityRef.current.capture();
+    if (!expected) return Promise.resolve();
+
+    return operationQueue.run(
+      () => refreshCartForSession(expected),
+      { trackLoading: false },
+    );
+  }, [operationQueue, refreshCartForSession]);
 
   useEffect(() => {
     const refreshGuard = refreshGuardRef.current;
     mountedRef.current = true;
-    void sessionAuthorityRef.current
-      .enqueuePersistence(() => storage.get(SESSION_KEY))
-      .then(async (stored) => {
-        if (!mountedRef.current) return;
-        const persisted = parsePersistedCartSession(stored, Date.now());
+    void sessionAuthorityRef.current.enqueuePersistence(async () => {
+      const stored = await storage.get(SESSION_KEY);
+      if (!mountedRef.current) return;
 
-        if (persisted.kind === "malformed" || persisted.kind === "expired") {
-          refreshGuard.invalidate();
-          await sessionAuthorityRef.current.enqueuePersistence(
-            () => storage.remove(SESSION_KEY),
-          );
-          if (mountedRef.current) resetCartState();
-          return;
-        }
+      const persisted = parsePersistedCartSession(stored, Date.now());
 
-        if (persisted.kind === "active" || persisted.kind === "legacy") {
-          sessionAuthorityRef.current.replace(persisted.sessionId);
-          setSessionId(persisted.sessionId);
-          if (persisted.kind === "active") setExpiresAt(new Date(persisted.expiresAt));
-        }
-      });
+      if (persisted.kind === "malformed" || persisted.kind === "expired") {
+        refreshGuard.invalidate();
+        await storage.remove(SESSION_KEY);
+        if (mountedRef.current) resetCartState();
+        return;
+      }
+
+      if (persisted.kind === "active" || persisted.kind === "legacy") {
+        sessionAuthorityRef.current.replace(persisted.sessionId);
+        setSessionId(persisted.sessionId);
+        if (persisted.kind === "active") setExpiresAt(new Date(persisted.expiresAt));
+      }
+    });
     return () => {
       mountedRef.current = false;
       refreshGuard.invalidate();
@@ -252,92 +296,160 @@ export function CartProvider({ children }: PropsWithChildren) {
     return () => subscription.remove();
   }, [expireCart, expiresAt]);
 
-  const addItem = useCallback((payload: Omit<AddCartRequest, "checkout_session_id">) => addMutationGuardRef.current.run(async () => {
-    setLoading(true);
-    try {
-      const activeSessionId = sessionAuthorityRef.current.currentSessionId();
-      const quantityToAdd = payload.quantity;
-      const existingZoneItem =
-        activeSessionId && quantityToAdd !== undefined && !payload.seat_ids?.length
-          ? items.find(
-            (item) =>
-              item.type === "zone" &&
-              String(item.stadium_zone_id) === String(payload.stadium_zone_id) &&
-              String(item.match_id) === String(payload.match_id),
-          )
-          : null;
+  const addItem = useCallback((
+    payload: Omit<AddCartRequest, "checkout_session_id">,
+  ) => {
+    const expected = sessionAuthorityRef.current.captureCurrent();
 
-      if (existingZoneItem && quantityToAdd !== undefined) {
-        const currentQuantity = Number(existingZoneItem.quantity ?? 0);
-        const response = await cartService.update(existingZoneItem.lock_key, { quantity: currentQuantity + quantityToAdd });
-        await persistAuthoritativeCartSession(response);
-        applyCart(response);
-        return;
-      }
+    return addMutationGuardRef.current.run(
+      () => operationQueue.run(async () => {
+        if (
+          !mountedRef.current
+          || !sessionAuthorityRef.current.isCurrent(expected)
+        ) return;
 
-      const response = await addWithSessionRecovery({
-        payload,
-        sessionId: activeSessionId,
-        add: (request) => cartService.add(request),
-        getStatus: (error) => error instanceof ApiError ? error.status : null,
-        invalidateRejectedSession: async (rejectedSessionId) => {
-          if (sessionAuthorityRef.current.currentSessionId() === rejectedSessionId) {
+        const activeSessionId = expected.sessionId;
+        const quantityToAdd = payload.quantity;
+        const existingZoneItem =
+          activeSessionId && quantityToAdd !== undefined && !payload.seat_ids?.length
+            ? items.find(
+              (item) =>
+                item.type === "zone"
+                && String(item.stadium_zone_id) === String(payload.stadium_zone_id)
+                && String(item.match_id) === String(payload.match_id),
+            )
+            : null;
+
+        if (existingZoneItem && quantityToAdd !== undefined) {
+          const currentQuantity = Number(existingZoneItem.quantity ?? 0);
+          const response = await cartService.update(existingZoneItem.lock_key, {
+            quantity: currentQuantity + quantityToAdd,
+          });
+
+          await publishCartResponseIfCurrent(expected, response, () => {
+            if (response.checkout_session_id !== expected.sessionId) {
+              sessionAuthorityRef.current.replace(response.checkout_session_id);
+              setSessionId(response.checkout_session_id);
+            }
+            applyCart(response);
+          });
+          return;
+        }
+
+        let publicationOwner: CartSessionTicket | null = expected;
+        const response = await addWithSessionRecovery({
+          payload,
+          sessionId: activeSessionId,
+          add: (request) => cartService.add(request),
+          getStatus: (error) => error instanceof ApiError ? error.status : null,
+          invalidateRejectedSession: async (rejectedSessionId) => {
+            if (
+              expected.sessionId !== rejectedSessionId
+              || !sessionAuthorityRef.current.isCurrent(expected)
+            ) {
+              publicationOwner = null;
+              return;
+            }
+
             refreshGuardRef.current.invalidate();
             resetCartState();
-          }
-          try {
-            await sessionAuthorityRef.current.enqueuePersistence(
-              () => storage.remove(SESSION_KEY),
-            );
-          } catch {
-            // The rejected ID remains invalid in memory; a successful bootstrap overwrites persistence below.
-          }
-        },
-      });
-      await persistAuthoritativeCartSession(response);
-      if (!activeSessionId || response.checkout_session_id !== activeSessionId) {
-        sessionAuthorityRef.current.replace(response.checkout_session_id);
-        setSessionId(response.checkout_session_id);
-      }
-      applyCart(response);
-    } finally {
-      setLoading(false);
-    }
-  }), [applyCart, items, persistAuthoritativeCartSession, resetCartState]);
+            const recoveryOwner = sessionAuthorityRef.current.captureCurrent();
+            publicationOwner = recoveryOwner;
 
-  const removeItem = useCallback(async (lockKey: string) => {
-    if (!sessionId) return;
-    setLoading(true);
-    try {
+            try {
+              await sessionAuthorityRef.current.enqueuePersistence(
+                () => storage.remove(SESSION_KEY),
+              );
+            } catch {
+              // The rejected ID remains invalid in memory; a successful bootstrap overwrites persistence below.
+            }
+
+            if (!sessionAuthorityRef.current.isCurrent(recoveryOwner)) {
+              publicationOwner = null;
+            }
+          },
+        });
+
+        if (!publicationOwner) return;
+
+        await publishCartResponseIfCurrent(publicationOwner, response, () => {
+          if (response.checkout_session_id !== publicationOwner?.sessionId) {
+            sessionAuthorityRef.current.replace(response.checkout_session_id);
+            setSessionId(response.checkout_session_id);
+          }
+          applyCart(response);
+        });
+      }),
+    );
+  }, [applyCart, items, operationQueue, publishCartResponseIfCurrent, resetCartState]);
+
+  const removeItem = useCallback((lockKey: string) => {
+    const expected = sessionAuthorityRef.current.capture();
+    if (!expected) return Promise.resolve();
+
+    return operationQueue.run(async () => {
+      if (
+        !mountedRef.current
+        || !sessionAuthorityRef.current.isCurrent(expected)
+      ) return;
+
       await cartService.remove(lockKey);
-      await refreshCart();
-    } finally {
-      setLoading(false);
-    }
-  }, [refreshCart, sessionId]);
 
-  const removeItems = useCallback(async (lockKeys: string[]) => {
-    if (!sessionId || !lockKeys.length) return;
-    setLoading(true);
-    try {
-      await Promise.all(lockKeys.map((lockKey) => cartService.remove(lockKey)));
-      await refreshCart();
-    } finally {
-      setLoading(false);
-    }
-  }, [refreshCart, sessionId]);
+      if (
+        !mountedRef.current
+        || !sessionAuthorityRef.current.isCurrent(expected)
+      ) return;
 
-  const updateItem = useCallback(async (lockKey: string, quantity: number) => {
+      await refreshCartForSession(expected);
+    });
+  }, [operationQueue, refreshCartForSession]);
+
+  const removeItems = useCallback((lockKeys: string[]) => {
+    const expected = sessionAuthorityRef.current.capture();
+    if (!expected || !lockKeys.length) return Promise.resolve();
+
+    return operationQueue.run(async () => {
+      if (
+        !mountedRef.current
+        || !sessionAuthorityRef.current.isCurrent(expected)
+      ) return;
+
+      await Promise.all(
+        lockKeys.map((lockKey) => cartService.remove(lockKey)),
+      );
+
+      if (
+        !mountedRef.current
+        || !sessionAuthorityRef.current.isCurrent(expected)
+      ) return;
+
+      await refreshCartForSession(expected);
+    });
+  }, [operationQueue, refreshCartForSession]);
+
+  const updateItem = useCallback((lockKey: string, quantity: number) => {
     if (quantity < 1) return removeItem(lockKey);
-    setLoading(true);
-    try {
+
+    const expected = sessionAuthorityRef.current.capture();
+    if (!expected) return Promise.resolve();
+
+    return operationQueue.run(async () => {
+      if (
+        !mountedRef.current
+        || !sessionAuthorityRef.current.isCurrent(expected)
+      ) return;
+
       const response = await cartService.update(lockKey, { quantity });
-      await persistAuthoritativeCartSession(response);
-      applyCart(response);
-    } finally {
-      setLoading(false);
-    }
-  }, [applyCart, persistAuthoritativeCartSession, removeItem]);
+
+      await publishCartResponseIfCurrent(expected, response, () => {
+        if (response.checkout_session_id !== expected.sessionId) {
+          sessionAuthorityRef.current.replace(response.checkout_session_id);
+          setSessionId(response.checkout_session_id);
+        }
+        applyCart(response);
+      });
+    });
+  }, [applyCart, operationQueue, publishCartResponseIfCurrent, removeItem]);
 
   const value = useMemo(() => ({
     sessionId,
