@@ -13,6 +13,7 @@ type AuthContextValue = {
   isReady: boolean;
   refreshAuth: () => Promise<void>;
   logout: () => Promise<void>;
+  deleteAccount: (password: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -78,6 +79,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
     await authService.logout();
   }, [clearSessionState]);
 
+  const deleteAccount = useCallback(async (password: string) => {
+    await authService.deleteAccount(password);
+    clearSessionState();
+  }, [clearSessionState]);
+
   const value = useMemo(() => ({
     user,
     userCacheKey: token ? userCacheKey(user) : null,
@@ -85,7 +91,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     isReady,
     refreshAuth,
     logout,
-  }), [isReady, logout, refreshAuth, token, user]);
+    deleteAccount,
+  }), [deleteAccount, isReady, logout, refreshAuth, token, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

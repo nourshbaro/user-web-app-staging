@@ -181,6 +181,15 @@ export const authService = {
       .catch(() => { });
   },
 
+  async deleteAccount(password: string) {
+    const payload = await apiRequest("/auth/account", {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    });
+    await clearAuthentication(() => storage.remove(USER_KEY));
+    return payload;
+  },
+
   async clearSession() {
     await clearAuthentication(() => storage.remove(USER_KEY));
   },

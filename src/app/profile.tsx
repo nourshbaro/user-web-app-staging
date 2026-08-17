@@ -1,6 +1,6 @@
 import { Stack, router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type DimensionValue } from "react-native";
+import { ActivityIndicator, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type DimensionValue } from "react-native";
 import { MainHeader } from "@/components/MainHeader";
 import {
   ProfileDetailModal,
@@ -86,6 +86,10 @@ export default function ProfileScreen() {
   const [detail, setDetail] = useState<DetailState>(null);
   const [activeList, setActiveList] = useState<"orders" | "tickets">("orders");
   const [renderedOwnerKey, setRenderedOwnerKey] = useState<string | null>(null);
+  const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
   const activeOwnerKey = auth.isAuthenticated ? auth.userCacheKey : null;
   const refreshAuth = auth.refreshAuth;
@@ -247,6 +251,34 @@ export default function ProfileScreen() {
     }
   };
 
+  const closeDeleteAccount = () => {
+    if (deletingAccount) return;
+    setDeleteAccountVisible(false);
+    setDeletePassword("");
+    setDeleteError(null);
+  };
+
+  const deleteAccount = async () => {
+    if (!deletePassword || deletingAccount) return;
+    setDeletingAccount(true);
+    setDeleteError(null);
+    try {
+      await auth.deleteAccount(deletePassword);
+      setDeleteAccountVisible(false);
+      setDeletePassword("");
+      toast.showToast({
+        variant: "success",
+        title: "Account deleted",
+        message: "Your account has been permanently deleted.",
+      });
+      router.replace("/");
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Could not delete your account.");
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
   const downloadPdf = async (orderId?: string) => {
     if (!activeOwnerKey) return;
     if (!orderId) {
@@ -364,6 +396,7 @@ export default function ProfileScreen() {
                         <Text style={[local.statLabel, { color: !isWide && activeList === "tickets" ? theme.colors.primary : theme.colors.muted }]}>Tickets</Text>
                       </Pressable>
                     </View>
+
                   </View>
                 </View>
 
@@ -426,6 +459,27 @@ export default function ProfileScreen() {
                     </View>
                   </View>
                 ) : null}
+
+                <View style={[local.profilePanel, local.fullWidth]}>
+                  <View style={[local.accountManagement, !isWide && local.accountManagementCompact, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+                    <View style={local.accountManagementCopy}>
+                      <Text style={[local.accountManagementLabel, { color: theme.colors.muted }]}>Account management</Text>
+                      <Text style={[local.accountManagementText, { color: theme.colors.secondary }]}>You can permanently remove your account and personal data.</Text>
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setDeleteAccountVisible(true)}
+                      style={({ pressed }) => [
+                        local.deleteAccountButton,
+                        !isWide && local.deleteAccountButtonCompact,
+                        { borderColor: theme.colors.danger },
+                        pressed && local.pressed,
+                      ]}
+                    >
+                      <Text style={[local.deleteAccountButtonText, { color: theme.colors.danger }]}>Delete account</Text>
+                    </Pressable>
+                  </View>
+                </View>
               </View>
             </>
           )}
@@ -439,6 +493,33 @@ export default function ProfileScreen() {
         onClose={() => setDetail(null)}
         onDownloadPdf={downloadPdf}
       />
+      <Modal visible={deleteAccountVisible} transparent animationType="slide" onRequestClose={closeDeleteAccount}>
+        <View style={[local.modalBackdrop, theme.isDark && local.modalBackdropDark]}>
+          <View accessibilityViewIsModal style={[local.deleteModal, isWide && local.deleteModalWide, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+            <View style={[local.sheetHandle, { backgroundColor: theme.colors.muted }]} />
+            <View style={local.deleteModalHeader}>
+              <Text style={[local.deleteModalEyebrow, { color: theme.colors.danger }]}>Permanent action</Text>
+              <Text style={[local.deleteModalTitle, { color: theme.colors.ink }]}>Delete account</Text>
+              <Text style={[local.deleteModalText, { color: theme.colors.secondary }]}>Your account and associated data will be permanently removed. Enter your password to continue.</Text>
+            </View>
+            <Input
+              label="Password"
+              value={deletePassword}
+              onChangeText={(value) => { setDeletePassword(value); setDeleteError(null); }}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!deletingAccount}
+              onSubmitEditing={() => void deleteAccount()}
+            />
+            {deleteError ? <Text style={[local.deleteError, { color: theme.colors.primary }]}>{deleteError}</Text> : null}
+            <View style={local.modalActions}>
+              <Button title={deletingAccount ? "Deleting..." : "Delete permanently"} variant="danger" onPress={() => void deleteAccount()} disabled={!deletePassword || deletingAccount} />
+              <Button title="Keep my account" variant="secondary" onPress={closeDeleteAccount} disabled={deletingAccount} />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -870,6 +951,111 @@ function createProfileStyles(colors: ThemeColors) {
     },
     pressed: {
       opacity: 0.78,
+    },
+    accountManagement: {
+      minHeight: 84,
+      borderRadius: 18,
+      borderWidth: 1,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 16,
+    },
+    accountManagementCopy: {
+      flex: 1,
+      minWidth: 0,
+      gap: 4,
+    },
+    accountManagementCompact: {
+      alignItems: "stretch",
+      flexDirection: "column",
+    },
+    accountManagementLabel: {
+      fontSize: 12,
+      fontWeight: "900",
+      textTransform: "uppercase",
+      letterSpacing: 0.55,
+    },
+    accountManagementText: {
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    deleteAccountButton: {
+      minHeight: 40,
+      borderRadius: 12,
+      borderWidth: 1,
+      paddingHorizontal: 14,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    deleteAccountButtonText: {
+      fontSize: 13,
+      fontWeight: "900",
+    },
+    deleteAccountButtonCompact: {
+      alignSelf: "flex-start",
+    },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: "rgba(21, 26, 44, 0.52)",
+      alignItems: "center",
+      justifyContent: "flex-end",
+    },
+    modalBackdropDark: {
+      backgroundColor: "rgba(0, 0, 0, 0.76)",
+    },
+    deleteModal: {
+      width: "100%",
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      borderWidth: 1,
+      borderBottomWidth: 0,
+      paddingHorizontal: 20,
+      paddingTop: 10,
+      paddingBottom: 28,
+      gap: 18,
+    },
+    deleteModalWide: {
+      maxWidth: 520,
+      borderBottomLeftRadius: 24,
+      borderBottomRightRadius: 24,
+      borderBottomWidth: 1,
+      marginBottom: 28,
+    },
+    sheetHandle: {
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      opacity: 0.4,
+      alignSelf: "center",
+    },
+    deleteModalHeader: {
+      gap: 6,
+    },
+    deleteModalEyebrow: {
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+      letterSpacing: 0.7,
+    },
+    deleteModalTitle: {
+      fontSize: 24,
+      lineHeight: 30,
+      fontWeight: "900",
+    },
+    deleteModalText: {
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    deleteError: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: "700",
+    },
+    modalActions: {
+      gap: 10,
     },
     statGrid: {
       minHeight: 72,
