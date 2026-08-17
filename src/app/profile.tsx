@@ -17,6 +17,7 @@ import {
 import { ApiError } from "@/services/api";
 import { authService, type OtpTarget } from "@/services/auth";
 import { profileService } from "@/services/auth";
+import { legalService } from "@/services/legal";
 import {
   UserScopedCache,
   getUserScopedCacheGeneration,
@@ -701,15 +702,77 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
 function InfoSections() {
   const local = useProfileStyles();
   const theme = useTheme();
+  const [privacyVisible, setPrivacyVisible] = useState(false);
+  const [privacyPolicy, setPrivacyPolicy] = useState<string | null>(null);
+  const [privacyLoading, setPrivacyLoading] = useState(false);
+  const [privacyError, setPrivacyError] = useState<string | null>(null);
+
+  const openPrivacyPolicy = async () => {
+    setPrivacyVisible(true);
+    if (privacyPolicy || privacyLoading) return;
+
+    setPrivacyLoading(true);
+    setPrivacyError(null);
+    try {
+      setPrivacyPolicy(await legalService.privacyPolicy());
+    } catch (err) {
+      setPrivacyError(err instanceof Error ? err.message : "Could not load the privacy policy.");
+    } finally {
+      setPrivacyLoading(false);
+    }
+  };
 
   return (
-    <View style={local.infoSections}>
-      {["Privacy", "Terms of Use", "FAQ"].map((title) => (
-        <View key={title} style={[local.infoRow, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+    <>
+      <View style={local.infoSections}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void openPrivacyPolicy()}
+          style={({ pressed }) => [local.infoRow, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }, pressed && local.pressed]}
+        >
+          <Text style={[local.infoTitle, { color: theme.colors.ink }]}>Privacy Policy</Text>
+          <Text style={[local.infoChevron, { color: theme.colors.muted }]}>›</Text>
+        </Pressable>
+        {["Terms of Use", "FAQ"].map((title) => (
+          <View key={title} style={[local.infoRow, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
           <Text style={[local.infoTitle, { color: theme.colors.ink }]}>{title}</Text>
+          </View>
+        ))}
+      </View>
+
+      <Modal visible={privacyVisible} transparent animationType="slide" onRequestClose={() => setPrivacyVisible(false)}>
+        <View style={[local.legalBackdrop, theme.isDark && local.modalBackdropDark]}>
+          <View accessibilityViewIsModal style={[local.legalSheet, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+            <View style={[local.sheetHandle, { backgroundColor: theme.colors.muted }]} />
+            <View style={[local.legalHeader, { borderBottomColor: theme.colors.line }]}>
+              <View style={local.legalTitleWrap}>
+                <Text style={[local.legalEyebrow, { color: theme.colors.primary }]}>Legal</Text>
+                <Text style={[local.legalTitle, { color: theme.colors.ink }]}>Privacy Policy</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setPrivacyVisible(false)}
+                style={({ pressed }) => [local.legalClose, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }, pressed && local.pressed]}
+              >
+                <Text style={[local.legalCloseText, { color: theme.colors.ink }]}>Close</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={local.legalContent}>
+              {privacyLoading ? <View style={local.legalLoading}><ActivityIndicator color={theme.colors.primary} /></View> : null}
+              {privacyError ? (
+                <View style={local.legalErrorState}>
+                  <Text style={[local.legalErrorTitle, { color: theme.colors.ink }]}>Could not load the policy</Text>
+                  <Text style={[local.legalErrorText, { color: theme.colors.secondary }]}>{privacyError}</Text>
+                  <Button title="Try again" onPress={() => void openPrivacyPolicy()} />
+                </View>
+              ) : null}
+              {privacyPolicy ? <Text selectable style={[local.legalBody, { color: theme.colors.secondary }]}>{privacyPolicy}</Text> : null}
+            </ScrollView>
+          </View>
         </View>
-      ))}
-    </View>
+      </Modal>
+    </>
   );
 }
 
@@ -852,8 +915,12 @@ function createProfileStyles(colors: ThemeColors) {
       backgroundColor: colors.panel,
       justifyContent: "center",
       paddingHorizontal: 14,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
     },
     infoTitle: {
+      flex: 1,
       color: colors.ink,
       fontSize: 15,
       fontWeight: "900",
@@ -993,6 +1060,89 @@ function createProfileStyles(colors: ThemeColors) {
     deleteAccountButtonText: {
       fontSize: 13,
       fontWeight: "900",
+    },
+    infoChevron: {
+      fontSize: 26,
+      lineHeight: 28,
+      fontWeight: "500",
+    },
+    legalBackdrop: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: "rgba(21, 26, 44, 0.52)",
+    },
+    legalSheet: {
+      width: "100%",
+      maxHeight: "92%",
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      borderWidth: 1,
+      borderBottomWidth: 0,
+      paddingTop: 10,
+    },
+    legalHeader: {
+      paddingHorizontal: 20,
+      paddingBottom: 14,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      borderBottomWidth: 1,
+    },
+    legalTitleWrap: {
+      flex: 1,
+      minWidth: 0,
+      gap: 2,
+    },
+    legalEyebrow: {
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+      letterSpacing: 0.7,
+    },
+    legalTitle: {
+      fontSize: 22,
+      lineHeight: 28,
+      fontWeight: "900",
+    },
+    legalClose: {
+      minHeight: 38,
+      borderRadius: 12,
+      borderWidth: 1,
+      paddingHorizontal: 12,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    legalCloseText: {
+      fontSize: 13,
+      fontWeight: "900",
+    },
+    legalContent: {
+      paddingHorizontal: 20,
+      paddingTop: 18,
+      paddingBottom: 34,
+    },
+    legalLoading: {
+      minHeight: 220,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    legalErrorState: {
+      minHeight: 220,
+      justifyContent: "center",
+      gap: 10,
+    },
+    legalErrorTitle: {
+      fontSize: 18,
+      fontWeight: "900",
+    },
+    legalErrorText: {
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    legalBody: {
+      fontSize: 15,
+      lineHeight: 24,
     },
     deleteAccountButtonCompact: {
       alignSelf: "flex-start",
