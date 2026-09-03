@@ -109,15 +109,14 @@ function buildCheckoutHtml(captureContext: string) {
       };
       window.addEventListener("load", scheduleMeasurement);
       const fail = (error) => {
-        const message = error && (error.reason || error.message) ? (error.reason || error.message) : "Payment could not be completed. Please try again.";
-        post({ type: "error", message });
+        post({ type: "error", message: "Payment could not be completed. Please try again or choose another payment method." });
       };
 
       window.addEventListener("error", (event) => fail(event.error || new Error(event.message)));
 
       async function initCheckout() {
         try {
-          if (!window.VAS) throw new Error("Cybersource SDK is not ready.");
+          if (!window.VAS) throw new Error("Payment form is not ready.");
 
           const client = await window.VAS.UnifiedCheckout(${safeCaptureContext});
           const checkout = await client.createCheckout({ autoProcessing: false });

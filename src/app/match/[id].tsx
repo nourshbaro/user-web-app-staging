@@ -8,6 +8,7 @@ import { formatDate, formatMoney, formatTime, matchTitle } from "@/lib/format";
 import { createSeatLayout, getContainRect, getPolygonPoints, getPolygonPointsAttribute } from "@/lib/mapGeometry";
 import { getEffectiveSelectedSeats, getOwnedMapHeight, type OwnedMapMeasurement } from "@/lib/matchLifecycle";
 import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
+import { userFacingError } from "@/lib/userFacingError";
 import { getSeatAccessibility } from "@/lib/seatAccessibility";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, ApiSeat, ApiZone } from "@/types";
@@ -132,7 +133,7 @@ export default function MatchDetail() {
       })
       .catch((err) => {
         if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
-        const message = err instanceof Error ? err.message : "Could not load match.";
+        const message = userFacingError(err, "Could not load this match. Please try again.");
         setError(message);
         toast.showToast({ variant: "error", title: "Could not load match", message });
       })
@@ -196,7 +197,7 @@ export default function MatchDetail() {
           toast.showToast({
             variant: "error",
             title: "Could not load seats",
-            message: err instanceof Error ? err.message : "Try choosing another zone.",
+            message: userFacingError(err, "Could not load seats. Try choosing another zone."),
           });
           AccessibilityInfo.announceForAccessibility("Could not load seats. Try choosing another zone.");
         })
@@ -240,7 +241,7 @@ export default function MatchDetail() {
       toast.showToast({
         variant: "error",
         title: "Could not add tickets",
-        message: err instanceof Error ? err.message : "Please try again.",
+        message: userFacingError(err, "Could not reserve those tickets. Please try again."),
       });
     }
   };

@@ -7,6 +7,7 @@ import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/services/api";
 import { authService, type OtpTarget } from "@/services/auth";
 import { createAuthSubmissionGuard } from "@/lib/authSubmissionGuard";
+import { userFacingError } from "@/lib/userFacingError";
 
 type Mode = "login" | "register" | "otp";
 
@@ -138,7 +139,7 @@ export default function AuthScreen() {
         showOtp(err.body, "Please verify your email. A new code has been sent.", email.trim());
         return;
       }
-      const nextMessage = err instanceof Error ? err.message : "Please try again.";
+      const nextMessage = userFacingError(err, "Unable to continue. Check your details and try again.");
       setMessage(nextMessage);
       toast.showToast({ variant: "error", title: "Unable to continue", message: nextMessage });
     } finally {
@@ -157,7 +158,7 @@ export default function AuthScreen() {
       setMessage(nextMessage);
       toast.showToast({ variant: "success", title: "OTP sent", message: nextMessage });
     } catch (err) {
-      const nextMessage = err instanceof Error ? err.message : "Unable to resend OTP.";
+      const nextMessage = userFacingError(err, "Unable to resend the code. Please try again.");
       setMessage(nextMessage);
       toast.showToast({ variant: "error", title: "Could not resend OTP", message: nextMessage });
     } finally {

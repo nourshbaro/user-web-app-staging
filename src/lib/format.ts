@@ -7,11 +7,45 @@ export function matchTitle(match?: ApiMatch | null) {
 
 export function formatDate(value?: string) {
   if (!value) return "Date TBC";
-  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(value));
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date TBC";
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(date);
 }
 
 export function formatTime(value?: string) {
-  return value ? value.slice(0, 5) : "TBC";
+  if (!value) return "TBC";
+
+  // API kickoff values are sometimes clock-only values. Parsing those as a Date
+  // would incorrectly introduce a timezone, so format them without conversion.
+  const clock = value.match(/^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/);
+  if (clock) {
+    const hour = Number(clock[1]);
+    if (hour > 23) return "TBC";
+    const displayHour = hour % 12 || 12;
+    return `${displayHour}:${clock[2]} ${hour < 12 ? "AM" : "PM"}`;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "TBC";
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+export function formatDateTime(value?: string) {
+  if (!value) return "Date unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
 }
 
 export function formatMoney(value?: number | string, currency = "USD") {

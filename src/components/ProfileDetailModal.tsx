@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { formatDateTime, formatTime } from "@/lib/format";
 import {
   Image,
   Modal,
@@ -360,7 +361,8 @@ function formatDetailValue(value: unknown, key = "") {
   if (key === "payment_method") {
     return paymentMethodLabel(String(value));
   }
-  if (isDateKey(key)) return formatDateValue(String(value));
+  if (key.toLowerCase().includes("time") && /^\d{1,2}:\d{2}/.test(String(value))) return formatTime(String(value));
+  if (isDateKey(key)) return formatDateTime(String(value));
   if (typeof value === "number") return String(value);
   if (typeof value === "boolean") return value ? "Yes" : "No";
   return String(value);
@@ -397,19 +399,6 @@ function shouldShowDetailField(key: string, value: unknown) {
     value !== undefined &&
     value !== ""
   );
-}
-
-function formatDateValue(value: string) {
-  if (!value) return "Date unavailable";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
 }
 
 function summarizeValue(value: unknown) {

@@ -52,10 +52,9 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
     destroyClient(client);
   };
 
-  const reportError = (err: unknown) => {
+  const reportError = (_err: unknown) => {
     if (!active) return;
-    const candidate = err as { message?: string; reason?: string };
-    options.onError(candidate?.reason ?? candidate?.message ?? DEFAULT_ERROR);
+    options.onError(DEFAULT_ERROR);
   };
 
   const start = async () => {

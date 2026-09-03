@@ -5,6 +5,7 @@ import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
 import { groupCartItems } from "@/lib/cartDisplay";
 import { formatMoney, minutesSeconds } from "@/lib/format";
+import { userFacingError } from "@/lib/userFacingError";
 
 type CartSheetProps = {
   visible: boolean;
@@ -27,7 +28,7 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
       toast.showToast({
         variant: "error",
         title: "Could not remove item",
-        message: err instanceof Error ? err.message : "Please try again.",
+        message: userFacingError(err, "Could not update your cart. Please try again."),
       });
     }
   };

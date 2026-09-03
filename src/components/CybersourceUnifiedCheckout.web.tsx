@@ -40,7 +40,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
     const lifecycle = createCybersourceWebLifecycle({
       captureContext,
       unifiedCheckout: async (context) => {
-        if (!window.VAS) throw new Error("Cybersource SDK is not ready.");
+        if (!window.VAS) throw new Error("Payment form is not ready.");
         return window.VAS.UnifiedCheckout(context);
       },
       onReady: () => {

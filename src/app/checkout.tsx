@@ -7,6 +7,7 @@ import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
 import { clearBluePaymentHandoff, createBluePaymentHandoff } from "@/lib/bluePaymentHandoff";
 import { validateBluePaymentUrl } from "@/lib/bluePaymentRedirect";
+import { paymentError, userFacingError } from "@/lib/userFacingError";
 import { groupCartItems } from "@/lib/cartDisplay";
 import {
   beginCaptureContextRequest,
@@ -200,7 +201,7 @@ export default function CheckoutScreen() {
     try {
       const response = await checkoutService.captureContext(sessionId, [getCheckoutOrigin()]);
       const context = readCaptureContext(response);
-      if (!context) throw new Error("Empty Cybersource capture context.");
+      if (!context) throw new Error("Payment form could not be prepared.");
       if (!captureRequestAuthority.isCurrent(ticket)) return;
       setCaptureState({ sessionId, status: "ready", context });
     } catch (err) {
@@ -209,7 +210,7 @@ export default function CheckoutScreen() {
       setCaptureState({
         sessionId,
         status: "error",
-        error: err instanceof Error ? err.message : "Could not prepare card payment.",
+        error: userFacingError(err, "Could not prepare card payment. Please try again."),
       });
     } finally {
       releaseCaptureContextRetry(captureRetrySessionRef, sessionId, force);
@@ -468,7 +469,7 @@ export default function CheckoutScreen() {
         toast.showToast({
           variant: "error",
           title: "Checkout failed",
-          message: err instanceof Error ? err.message : "Please try again.",
+          message: userFacingError(err, paymentError()),
           duration: 6200,
         });
       }

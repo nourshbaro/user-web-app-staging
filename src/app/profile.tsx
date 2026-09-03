@@ -1,4 +1,5 @@
 import { Stack, router, useFocusEffect } from "expo-router";
+import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type DimensionValue } from "react-native";
 import { MainHeader } from "@/components/MainHeader";
@@ -9,7 +10,8 @@ import {
 import { Button, Input, Loading, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
-import { formatMoney } from "@/lib/format";
+import { formatDateTime, formatMoney } from "@/lib/format";
+import { userFacingError } from "@/lib/userFacingError";
 import {
   getTicketMatchName,
   getTicketOrderReference,
@@ -159,8 +161,7 @@ export default function ProfileScreen() {
         requestId !== requestIdRef.current
         || cacheGeneration !== getUserScopedCacheGeneration()
       ) return;
-      const message =
-        err instanceof Error ? err.message : "Could not load profile.";
+      const message = userFacingError(err, "Could not load your account. Please try again.");
       toast.showToast({
         variant: "error",
         title: "Could not load profile",
@@ -189,8 +190,8 @@ export default function ProfileScreen() {
     try {
       await auth.logout();
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Could not log out.";
+      void err;
+      const message = "Your local session was cleared. Please try again if you need to sign out on another device.";
       toast.showToast({
         variant: "error",
         title: "Could not log out",
@@ -212,8 +213,7 @@ export default function ProfileScreen() {
       setDetail({ type: "order", title: `Order ${displayValue(order, ["order_code", "order_number", "id"], `#${id}`)}`, item, pdfId: String(id) });
     } catch (err) {
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
-      const message =
-        err instanceof Error ? err.message : "Could not load order details.";
+      const message = userFacingError(err, "Could not load order details. Please try again.");
       toast.showToast({
         variant: "error",
         title: "Could not load order",
@@ -238,8 +238,7 @@ export default function ProfileScreen() {
       setDetail({ type: "ticket", title: `Ticket ${code}`, item, pdfId });
     } catch (err) {
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
-       const message =
-        err instanceof Error ? err.message : "Could not load ticket details.";
+       const message = userFacingError(err, "Could not load ticket details. Please try again.");
       toast.showToast({
         variant: "error",
         title: "Could not load ticket",
@@ -274,7 +273,7 @@ export default function ProfileScreen() {
       });
       router.replace("/");
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : "Could not delete your account.");
+      setDeleteError(userFacingError(err, "Could not delete your account. Check your password and try again."));
     } finally {
       setDeletingAccount(false);
     }
@@ -299,7 +298,7 @@ export default function ProfileScreen() {
       if (Platform.OS !== "web") {
         const FileSystem = await import("expo-file-system");
         const Sharing = await import("expo-sharing");
-        // SDK 56 exposes these native methods at runtime, while its generated File type omits inherited members.
+        // Expo's runtime File methods are inherited even when generated typings omit them.
         const file = new FileSystem.File(FileSystem.Paths.cache, `order-${orderId}.pdf`) as unknown as {
           create: (options?: { overwrite?: boolean }) => void;
           write: (content: Uint8Array) => void;
@@ -322,8 +321,7 @@ export default function ProfileScreen() {
       window.URL.revokeObjectURL(url);
     } catch (err) {
       if (cacheGeneration !== getUserScopedCacheGeneration()) return;
-      const message =
-        err instanceof Error ? err.message : "Failed to download PDF.";
+      const message = userFacingError(err, "Could not download the PDF. Please try again.");
       toast.showToast({
         variant: "error",
         title: "Could not download PDF",
@@ -371,20 +369,20 @@ export default function ProfileScreen() {
                           ]}
                         >
                           <Text style={[local.avatarText, { color: theme.isDark ? "#0F172A" : "#FFFFFF" }]}>
-                            {initials(auth.user?.name ?? auth.user?.email)}
+                            {initials(auth.user?.name)}
                           </Text>
                         </View>
                         <View style={local.identityText}>
                           <Text style={local.eyebrow}>My account</Text>
-                          <Text style={[local.title, { color: theme.colors.ink }]} numberOfLines={1}>{auth.user?.name ?? "Supporter"}</Text>
+                          <Text style={[local.title, { color: theme.colors.ink }]} numberOfLines={1}>
+                            {auth.user?.name?.trim() || auth.user?.email || "LFA supporter"}
+                          </Text>
+                          {auth.user?.name?.trim() && auth.user?.email ? (
+                            <Text style={[local.email, { color: theme.colors.secondary }]} numberOfLines={1}>{auth.user.email}</Text>
+                          ) : null}
                         </View>
                       </View>
-                      <Pressable onPress={() => void logout()} style={({ pressed }) => [local.logoutButton, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }, pressed && local.pressed]}>
-                        <Text style={[local.logoutText, { color: theme.colors.ink }]}>Logout</Text>
-                      </Pressable>
                     </View>
-
-                    <Text style={[local.email, { color: theme.colors.secondary }]} numberOfLines={1}>{auth.user?.email}</Text>
 
                     <View style={[local.statGrid, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
                       <Pressable onPress={() => setActiveList("orders")} style={[local.statBox, !isWide && activeList === "orders" && { backgroundColor: theme.isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.06)" }]}>
@@ -398,6 +396,23 @@ export default function ProfileScreen() {
                       </Pressable>
                     </View>
 
+                  </View>
+                </View>
+
+                <View style={[local.profilePanel, local.fullWidth]}>
+                  <Text style={[local.groupLabel, { color: theme.colors.muted }]}>Quick access</Text>
+                  <View style={[local.actionGroup, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+                    <ProfileActionRow
+                      icon={{ ios: "ticket", android: "confirmation_number", web: "confirmation_number" }}
+                      title="My Tickets"
+                      onPress={() => setActiveList("tickets")}
+                    />
+                    <View style={[local.actionDivider, { backgroundColor: theme.colors.line }]} />
+                    <ProfileActionRow
+                      icon={{ ios: "gearshape", android: "settings", web: "settings" }}
+                      title="Settings"
+                      onPress={() => router.push("/settings")}
+                    />
                   </View>
                 </View>
 
@@ -460,6 +475,22 @@ export default function ProfileScreen() {
                     </View>
                   </View>
                 ) : null}
+
+                <View style={[local.profilePanel, local.fullWidth]}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void logout()}
+                    style={({ pressed }) => [local.signOutButton, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }, pressed && local.pressed]}
+                  >
+                    <SymbolView
+                      name={{ ios: "rectangle.portrait.and.arrow.right", android: "logout", web: "logout" } as any}
+                      size={20}
+                      tintColor={theme.colors.primary}
+                      fallback={<Text style={{ color: theme.colors.primary }}>↪</Text>}
+                    />
+                    <Text style={[local.signOutText, { color: theme.colors.primary }]}>Log out</Text>
+                  </Pressable>
+                </View>
 
                 <View style={[local.profilePanel, local.fullWidth]}>
                   <View style={[local.accountManagement, !isWide && local.accountManagementCompact, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
@@ -615,7 +646,7 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
         showOtp(err.body, "Please verify your email. A new code has been sent.", email.trim());
         return;
       }
-      const nextMessage = err instanceof ApiError || err instanceof Error ? err.message : "Please try again.";
+      const nextMessage = userFacingError(err, "Unable to continue. Check your details and try again.");
       toast.showToast({ variant: "error", title: "Unable to continue", message: nextMessage });
     } finally {
       submissionGuard.current.release();
@@ -633,7 +664,7 @@ function GuestAuthForm({ onSignedIn }: { onSignedIn: () => void }) {
       setMessage(nextMessage);
       toast.showToast({ variant: "success", title: "OTP sent", message: nextMessage });
     } catch (err) {
-      const nextMessage = err instanceof Error ? err.message : "Unable to resend OTP.";
+      const nextMessage = userFacingError(err, "Unable to resend the code. Please try again.");
       toast.showToast({ variant: "error", title: "Could not resend OTP", message: nextMessage });
     } finally {
       setResending(false);
@@ -716,7 +747,7 @@ function InfoSections() {
     try {
       setPrivacyPolicy(await legalService.privacyPolicy());
     } catch (err) {
-      setPrivacyError(err instanceof Error ? err.message : "Could not load the privacy policy.");
+      setPrivacyError(userFacingError(err, "Could not load the privacy policy. Please try again."));
     } finally {
       setPrivacyLoading(false);
     }
@@ -725,6 +756,7 @@ function InfoSections() {
   return (
     <>
       <View style={local.infoSections}>
+        <Text style={[local.groupLabel, { color: theme.colors.muted }]}>Information</Text>
         <Pressable
           accessibilityRole="button"
           onPress={() => void openPrivacyPolicy()}
@@ -733,11 +765,6 @@ function InfoSections() {
           <Text style={[local.infoTitle, { color: theme.colors.ink }]}>Privacy Policy</Text>
           <Text style={[local.infoChevron, { color: theme.colors.muted }]}>›</Text>
         </Pressable>
-        {["Terms of Use", "FAQ"].map((title) => (
-          <View key={title} style={[local.infoRow, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-          <Text style={[local.infoTitle, { color: theme.colors.ink }]}>{title}</Text>
-          </View>
-        ))}
       </View>
 
       <Modal visible={privacyVisible} transparent animationType="slide" onRequestClose={() => setPrivacyVisible(false)}>
@@ -773,6 +800,44 @@ function InfoSections() {
         </View>
       </Modal>
     </>
+  );
+}
+
+function ProfileActionRow({
+  icon,
+  title,
+  detail,
+  onPress,
+}: {
+  icon: { ios: string; android: string; web: string };
+  title: string;
+  detail?: string;
+  onPress: () => void;
+}) {
+  const local = useProfileStyles();
+  const theme = useTheme();
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={detail ? `${title}, ${detail}` : title}
+      onPress={onPress}
+      style={({ pressed }) => [local.actionRow, pressed && local.pressed]}
+    >
+      <View style={[local.actionIcon, { backgroundColor: theme.colors.panelSoft }]}>
+        <SymbolView
+          name={icon as any}
+          size={20}
+          tintColor={theme.colors.primary}
+          fallback={<Text style={{ color: theme.colors.primary }}>{title.slice(0, 1)}</Text>}
+        />
+      </View>
+      <View style={local.actionCopy}>
+        <Text style={[local.actionTitle, { color: theme.colors.ink }]}>{title}</Text>
+        {detail ? <Text style={[local.actionDetail, { color: theme.colors.muted }]}>{detail}</Text> : null}
+      </View>
+      <Text style={[local.actionChevron, { color: theme.colors.muted }]}>›</Text>
+    </Pressable>
   );
 }
 
@@ -817,14 +882,7 @@ function statusTone(status: string) {
 }
 
 function formatDateValue(value: string) {
-  if (!value) return "Date unavailable";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
+  return formatDateTime(value);
 }
 
 function useProfileStyles() {
@@ -907,6 +965,38 @@ function createProfileStyles(colors: ThemeColors) {
     infoSections: {
       gap: 8,
     },
+    groupLabel: {
+      marginLeft: 4,
+      marginBottom: 7,
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+      letterSpacing: 0.7,
+    },
+    actionGroup: {
+      overflow: "hidden",
+      borderRadius: 16,
+      borderWidth: 1,
+    },
+    actionRow: {
+      minHeight: 62,
+      paddingHorizontal: 14,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+    },
+    actionIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    actionCopy: { flex: 1, minWidth: 0, gap: 2 },
+    actionTitle: { fontSize: 15, fontWeight: "800" },
+    actionDetail: { fontSize: 12 },
+    actionChevron: { fontSize: 25, lineHeight: 27 },
+    actionDivider: { height: StyleSheet.hairlineWidth, marginLeft: 64 },
     infoRow: {
       minHeight: 52,
       borderRadius: 10,
@@ -1016,6 +1106,17 @@ function createProfileStyles(colors: ThemeColors) {
       fontSize: 13,
       fontWeight: "900",
     },
+    signOutButton: {
+      minHeight: 52,
+      borderRadius: 14,
+      borderWidth: 1,
+      paddingHorizontal: 16,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 9,
+    },
+    signOutText: { fontSize: 15, fontWeight: "900" },
     pressed: {
       opacity: 0.78,
     },

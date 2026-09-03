@@ -9,6 +9,7 @@ import {
   isDropdownOptionSelected,
 } from "@/lib/matchFilterAccessibility";
 import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
+import { userFacingError } from "@/lib/userFacingError";
 import { matchesService } from "@/services/matches";
 import type { ApiMatch, FilterOption, MatchFilters } from "@/types";
 import { SymbolView } from "expo-symbols";
@@ -63,7 +64,7 @@ export function MatchesList({ limit, filterable = false, showAppBanner = false }
       setFilters(nextFilters);
     } catch (err) {
       if (!requestAuthority.isCurrent(ticket)) return;
-      const message = err instanceof Error ? err.message : "Could not load matches.";
+      const message = userFacingError(err, "Could not load matches. Please try again.");
       setError(message);
       toast.showToast({ variant: "error", title: "Could not load matches", message });
     } finally {
