@@ -257,7 +257,7 @@ export const profileService = {
         );
       }
 
-      return await response.arrayBuffer();
+      return new Uint8Array(await response.arrayBuffer());
     } catch (error) {
       if (error instanceof PdfDownloadHttpError) throw error;
 

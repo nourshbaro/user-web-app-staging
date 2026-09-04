@@ -49,5 +49,5 @@ test("only the intended routes render MainHeader", async () => {
     }
   }
 
-  assert.deepEqual(routes.sort(), ["index", "matches", "profile", "tournament"]);
+  assert.deepEqual(routes.sort(), ["index", "matches", "profile", "tickets", "tournament"]);
 });

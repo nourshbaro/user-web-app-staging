@@ -25,10 +25,6 @@ export function HeaderActions({ hideCart = false }: HeaderActionsProps) {
 
   return (
     <View style={local.headerActions}>
-      <Pressable accessibilityLabel={theme.isDark ? "Switch to light mode" : "Switch to dark mode"} onPress={theme.toggleTheme} style={actionButton}>
-        <HeaderIcon name={theme.isDark ? { ios: "sun.max", android: "light_mode", web: "light_mode" } : { ios: "moon", android: "dark_mode", web: "dark_mode" }} color={theme.colors.secondary} />
-      </Pressable>
-
       {!hideCart ? (
         <Pressable
           onPress={openCartSheet}

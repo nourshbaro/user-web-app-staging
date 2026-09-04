@@ -488,7 +488,7 @@ test("PDF success returns exact bytes and clears its timeout", async () => {
 
     const actualBytes = await request;
 
-    assert.equal(actualBytes, expectedBytes);
+    assert.deepEqual(actualBytes, new Uint8Array(expectedBytes));
     assert.equal(harness.state.timers.size, 0);
     assert.equal(pending.init.signal.aborted, false);
 
@@ -527,7 +527,7 @@ test("native PDF request preserves API URL and password header", async () => {
       response(200, {}, expectedBytes),
     );
 
-    assert.equal(await request, expectedBytes);
+    assert.deepEqual(await request, new Uint8Array(expectedBytes));
     assert.equal(harness.state.timers.size, 0);
   } finally {
     harness.cleanup();

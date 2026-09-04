@@ -1,9 +1,10 @@
 import { storage } from "@/lib/storage";
+import { shouldShowBottomNavigation } from "@/lib/navigationPresentation";
 import { darkColors, getThemeColors, lightColors, type ThemeMode } from "@/lib/themePalette";
 import { router, usePathname } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TextInputProps, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TextInputProps, useColorScheme, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const THEME_KEY = "lfa_theme";
@@ -15,6 +16,7 @@ type ThemeContextValue = {
   colors: typeof lightColors;
   styles: ReturnType<typeof createStyles>;
   toggleTheme: () => void;
+  setMode: (mode: ThemeMode) => void;
 };
 
 const defaultStyles = createStyles(lightColors);
@@ -22,31 +24,37 @@ const defaultStyles = createStyles(lightColors);
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: PropsWithChildren) {
-  const [mode, setMode] = useState<ThemeMode>("light");
+  const systemScheme = useColorScheme();
+  const [mode, setModeState] = useState<ThemeMode>("system");
 
   useEffect(() => {
     void storage.get(THEME_KEY).then((value) => {
-      if (value === "dark" || value === "light") setMode(value);
+      if (value === "system" || value === "dark" || value === "light") setModeState(value);
     });
   }, []);
 
-  const themeColors = getThemeColors(mode);
+  const resolvedMode = mode === "system" ? (systemScheme === "dark" ? "dark" : "light") : mode;
+  const themeColors = getThemeColors(resolvedMode);
   const themeStyles = useMemo(() => createStyles(themeColors), [themeColors]);
   const value = useMemo<ThemeContextValue>(() => {
     return {
       mode,
-      isDark: mode === "dark",
+      isDark: resolvedMode === "dark",
       colors: themeColors,
       styles: themeStyles,
       toggleTheme: () => {
-        setMode((current) => {
-          const next = current === "dark" ? "light" : "dark";
+        setModeState((current) => {
+          const next = (current === "dark" || (current === "system" && resolvedMode === "dark")) ? "light" : "dark";
           void storage.set(THEME_KEY, next);
           return next;
         });
       },
+      setMode: (next) => {
+        setModeState(next);
+        void storage.set(THEME_KEY, next);
+      },
     };
-  }, [mode, themeColors, themeStyles]);
+  }, [mode, resolvedMode, themeColors, themeStyles]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
@@ -60,6 +68,7 @@ export function useTheme() {
       colors: lightColors,
       styles: defaultStyles,
       toggleTheme: () => { },
+      setMode: () => { },
     };
   }
   return context;
@@ -68,10 +77,12 @@ export function useTheme() {
 export function Screen({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
+  const hasBottomNavigation = shouldShowBottomNavigation(pathname);
   return (
-    <View style={[theme.styles.screen, { paddingTop: Math.max(insets.top, 14), paddingBottom: Math.max(insets.bottom, 12) + 74 }]}>
+    <View style={[theme.styles.screen, { paddingTop: Math.max(insets.top, 14), paddingBottom: hasBottomNavigation ? Math.max(insets.bottom, 12) + 74 : Math.max(insets.bottom, 12) }]}>
       {children}
-      <BottomNavigation bottomInset={insets.bottom} />
+      {hasBottomNavigation ? <BottomNavigation bottomInset={insets.bottom} /> : null}
     </View>
   );
 }
@@ -129,12 +140,11 @@ function BottomNavigation({ bottomInset }: { bottomInset: number }) {
   const pathname = usePathname();
   const theme = useTheme();
 
-  if (pathname === "/auth" || pathname === "/cart" || pathname === "/checkout") return null;
-
   const tabs = [
     { label: "Home", href: "/", icon: { ios: "house", android: "home", web: "home" } },
     { label: "Tournament", href: "/tournament", icon: { ios: "trophy", android: "emoji_events", web: "emoji_events" } },
     { label: "Matches", href: "/matches", icon: { ios: "sportscourt", android: "stadium", web: "stadium" } },
+    { label: "My Tickets", href: "/tickets", icon: { ios: "ticket", android: "confirmation_number", web: "confirmation_number" } },
     { label: "Profile", href: "/profile", icon: { ios: "person", android: "person_outline", web: "person_outline" } },
   ];
 
@@ -161,7 +171,6 @@ function BottomNavigation({ bottomInset }: { bottomInset: number }) {
                   fallback={<Text style={[theme.styles.bottomNavFallback, { color: active ? theme.colors.primary : theme.colors.muted }]}>{tab.label.slice(0, 1)}</Text>}
                 />
               </View>
-              <Text style={[theme.styles.bottomNavText, { color: active ? theme.colors.primary : theme.colors.muted }]}>{tab.label}</Text>
             </Pressable>
           );
         })}

@@ -33,7 +33,7 @@ export const lightColors: ThemeColors = {
   danger: "#B42318",
   success: "#007A3D",
 };
-export type ThemeMode = "light" | "dark";
+export type ThemeMode = "system" | "light" | "dark";
 
 export const darkColors: ThemeColors = {
   bg: "#0F172A",
@@ -53,6 +53,6 @@ export const darkColors: ThemeColors = {
   success: "#22C55E",
 };
 
-export function getThemeColors(mode: ThemeMode): ThemeColors {
+export function getThemeColors(mode: Exclude<ThemeMode, "system">): ThemeColors {
   return mode === "dark" ? darkColors : lightColors;
 }

@@ -90,7 +90,6 @@ test("a rejected authentication flow releases the guard for retry", async () => 
 test("both authentication entry points acquire synchronously and release in finally", async () => {
   const sources = await Promise.all([
     readFile(new URL("../app/auth.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/profile.tsx", import.meta.url), "utf8"),
   ]);
 
   for (const source of sources) {

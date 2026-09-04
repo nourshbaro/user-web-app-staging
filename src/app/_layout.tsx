@@ -52,6 +52,9 @@ function AppProviders() {
               <Stack.Screen name="tournament" options={{ headerShown: false, animation: "none" }} />
               <Stack.Screen name="auth" options={{ headerShown: false }} />
               <Stack.Screen name="profile" options={{ headerShown: false, animation: "none" }} />
+              <Stack.Screen name="tickets" options={{ headerShown: false, animation: "none" }} />
+              <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
+              <Stack.Screen name="about" options={{ headerShown: false }} />
               <Stack.Screen name="settings" options={{ headerShown: false }} />
               <Stack.Screen name="cart" options={{ headerShown: false }} />
               <Stack.Screen name="checkout" options={{ headerShown: false }} />

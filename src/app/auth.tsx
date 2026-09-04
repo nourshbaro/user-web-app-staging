@@ -1,6 +1,8 @@
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { SymbolView } from "expo-symbols";
+import Animated, { FadeInDown, useReducedMotion } from "react-native-reanimated";
 import { Button, Card, Input, Screen, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
@@ -62,9 +64,12 @@ export default function AuthScreen() {
   const [pendingOtpTarget, setPendingOtpTarget] = useState<OtpTarget | null>(null);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordConfirmation, setShowPasswordConfirmation] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const submissionGuard = useRef(createAuthSubmissionGuard());
   const mountedRef = useRef(true);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -194,8 +199,9 @@ export default function AuthScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={local.scrollContent}>
-        <View style={local.authPanel}>
+      <KeyboardAvoidingView style={local.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={local.scrollContent}>
+        <Animated.View entering={reduceMotion ? undefined : FadeInDown.duration(280)} style={local.authPanel}>
           <Card>
             <Text style={theme.styles.sectionLabel}>Lebanon FA Account</Text>
             <Text style={[local.title, { color: theme.colors.ink }]}>{title}</Text>
@@ -210,9 +216,9 @@ export default function AuthScreen() {
             {mode !== "otp" ? (
               <>
                 <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-                <Input label="Password" value={password} onChangeText={setPassword} secureTextEntry />
+                <PasswordInput label="Password" value={password} onChangeText={setPassword} visible={showPassword} onToggle={() => setShowPassword((value) => !value)} editable={!loading} />
                 {mode === "register" ? (
-                  <Input label="Confirm password" value={passwordConfirmation} onChangeText={setPasswordConfirmation} secureTextEntry />
+                  <PasswordInput label="Confirm password" value={passwordConfirmation} onChangeText={setPasswordConfirmation} visible={showPasswordConfirmation} onToggle={() => setShowPasswordConfirmation((value) => !value)} editable={!loading} />
                 ) : null}
               </>
             ) : (
@@ -257,15 +263,22 @@ export default function AuthScreen() {
               Already confirmed? <Text style={[local.footerLink, { color: theme.colors.primary }]} onPress={() => switchMode("login")}>Login</Text>
             </Text>
           )}
-        </View>
+        </Animated.View>
       </ScrollView>
+      </KeyboardAvoidingView>
       </View>
     </Screen>
   );
 }
 
+function PasswordInput({ label, value, onChangeText, visible, onToggle, editable }: { label: string; value: string; onChangeText: (value: string) => void; visible: boolean; onToggle: () => void; editable: boolean }) {
+  const theme = useTheme();
+  return <View style={local.inputWrap}><Text style={theme.styles.label}>{label}</Text><View style={[local.passwordField, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}><TextInput value={value} onChangeText={onChangeText} secureTextEntry={!visible} autoCapitalize="none" autoCorrect={false} editable={editable} placeholderTextColor={theme.colors.muted} style={[local.passwordInput, { color: theme.colors.ink }]} /><Pressable accessibilityRole="button" accessibilityLabel={visible ? `Hide ${label}` : `Show ${label}`} onPress={onToggle} hitSlop={8} style={local.visibilityButton}><SymbolView name={{ ios: visible ? "eye.slash" : "eye", android: visible ? "visibility_off" : "visibility", web: visible ? "visibility_off" : "visibility" }} size={20} tintColor={theme.colors.muted} fallback={<Text style={{ color: theme.colors.muted }}>{visible ? "Hide" : "Show"}</Text>} /></Pressable></View></View>;
+}
+
 const local = {
   shell: { flex: 1, alignSelf: "center" as const },
+  keyboard: { flex: 1 },
   scrollContent: {
     flexGrow: 1,
     alignItems: "center" as const,
@@ -277,6 +290,10 @@ const local = {
     maxWidth: 520,
     gap: 14,
   },
+  inputWrap: { gap: 6 },
+  passwordField: { minHeight: 48, borderWidth: 1, borderRadius: 14, flexDirection: "row" as const, alignItems: "center" as const },
+  passwordInput: { flex: 1, minHeight: 46, paddingHorizontal: 12, fontSize: 15 },
+  visibilityButton: { width: 48, height: 46, alignItems: "center" as const, justifyContent: "center" as const },
   header: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
