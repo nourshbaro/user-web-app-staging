@@ -287,15 +287,29 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
   const url = Platform.OS === "web" ? `/api${path}` : `${config.apiBaseUrl}${path}`;
   const { skipUnauthenticatedNotify, ...requestInit } = init;
 
+  const isFormData =
+    typeof FormData !== "undefined" &&
+    requestInit.body instanceof FormData;
+
   try {
     const response = await fetch(url, {
       ...requestInit,
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(Platform.OS !== "web" && config.apiPassword ? { password: config.apiPassword } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
+        ...(!isFormData
+          ? { "Content-Type": "application/json" }
+          : {}),
+
+        ...(Platform.OS !== "web" && config.apiPassword
+          ? { password: config.apiPassword }
+          : {}),
+
+        ...(token
+          ? { Authorization: `Bearer ${token}` }
+          : {}),
+
         ...(requestInit.headers ?? {}),
       },
     });

@@ -1,8 +1,20 @@
 import { router } from "expo-router";
-import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Keyboard } from "react-native";
 import { authService } from "@/services/auth";
-import { isAuthenticationSnapshotCurrent, onUnauthenticated } from "@/services/api";
+import {
+  isAuthenticationSnapshotCurrent,
+  onUnauthenticated,
+} from "@/services/api";
 import { clearUserScopedCaches } from "@/lib/userScopedCache";
 import type { User } from "@/types";
 import { registerPushDevice } from "@/lib/registerPushDevice";
@@ -13,6 +25,7 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   isReady: boolean;
   refreshAuth: () => Promise<void>;
+  updateUser: (nextUser: User) => Promise<void>;
   logout: () => Promise<void>;
   deleteAccount: (password: string) => Promise<void>;
 };
@@ -25,15 +38,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [isReady, setReady] = useState(false);
   const userCacheKeyRef = useRef<string | null>(null);
 
-  const applySession = useCallback((nextToken: string | null, nextUser: User | null) => {
-    const nextUserCacheKey = nextToken ? userCacheKey(nextUser) : null;
-    if (userCacheKeyRef.current !== nextUserCacheKey) {
-      clearUserScopedCaches();
-    }
-    userCacheKeyRef.current = nextUserCacheKey;
-    setTokenState(nextToken);
-    setUser(nextUser);
-  }, []);
+  const applySession = useCallback(
+    (nextToken: string | null, nextUser: User | null) => {
+      const nextUserCacheKey = nextToken ? userCacheKey(nextUser) : null;
+      if (userCacheKeyRef.current !== nextUserCacheKey) {
+        clearUserScopedCaches();
+      }
+      userCacheKeyRef.current = nextUserCacheKey;
+      setTokenState(nextToken);
+      setUser(nextUser);
+    },
+    [],
+  );
 
   const clearSessionState = useCallback(() => {
     clearUserScopedCaches();
@@ -60,6 +76,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, [applySession, clearSessionState]);
 
+  const updateUser = useCallback(async (nextUser: User) => {
+    setUser(nextUser);
+    await authService.persistUser(nextUser);
+  }, []);
+
   useEffect(() => {
     void refreshAuth();
   }, [refreshAuth]);
@@ -70,10 +91,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
 
     void registerPushDevice().catch((error) => {
-      console.error(
-        "Authenticated device registration failed:",
-        error,
-      );
+      console.error("Authenticated device registration failed:", error);
     });
   }, [isReady, token]);
 
@@ -93,20 +111,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
     await authService.logout();
   }, [clearSessionState]);
 
-  const deleteAccount = useCallback(async (password: string) => {
-    await authService.deleteAccount(password);
-    clearSessionState();
-  }, [clearSessionState]);
+  const deleteAccount = useCallback(
+    async (password: string) => {
+      await authService.deleteAccount(password);
+      clearSessionState();
+    },
+    [clearSessionState],
+  );
 
-  const value = useMemo(() => ({
-    user,
-    userCacheKey: token ? userCacheKey(user) : null,
-    isAuthenticated: Boolean(token),
-    isReady,
-    refreshAuth,
-    logout,
-    deleteAccount,
-  }), [deleteAccount, isReady, logout, refreshAuth, token, user]);
+  const value = useMemo(
+    () => ({
+      user,
+      userCacheKey: token ? userCacheKey(user) : null,
+      isAuthenticated: Boolean(token),
+      isReady,
+      refreshAuth,
+      updateUser,
+      logout,
+      deleteAccount,
+    }),
+    [deleteAccount, isReady, logout, refreshAuth, token, updateUser, user],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

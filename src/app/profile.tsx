@@ -1,36 +1,436 @@
 import { AuthRequired } from "@/components/AuthRequired";
-import { MainHeader } from "@/components/MainHeader";
 import { ContactBrandIcon } from "@/components/ContactBrandIcon";
+import { MainHeader } from "@/components/MainHeader";
 import { Loading, Screen, useResponsive, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { storageUrl } from "@/lib/config";
 import { OFFICIAL_CONTACTS } from "@/lib/contact";
 import { Stack, router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useState } from "react";
-import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Image,
+  Linking,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 export default function ProfileScreen() {
-  const auth = useAuth(); const toast = useToast(); const theme = useTheme(); const responsive = useResponsive(); const [contactVisible, setContactVisible] = useState(false);
-  const logout = async () => { try { await auth.logout(); } catch { toast.showToast({ variant: "error", title: "Could not log out", message: "Your local session was cleared." }); } finally { router.replace("/"); } };
-  const openContact = async (url: string) => { try { await Linking.openURL(url); } catch { toast.showToast({ variant: "error", title: "Could not open contact", message: "Please try again from another app." }); } };
+  const auth = useAuth();
+  const toast = useToast();
+  const theme = useTheme();
+  const responsive = useResponsive();
+  const [contactVisible, setContactVisible] = useState(false);
+  const logout = async () => {
+    try {
+      await auth.logout();
+    } catch {
+      toast.showToast({
+        variant: "error",
+        title: "Could not log out",
+        message: "Your local session was cleared.",
+      });
+    } finally {
+      router.replace("/");
+    }
+  };
+  const openContact = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      toast.showToast({
+        variant: "error",
+        title: "Could not open contact",
+        message: "Please try again from another app.",
+      });
+    }
+  };
   if (!auth.isReady) return <Loading />;
-  if (!auth.isAuthenticated) return <Screen><View style={[styles.shell, { width: responsive.contentWidth }]}><MainHeader /><Text style={[theme.styles.title, styles.pageTitle]}>My Profile</Text><AuthRequired /></View></Screen>;
-  const name = auth.user?.name?.trim(); const email = auth.user?.email?.trim();
-  return <Screen><Stack.Screen options={{ title: "My Profile" }} /><View style={[styles.shell, { width: responsive.contentWidth }]}><MainHeader /><ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}><Text style={[styles.pageTitle, { color: theme.colors.ink }]}>My Profile</Text>
-    <View style={[styles.identity, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}><View style={[styles.avatar, { backgroundColor: theme.colors.panelSoft }]}><Text style={[styles.avatarText, { color: theme.colors.primary }]}>{initials(name)}</Text></View><View style={styles.identityCopy}><Text style={[styles.name, { color: theme.colors.ink }]}>{name || email || "LFA supporter"}</Text>{email ? <Text numberOfLines={1} style={theme.styles.muted}>{email}</Text> : null}</View></View>
-    <View style={[styles.menu, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-      <MenuRow title="Edit Profile" icon={{ ios: "pencil", android: "edit", web: "edit" }} onPress={() => router.push("/edit-profile")} /><Divider />
-      <MenuRow title="Settings" icon={{ ios: "gearshape", android: "settings", web: "settings" }} onPress={() => router.push("/settings")} />
-    </View><View style={[styles.menu, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-      <MenuRow title="About LFA Tickets" icon={{ ios: "info.circle", android: "info", web: "info" }} onPress={() => router.push("/about")} /><Divider />
-      <MenuRow title="Contact Us" icon={{ ios: "envelope", android: "mail", web: "mail" }} onPress={() => setContactVisible(true)} /><Divider />
-      <MenuRow title="Log Out" icon={{ ios: "rectangle.portrait.and.arrow.right", android: "logout", web: "logout" }} destructive onPress={() => void logout()} />
-    </View>
-  </ScrollView></View><Modal visible={contactVisible} transparent animationType="slide" onRequestClose={() => setContactVisible(false)}><Pressable accessibilityRole="button" accessibilityLabel="Close contact options" onPress={() => setContactVisible(false)} style={styles.backdrop}><Pressable accessibilityViewIsModal onPress={(event) => event.stopPropagation()} style={[styles.contactSheet, { backgroundColor: theme.colors.panel }]}><View style={[styles.sheetHandle, { backgroundColor: theme.colors.muted }]} /><View style={styles.sheetHeader}><Text style={[styles.sheetTitle, { color: theme.colors.ink }]}>Contact Us</Text><Pressable accessibilityRole="button" accessibilityLabel="Close contact options" onPress={() => setContactVisible(false)} style={styles.sheetClose}><Text style={{ color: theme.colors.ink, fontSize: 26 }}>×</Text></Pressable></View><View style={[styles.contactGroup, { borderColor: theme.colors.line }]}>{OFFICIAL_CONTACTS.map((contact) => <ContactRow key={contact.label} contact={contact} onPress={() => void openContact(contact.url)} />)}</View></Pressable></Pressable></Modal></Screen>;
+  if (!auth.isAuthenticated)
+    return (
+      <Screen>
+        <View style={[styles.shell, { width: responsive.contentWidth }]}>
+          <MainHeader />
+          {/* <Text style={[theme.styles.title, styles.pageTitle]}>My Profile</Text> */}
+          <AuthRequired />
+        </View>
+      </Screen>
+    );
+
+  const name = auth.user?.name?.trim();
+  const email = auth.user?.email?.trim();
+  const avatar = auth.user?.avatar ? storageUrl(auth.user.avatar) : null;
+
+  return (
+    <Screen>
+      <Stack.Screen options={{ title: "My Profile" }} />
+      <View style={[styles.shell, { width: responsive.contentWidth }]}>
+        <MainHeader />
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* <Text style={[styles.pageTitle, { color: theme.colors.ink }]}>
+            My Profile
+          </Text> */}
+          <View
+            style={[
+              styles.identity,
+              {
+                backgroundColor: theme.colors.panel,
+                borderColor: theme.colors.line,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.avatar,
+                { backgroundColor: theme.colors.panelSoft },
+              ]}
+            >
+              {avatar ? (
+                <Image
+                  source={{ uri: avatar }}
+                  style={styles.avatarImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <Text
+                  style={[styles.avatarText, { color: theme.colors.primary }]}
+                >
+                  {initials(name)}
+                </Text>
+              )}
+            </View>
+            <View style={styles.identityCopy}>
+              <Text style={[styles.name, { color: theme.colors.ink }]}>
+                {name || email || "LFA supporter"}
+              </Text>
+              {email ? (
+                <Text numberOfLines={1} style={theme.styles.muted}>
+                  {email}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+          <View
+            style={[
+              styles.menu,
+              {
+                backgroundColor: theme.colors.panel,
+                borderColor: theme.colors.line,
+              },
+            ]}
+          >
+            <MenuRow
+              title="Edit Profile"
+              icon={{ ios: "pencil", android: "edit", web: "edit" }}
+              onPress={() => router.push("/edit-profile")}
+            />
+            <Divider />
+            <MenuRow
+              title="Settings"
+              icon={{ ios: "gearshape", android: "settings", web: "settings" }}
+              onPress={() => router.push("/settings")}
+            />
+          </View>
+          <View
+            style={[
+              styles.menu,
+              {
+                backgroundColor: theme.colors.panel,
+                borderColor: theme.colors.line,
+              },
+            ]}
+          >
+            <MenuRow
+              title="About LFA Tickets"
+              icon={{ ios: "info.circle", android: "info", web: "info" }}
+              onPress={() => router.push("/about")}
+            />
+            <Divider />
+            <MenuRow
+              title="Contact Us"
+              icon={{ ios: "envelope", android: "mail", web: "mail" }}
+              onPress={() => setContactVisible(true)}
+            />
+            <Divider />
+            <MenuRow
+              title="Log Out"
+              icon={{
+                ios: "rectangle.portrait.and.arrow.right",
+                android: "logout",
+                web: "logout",
+              }}
+              destructive
+              onPress={() => void logout()}
+            />
+          </View>
+        </ScrollView>
+      </View>
+      <Modal
+        visible={contactVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setContactVisible(false)}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close contact options"
+          onPress={() => setContactVisible(false)}
+          style={styles.backdrop}
+        >
+          <Pressable
+            accessibilityViewIsModal
+            onPress={(event) => event.stopPropagation()}
+            style={[
+              styles.contactSheet,
+              { backgroundColor: theme.colors.panel },
+            ]}
+          >
+            <View
+              style={[
+                styles.sheetHandle,
+                {
+                  backgroundColor: theme.colors.muted,
+                },
+              ]}
+            />
+            <View style={styles.sheetHeader}>
+              <Text style={[styles.sheetTitle, { color: theme.colors.ink }]}>
+                Contact Us
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close contact options"
+                onPress={() => setContactVisible(false)}
+                style={styles.sheetClose}
+              >
+                <Text style={{ color: theme.colors.ink, fontSize: 26 }}>×</Text>
+              </Pressable>
+            </View>
+            <View
+              style={[styles.contactGroup, { borderColor: theme.colors.line }]}
+            >
+              {OFFICIAL_CONTACTS.map((contact) => (
+                <ContactRow
+                  key={contact.label}
+                  contact={contact}
+                  onPress={() => void openContact(contact.url)}
+                />
+              ))}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </Screen>
+  );
 }
-function ContactRow({ contact, onPress }: { contact: typeof OFFICIAL_CONTACTS[number]; onPress: () => void }) { const theme = useTheme(); const brand = "brand" in contact ? contact.brand : null; return <Pressable accessibilityRole="link" accessibilityLabel={contact.label} onPress={onPress} style={({ pressed }) => [styles.contactRow, { borderBottomColor: theme.colors.line }, pressed && styles.pressed]}><View style={[styles.rowIcon, { backgroundColor: theme.colors.panelSoft }]}>{brand ? <ContactBrandIcon brand={brand} color={theme.colors.primary} size={20} /> : "icon" in contact ? <SymbolView name={contact.icon as any} size={20} tintColor={theme.colors.primary} fallback={<Text>{contact.label[0]}</Text>} /> : null}</View><Text style={[styles.rowText, { color: theme.colors.ink }]}>{contact.label}</Text><Text style={{ color: theme.colors.muted, fontSize: 22 }}>›</Text></Pressable>; }
-function MenuRow({ title, icon, destructive, onPress }: { title: string; icon: any; destructive?: boolean; onPress: () => void }) { const theme = useTheme(); return <Pressable accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={({ pressed }) => [styles.row, pressed && styles.pressed]}><View style={[styles.rowIcon, { backgroundColor: destructive ? "rgba(200,16,46,0.10)" : theme.colors.panelSoft }]}><SymbolView name={icon} size={20} tintColor={destructive ? theme.colors.danger : theme.colors.primary} fallback={<Text>{title[0]}</Text>} /></View><Text style={[styles.rowText, { color: destructive ? theme.colors.danger : theme.colors.ink }]}>{title}</Text><Text style={{ color: theme.colors.muted, fontSize: 24 }}>›</Text></Pressable>; }
-function Divider() { const theme = useTheme(); return <View style={[styles.divider, { backgroundColor: theme.colors.line }]} />; }
-function initials(value?: string) { if (!value) return "LF"; const parts = value.split(/\s+/).filter(Boolean); return parts.length > 1 ? `${parts[0][0]}${parts[1][0]}`.toUpperCase() : parts[0].slice(0, 2).toUpperCase(); }
-const styles = StyleSheet.create({ shell: { flex: 1, alignSelf: "center" }, content: { gap: 16, paddingTop: 12, paddingBottom: 30 }, pageTitle: { fontSize: 24, lineHeight: 30, fontWeight: "900" }, identity: { minHeight: 104, borderRadius: 12, borderWidth: 1, padding: 14, flexDirection: "row", alignItems: "center", gap: 14 }, identityCopy: { flex: 1, gap: 4 }, avatar: { width: 72, height: 72, borderRadius: 18, alignItems: "center", justifyContent: "center" }, avatarText: { fontSize: 23, fontWeight: "900" }, name: { fontSize: 19, lineHeight: 24, fontWeight: "900" }, menu: { borderWidth: 1, borderRadius: 12, overflow: "hidden" }, row: { minHeight: 62, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 12 }, rowIcon: { width: 38, height: 38, borderRadius: 11, alignItems: "center", justifyContent: "center" }, rowText: { flex: 1, fontSize: 15, fontWeight: "800" }, divider: { height: StyleSheet.hairlineWidth, marginLeft: 64 }, pressed: { opacity: 0.68 }, backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.58)", justifyContent: "flex-end" }, contactSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, gap: 14 }, sheetHandle: { width: 48, height: 5, borderRadius: 999, opacity: .4, alignSelf: "center" }, sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, sheetClose: { width: 44, height: 44, alignItems: "center", justifyContent: "center" }, sheetTitle: { fontSize: 22, fontWeight: "900" }, contactGroup: { borderWidth: 1, borderRadius: 12, overflow: "hidden" }, contactRow: { minHeight: 60, paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: "row", alignItems: "center", gap: 12 } });
+function ContactRow({
+  contact,
+  onPress,
+}: {
+  contact: (typeof OFFICIAL_CONTACTS)[number];
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const brand = "brand" in contact ? contact.brand : null;
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={contact.label}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.contactRow,
+        { borderBottomColor: theme.colors.line },
+        pressed && styles.pressed,
+      ]}
+    >
+      <View
+        style={[styles.rowIcon, { backgroundColor: theme.colors.panelSoft }]}
+      >
+        {brand ? (
+          <ContactBrandIcon
+            brand={brand}
+            color={theme.colors.primary}
+            size={20}
+          />
+        ) : "icon" in contact ? (
+          <SymbolView
+            name={contact.icon as any}
+            size={20}
+            tintColor={theme.colors.primary}
+            fallback={<Text>{contact.label[0]}</Text>}
+          />
+        ) : null}
+      </View>
+      <Text style={[styles.rowText, { color: theme.colors.ink }]}>
+        {contact.label}
+      </Text>
+      <Text style={{ color: theme.colors.muted, fontSize: 22 }}>›</Text>
+    </Pressable>
+  );
+}
+function MenuRow({
+  title,
+  icon,
+  destructive,
+  onPress,
+}: {
+  title: string;
+  icon: any;
+  destructive?: boolean;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      onPress={onPress}
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+    >
+      <View
+        style={[
+          styles.rowIcon,
+          {
+            backgroundColor: destructive
+              ? "rgba(200,16,46,0.10)"
+              : theme.colors.panelSoft,
+          },
+        ]}
+      >
+        <SymbolView
+          name={icon}
+          size={20}
+          tintColor={destructive ? theme.colors.danger : theme.colors.primary}
+          fallback={<Text>{title[0]}</Text>}
+        />
+      </View>
+      <Text
+        style={[
+          styles.rowText,
+          { color: destructive ? theme.colors.danger : theme.colors.ink },
+        ]}
+      >
+        {title}
+      </Text>
+      <Text style={{ color: theme.colors.muted, fontSize: 24 }}>›</Text>
+    </Pressable>
+  );
+}
+function Divider() {
+  const theme = useTheme();
+  return (
+    <View style={[styles.divider, { backgroundColor: theme.colors.line }]} />
+  );
+}
+function initials(value?: string) {
+  if (!value) return "LF";
+  const parts = value.split(/\s+/).filter(Boolean);
+  return parts.length > 1
+    ? `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+    : parts[0].slice(0, 2).toUpperCase();
+}
+const styles = StyleSheet.create({
+  shell: { flex: 1, alignSelf: "center" },
+  content: { gap: 16, paddingTop: 12, paddingBottom: 30 },
+  pageTitle: { fontSize: 24, lineHeight: 30, fontWeight: "900" },
+  identity: {
+    minHeight: 104,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  identityCopy: { flex: 1, gap: 4 },
+  avatar: {
+    width: 72,
+    height: 72,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  avatarText: {
+    fontSize: 23,
+    fontWeight: "900",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
+  },
+  name: {
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: "900",
+  },
+  menu: {
+    borderWidth: 1,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  row: {
+    minHeight: 62,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  rowIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowText: { flex: 1, fontSize: 15, fontWeight: "800" },
+  divider: { height: StyleSheet.hairlineWidth, marginLeft: 64 },
+  pressed: { opacity: 0.68 },
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.58)",
+    justifyContent: "flex-end",
+  },
+  contactSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    gap: 14,
+  },
+  sheetHandle: {
+    width: 48,
+    height: 5,
+    borderRadius: 999,
+    opacity: 0.4,
+    alignSelf: "center",
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sheetClose: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sheetTitle: { fontSize: 22, fontWeight: "900" },
+  contactGroup: { borderWidth: 1, borderRadius: 12, overflow: "hidden" },
+  contactRow: {
+    minHeight: 60,
+    paddingHorizontal: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+});

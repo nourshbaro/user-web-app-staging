@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { config } from "@/lib/config";
 import { normalizePaginatedProfileResult } from "@/lib/profilePortal";
+import { File } from "expo-file-system";
 import {
   ApiError,
   ApiTransportError,
@@ -18,9 +19,11 @@ import { storage } from "@/lib/storage";
 import type { Order, User } from "@/types";
 
 const USER_KEY = "lfa_portal_user";
-export type OtpTarget = string | { userId?: string | null; email?: string | null };
+export type OtpTarget =
+  | string
+  | { userId?: string | null; email?: string | null };
 
-class PdfDownloadHttpError extends Error { }
+class PdfDownloadHttpError extends Error {}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -28,8 +31,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasValidOptionalUserFields(value: Record<string, unknown>) {
   if (
-    "id" in value
-    && (typeof value.id !== "number" || !Number.isFinite(value.id))
+    "id" in value &&
+    (typeof value.id !== "number" || !Number.isFinite(value.id))
   ) {
     return false;
   }
@@ -43,9 +46,9 @@ function hasValidOptionalUserFields(value: Record<string, unknown>) {
   }
 
   if (
-    "email_verified_at" in value
-    && value.email_verified_at !== null
-    && typeof value.email_verified_at !== "string"
+    "email_verified_at" in value &&
+    value.email_verified_at !== null &&
+    typeof value.email_verified_at !== "string"
   ) {
     return false;
   }
@@ -53,7 +56,9 @@ function hasValidOptionalUserFields(value: Record<string, unknown>) {
   return true;
 }
 
-function decodePersistedUser(value: string | null): PersistedAuthenticationValue<User> {
+function decodePersistedUser(
+  value: string | null,
+): PersistedAuthenticationValue<User> {
   if (value === null) return { status: "missing" };
 
   let candidate: unknown;
@@ -68,8 +73,10 @@ function decodePersistedUser(value: string | null): PersistedAuthenticationValue
     return { status: "invalid" };
   }
 
-  const hasId = typeof candidate.id === "number" && Number.isFinite(candidate.id);
-  const hasEmail = typeof candidate.email === "string" && candidate.email.trim().length > 0;
+  const hasId =
+    typeof candidate.id === "number" && Number.isFinite(candidate.id);
+  const hasEmail =
+    typeof candidate.email === "string" && candidate.email.trim().length > 0;
 
   if (!hasId && !hasEmail) {
     return { status: "invalid" };
@@ -86,7 +93,13 @@ async function readPersistedUser() {
 }
 
 function readToken(payload: any): string | null {
-  return payload?.token ?? payload?.access_token ?? payload?.data?.token ?? payload?.data?.access_token ?? null;
+  return (
+    payload?.token ??
+    payload?.access_token ??
+    payload?.data?.token ??
+    payload?.data?.access_token ??
+    null
+  );
 }
 
 function readUser(payload: any): User | null {
@@ -113,9 +126,8 @@ export const authService = {
   },
 
   async restoreSession() {
-    return restoreAuthentication(
-      readPersistedUser,
-      () => storage.remove(USER_KEY),
+    return restoreAuthentication(readPersistedUser, () =>
+      storage.remove(USER_KEY),
     );
   },
 
@@ -128,25 +140,46 @@ export const authService = {
   },
 
   async login(email: string, password: string) {
-    const payload = await apiRequest("/auth/login", { method: "POST", body: JSON.stringify({ email, password }), skipUnauthenticatedNotify: true });
+    const payload = await apiRequest("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+      skipUnauthenticatedNotify: true,
+    });
     await this.saveSession(payload);
     return payload;
   },
 
   async checkEmailVerification(email: string) {
-    const endpoints = ["/auth/check-email-verification", "/auth/check-email", "/auth/email-verification-status"];
+    const endpoints = [
+      "/auth/check-email-verification",
+      "/auth/check-email",
+      "/auth/email-verification-status",
+    ];
     for (const endpoint of endpoints) {
       try {
-        return await apiRequest(endpoint, { method: "POST", body: JSON.stringify({ email }), skipUnauthenticatedNotify: true });
+        return await apiRequest(endpoint, {
+          method: "POST",
+          body: JSON.stringify({ email }),
+          skipUnauthenticatedNotify: true,
+        });
       } catch (err) {
-        if (err instanceof ApiError && (err.status === 404 || err.status === 405)) continue;
+        if (
+          err instanceof ApiError &&
+          (err.status === 404 || err.status === 405)
+        )
+          continue;
         throw err;
       }
     }
     return null;
   },
 
-  async register(name: string, email: string, password: string, passwordConfirmation: string) {
+  async register(
+    name: string,
+    email: string,
+    password: string,
+    passwordConfirmation: string,
+  ) {
     const payload = await apiRequest("/auth/register", {
       method: "POST",
       body: JSON.stringify({
@@ -162,23 +195,34 @@ export const authService = {
   },
 
   async verifyOtp(target: OtpTarget, code: string) {
-    const payload = await apiRequest("/auth/verify-otp", { method: "POST", body: JSON.stringify({ ...otpTargetBody(target), code }), skipUnauthenticatedNotify: true });
+    const payload = await apiRequest("/auth/verify-otp", {
+      method: "POST",
+      body: JSON.stringify({ ...otpTargetBody(target), code }),
+      skipUnauthenticatedNotify: true,
+    });
     await this.saveSession(payload);
     return payload;
   },
 
   async resendOtp(target: OtpTarget) {
-    return apiRequest("/auth/resend-otp", { method: "POST", body: JSON.stringify(otpTargetBody(target)), skipUnauthenticatedNotify: true });
+    return apiRequest("/auth/resend-otp", {
+      method: "POST",
+      body: JSON.stringify(otpTargetBody(target)),
+      skipUnauthenticatedNotify: true,
+    });
   },
 
   async logout() {
-    const logoutOwnership = await beginAuthenticationLogout(() => storage.remove(USER_KEY));
+    const logoutOwnership = await beginAuthenticationLogout(() =>
+      storage.remove(USER_KEY),
+    );
     void apiRequest("/auth/logout", {
       method: "POST",
       skipUnauthenticatedNotify: true,
-      headers: logoutOwnership.token ? { Authorization: `Bearer ${logoutOwnership.token}` } : undefined,
-    })
-      .catch(() => { });
+      headers: logoutOwnership.token
+        ? { Authorization: `Bearer ${logoutOwnership.token}` }
+        : undefined,
+    }).catch(() => {});
   },
 
   async deleteAccount(password: string) {
@@ -190,8 +234,35 @@ export const authService = {
     return payload;
   },
 
+  async uploadProfilePicture(file: {
+    uri: string;
+    name: string;
+    type: string;
+  }): Promise<{ avatar: string }> {
+    const avatarFile = new File(file.uri);
+
+    const formData = new FormData();
+
+    formData.append("avatar", avatarFile as unknown as Blob, file.name);
+
+    return apiRequest<{ avatar: string }>("/auth/profile-picture", {
+      method: "POST",
+      body: formData,
+    });
+  },
+
+  async removeProfilePicture() {
+    return apiRequest("/auth/profile-picture", {
+      method: "DELETE",
+    });
+  },
+
   async clearSession() {
     await clearAuthentication(() => storage.remove(USER_KEY));
+  },
+
+  async persistUser(user: User) {
+    await storage.set(USER_KEY, JSON.stringify(user));
   },
 };
 
@@ -218,7 +289,9 @@ export const profileService = {
     );
   },
   async order(orderId: string | number) {
-    return unwrapData(await apiRequest(`/portal/orders/${encodeURIComponent(String(orderId))}`)) as Record<string, unknown>;
+    return unwrapData(
+      await apiRequest(`/portal/orders/${encodeURIComponent(String(orderId))}`),
+    ) as Record<string, unknown>;
   },
   async tickets() {
     return normalizePaginatedProfileResult<Record<string, unknown>>(
@@ -226,28 +299,38 @@ export const profileService = {
     );
   },
   async ticket(ticketCode: string | number) {
-    return unwrapData(await apiRequest(`/portal/tickets/${encodeURIComponent(String(ticketCode))}`)) as Record<string, unknown>;
+    return unwrapData(
+      await apiRequest(
+        `/portal/tickets/${encodeURIComponent(String(ticketCode))}`,
+      ),
+    ) as Record<string, unknown>;
   },
   async orderPdf(orderId: string | number) {
     const authentication = await captureAuthenticationSnapshot();
     const token = authentication.token;
     const encodedId = encodeURIComponent(String(orderId));
-    const url = Platform.OS === "web"
-      ? `/api/portal/orders/${encodedId}/pdf`
-      : `${config.apiBaseUrl}/portal/orders/${encodedId}/pdf`;
+    const url =
+      Platform.OS === "web"
+        ? `/api/portal/orders/${encodedId}/pdf`
+        : `${config.apiBaseUrl}/portal/orders/${encodedId}/pdf`;
     const controller = new AbortController();
     let didTimeout = false;
-    const timeout = setTimeout(() => {
-      didTimeout = true;
-      controller.abort();
-    }, Number.isFinite(config.timeoutMs) ? config.timeoutMs : 15000);
+    const timeout = setTimeout(
+      () => {
+        didTimeout = true;
+        controller.abort();
+      },
+      Number.isFinite(config.timeoutMs) ? config.timeoutMs : 15000,
+    );
 
     try {
       const response = await fetch(url, {
         signal: controller.signal,
         headers: {
           Accept: "application/pdf,application/octet-stream,*/*",
-          ...(Platform.OS !== "web" && config.apiPassword ? { password: config.apiPassword } : {}),
+          ...(Platform.OS !== "web" && config.apiPassword
+            ? { password: config.apiPassword }
+            : {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
