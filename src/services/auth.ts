@@ -195,6 +195,19 @@ export const authService = {
   },
 };
 
+export async function registerDevice(
+  token: string,
+  platform: "android" | "ios",
+) {
+  return apiRequest("/devices", {
+    method: "POST",
+    body: JSON.stringify({
+      token,
+      platform,
+    }),
+  });
+}
+
 export const profileService = {
   async billingInfo() {
     return unwrapData(await apiRequest("/portal/billing-info"));

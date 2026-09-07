@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1053687401637",
+    "project_id": "lfa-ticketing",
+    "storage_bucket": "lfa-ticketing.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1053687401637:android:0e237908afc75c96d7914c",
+        "android_client_info": {
+          "package_name": "com.lfaticketing.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClrxyRc8UrbjPxdEEXy8pXnWFdSzGFRJg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

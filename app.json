@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "LFA Ticketing",
+    "name": "LFA Tickets",
     "slug": "lfa-app",
     "owner": "jasquare",
     "version": "1.0.1",
@@ -10,15 +10,17 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/images/lfa-app-icon-ios.png",
-      "bundleIdentifier": "com.lfamatrixvert.app",
+      "bundleIdentifier": "com.lfaticketing.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "googleServicesFile": "./GoogleService-Info.plist"
     },
     "android": {
       "icon": "./assets/images/lfa-app-icon-android.png",
       "predictiveBackGestureEnabled": false,
-      "package": "com.lfamatrixvert.app"
+      "package": "com.lfaticketing.app",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "server",
@@ -44,7 +46,8 @@
       "expo-secure-store",
       "expo-image",
       "expo-font",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

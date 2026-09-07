@@ -5,6 +5,7 @@ import { authService } from "@/services/auth";
 import { isAuthenticationSnapshotCurrent, onUnauthenticated } from "@/services/api";
 import { clearUserScopedCaches } from "@/lib/userScopedCache";
 import type { User } from "@/types";
+import { registerPushDevice } from "@/lib/registerPushDevice";
 
 type AuthContextValue = {
   user: User | null;
@@ -62,6 +63,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     void refreshAuth();
   }, [refreshAuth]);
+
+  useEffect(() => {
+    if (!isReady || !token) {
+      return;
+    }
+
+    void registerPushDevice().catch((error) => {
+      console.error(
+        "Authenticated device registration failed:",
+        error,
+      );
+    });
+  }, [isReady, token]);
 
   useEffect(() => {
     return onUnauthenticated(() => {
