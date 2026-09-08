@@ -1,8 +1,9 @@
+import { withAuthRequired } from "@/components/withAuthRequired";
 import { CheckoutPaymentResult } from "@/components/CheckoutPaymentResult";
 import { parseCheckoutResultParams, type CheckoutResultSearchParams } from "@/lib/checkoutResultParams";
 import { Stack, useLocalSearchParams } from "expo-router";
 
-export default function CheckoutSuccessScreen() {
+function CheckoutSuccessScreen() {
   const params = useLocalSearchParams<CheckoutResultSearchParams>();
   return (
     <>
@@ -11,3 +12,5 @@ export default function CheckoutSuccessScreen() {
     </>
   );
 }
+
+export default withAuthRequired(CheckoutSuccessScreen);

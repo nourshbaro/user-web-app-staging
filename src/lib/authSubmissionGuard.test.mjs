@@ -19,6 +19,7 @@ async function loadAuthService(apiModuleSource) {
   const executable = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText
+    .replace('from "expo-file-system"', `from "data:text/javascript,export class File {}"`)
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)
     .replace('from "@/lib/profilePortal"', `from ${JSON.stringify(profilePortalUrl)}`)

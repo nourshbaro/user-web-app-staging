@@ -15,10 +15,13 @@ test("ticket actions expose explicit, backdrop, and Android dismissal", () => {
 });
 
 test("payment and PDF operations use their established shared authorities", () => {
-  assert.match(tickets, /const key = resolveOrderDetailIdentifier\(order\)/);
-  assert.match(tickets, /profileService\.order\(key\)/);
+  assert.match(tickets, /const identifier = resolveOrderDetailIdentifier\(order\)/);
+  assert.match(tickets, /const normalizedOrderId = normalizeOrderIdentifier\(identifier\)/);
+  assert.match(tickets, /profileService\.order\(normalizedOrderId\)/);
+  assert.match(tickets, /\[normalizedOrderId\]: detail/);
+  assert.match(tickets, /orderDetailCache\[normalizeOrderIdentifier\(activeOrderIdentifier\)\]/);
   assert.match(tickets, /const identifier = profilePdfOrderIdentifier\(order\)/);
-  assert.match(tickets, /downloadProfileOrderPdf\(identifier/);
+  assert.match(tickets, /downloadProfileOrderPdf\(\s*normalizedOrderId/);
   assert.match(tickets, /if \(!identifier \|\| downloading\)/);
   assert.match(pdfAuthority, /profileService\.orderPdf\(orderId\)/);
   assert.match(pdfAuthority, /new FileSystem\.File/);
@@ -29,7 +32,7 @@ test("payment and PDF operations use their established shared authorities", () =
 
 test("Profile and My Tickets share the auth-required authority", () => {
   assert.match(profile, /<AuthRequired \/>/);
-  assert.match(tickets, /<AuthRequired \/>/);
+  assert.match(tickets, /withAuthRequired\(TicketsScreen\)/);
 });
 
 test("appearance control is absent from the global header", () => {
@@ -37,8 +40,8 @@ test("appearance control is absent from the global header", () => {
 });
 
 test("ticket faces use equal bounds and flex-balanced center groups", () => {
-  assert.match(tickets, /flipPress: \{ height: 410, position: "relative" \}/);
-  assert.match(tickets, /face: \{ position: "absolute", inset: 0/);
+  assert.match(tickets, /flipPress: \{\s*height: 410,\s*position: "relative",?\s*\}/);
+  assert.match(tickets, /face: \{\s*position: "absolute",\s*inset: 0/);
   assert.match(tickets, /flexRegion: \{ flexGrow: 1/);
   assert.match(tickets, /backCenter: \{ width: "100%", alignItems: "center" \}/);
   assert.doesNotMatch(tickets, /translateY|marginTop: -|top: \d/);

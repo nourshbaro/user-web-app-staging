@@ -1,3 +1,4 @@
+import { withAuthRequired } from "@/components/withAuthRequired";
 import { AppHeader } from "@/components/AppHeader";
 import { Button, Screen, useResponsive, useTheme } from "@/components/ui";
 import { userFacingError } from "@/lib/userFacingError";
@@ -15,7 +16,7 @@ import {
   View,
 } from "react-native";
 
-export default function AboutScreen() {
+function AboutScreen() {
   const theme = useTheme();
   const responsive = useResponsive();
   const [visible, setVisible] = useState(false);
@@ -207,3 +208,5 @@ const styles = StyleSheet.create({
   policy: { paddingVertical: 10 },
   body: { fontSize: 15, lineHeight: 24 },
 });
+
+export default withAuthRequired(AboutScreen);

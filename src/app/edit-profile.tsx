@@ -1,6 +1,7 @@
+import { ChangePassword } from "@/components/ChangePassword";
+import { withAuthRequired } from "@/components/withAuthRequired";
 import { AppHeader } from "@/components/AppHeader";
 import {
-  Input,
   Loading,
   Screen,
   useResponsive,
@@ -16,6 +17,8 @@ import { SymbolView } from "expo-symbols";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   ImageBackground,
   Modal,
   Pressable,
@@ -26,12 +29,11 @@ import {
   View,
 } from "react-native";
 
-const { width: windowWidth } = useWindowDimensions();
 
-const modalWidth = Math.min(Math.max(windowWidth - 32, 280), 520);
-const isTablet = windowWidth >= 768;
-
-export default function EditProfileScreen() {
+function EditProfileScreen() {
+  const { width: windowWidth } = useWindowDimensions();
+  const modalWidth = Math.min(windowWidth - 32, 520);
+  const isTablet = windowWidth >= 768;
   const auth = useAuth();
   const toast = useToast();
   const theme = useTheme();
@@ -192,21 +194,7 @@ export default function EditProfileScreen() {
     }
 
     setPhotoModalVisible(false);
-
-    <PhotoOption
-      title="Remove"
-      subtitle="Use the default profile avatar"
-      icon={{
-        ios: "minus.circle",
-        android: "remove_circle_outline",
-        web: "remove_circle_outline",
-      }}
-      destructive
-      onPress={() => {
-        setPhotoModalVisible(false);
-        setRemovePhotoVisible(true);
-      }}
-    />;
+    setRemovePhotoVisible(true);
   };
 
   const performRemovePhoto = async () => {
@@ -245,6 +233,7 @@ export default function EditProfileScreen() {
       <Stack.Screen options={{ title: "Edit Profile" }} />
       <View style={[styles.shell, { width: responsive.contentWidth }]}>
         <AppHeader title="Edit Profile" />
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
@@ -370,34 +359,12 @@ export default function EditProfileScreen() {
             Password
           </Text>
           <View
-            style={[
-              styles.passwordGroup,
-              {
-                backgroundColor: theme.colors.panel,
-                borderColor: theme.colors.line,
-              },
-            ]}
+            style={styles.passwordGroup}
           >
-            <Input
-              label="Old Password"
-              value=""
-              editable={false}
-              secureTextEntry
-            />
-            <Input
-              label="New Password"
-              value=""
-              editable={false}
-              secureTextEntry
-            />
-            <Input
-              label="Confirm New Password"
-              value=""
-              editable={false}
-              secureTextEntry
-            />
+            <ChangePassword />
           </View>
         </ScrollView>
+        </KeyboardAvoidingView>
       </View>
       <Modal
         visible={photoModalVisible}
@@ -874,10 +841,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   passwordGroup: {
-    borderRadius: 18,
-    borderWidth: 1,
-    padding: 16,
-    gap: 14,
+    paddingHorizontal: 4,
   },
   confirmBackdrop: {
     flex: 1,
@@ -944,3 +908,5 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 });
+
+export default withAuthRequired(EditProfileScreen);

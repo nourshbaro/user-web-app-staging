@@ -1,8 +1,9 @@
+import { withAuthRequired } from "@/components/withAuthRequired";
 import { checkoutResultRouteParams, parseCheckoutResultParams, type CheckoutResultSearchParams } from "@/lib/checkoutResultParams";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect } from "react";
 
-export default function BluePaymentSuccessScreen() {
+function BluePaymentSuccessScreen() {
   const params = useLocalSearchParams<CheckoutResultSearchParams>();
 
   useEffect(() => {
@@ -12,3 +13,5 @@ export default function BluePaymentSuccessScreen() {
 
   return null;
 }
+
+export default withAuthRequired(BluePaymentSuccessScreen);

@@ -7,6 +7,7 @@ import ts from "typescript";
 const apiSource = await readFile(new URL("./api.ts", import.meta.url), "utf8");
 const authSource = await readFile(new URL("./auth.ts", import.meta.url), "utf8");
 const authoritySource = await readFile(new URL("../lib/authSessionOwnership.ts", import.meta.url), "utf8");
+const userFacingErrorSource = await readFile(new URL("../lib/userFacingError.ts", import.meta.url), "utf8");
 
 const toModuleUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const transpile = (source) => ts.transpileModule(source, {
@@ -168,7 +169,7 @@ async function createHarness({
   `);
   const authorityUrl = toModuleUrl(transpile(authoritySource));
   const profilePortalUrl = toModuleUrl(
-    "export const normalizePaginatedProfileResult = (payload) => payload;",
+    transpile(await readFile(new URL("../lib/profilePortal.ts", import.meta.url), "utf8")),
   );
 
   const executableApi = transpile(apiSource)
@@ -181,6 +182,7 @@ async function createHarness({
       'from "@/lib/authTokenStorage"',
       `from ${JSON.stringify(authTokenStorageUrl)}`,
     )
+    .replace('from "expo-file-system"', `from "data:text/javascript,export class File {}"`)
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
     .replaceAll(
       "await fetch(",
@@ -188,11 +190,19 @@ async function createHarness({
     );
   const apiUrl = toModuleUrl(executableApi);
   const api = await import(apiUrl);
+  const userFacingErrorUrl = toModuleUrl(
+    transpile(userFacingErrorSource).replace(
+      'from "@/services/api"',
+      `from ${JSON.stringify(apiUrl)}`,
+    ),
+  );
 
   const executableAuth = transpile(authSource)
+    .replace('from "expo-file-system"', `from "data:text/javascript,export class File {}"`)
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)
     .replace('from "@/lib/profilePortal"', `from ${JSON.stringify(profilePortalUrl)}`)
+    .replace('from "@/lib/userFacingError"', `from ${JSON.stringify(userFacingErrorUrl)}`)
     .replace('from "@/services/api"', `from ${JSON.stringify(apiUrl)}`)
     .replace('from "@/lib/storage"', `from ${JSON.stringify(storageUrl)}`)
     .replaceAll(
@@ -1184,5 +1194,166 @@ test("stale restoration A failure cannot suppress replacement B", async () => {
     await requestB;
   } finally {
     harness.cleanup();
+  }
+});
+
+
+test("change password accepts message-only success without replacing the old token", async () => {
+  const h = await createHarness();
+  try {
+    await install(h, "old-token", 1);
+    const change = h.auth.authService.changePassword(" current password ", " new password ", " new password ");
+    const pending = await h.waitForFetch();
+    assert.equal(pending.request, "/api/auth/change-password");
+    assert.equal(pending.init.method, "POST");
+    assert.deepEqual(JSON.parse(pending.init.body), {
+      current_password: " current password ",
+      password: " new password ",
+      password_confirmation: " new password ",
+    });
+    assert.equal(pending.init.headers.Authorization, "Bearer old-token");
+    pending.pending.resolve(response(200, { message: "Password changed. Please log in again." }));
+    assert.equal(await change, "Password changed. Please log in again.");
+    assert.equal((await h.api.captureAuthenticationSnapshot()).token, "old-token");
+    assert.deepEqual(JSON.parse(h.state.values.get("lfa_portal_user")), { id: 1 });
+  } finally { h.cleanup(); }
+});
+
+test("failed password change preserves authentication for recovery", async () => {
+  const h = await createHarness();
+  try {
+    await install(h, "old-token", 1);
+    const change = h.auth.authService.changePassword("wrong", "new password", "new password");
+    const pending = await h.waitForFetch();
+    pending.pending.resolve(response(422, { message: "private validation text" }));
+    await assert.rejects(change, (error) => error.status === 422);
+    assert.equal((await h.api.captureAuthenticationSnapshot()).token, "old-token");
+  } finally { h.cleanup(); }
+});
+
+test("failed token removal stays fail-closed and still clears persisted user", async () => {
+  const h = await createHarness();
+  try {
+    await install(h, "old-token", 1);
+    h.state.failRemoveKeys.add("lfa_portal_token");
+    await assert.rejects(h.auth.authService.clearSession());
+    assert.equal((await h.api.captureAuthenticationSnapshot()).token, null);
+    assert.equal(h.state.values.has("lfa_portal_user"), false);
+    h.state.failRemoveKeys.clear();
+    await h.api.setToken("new-token");
+    assert.equal((await h.api.captureAuthenticationSnapshot()).token, "new-token");
+  } finally { h.cleanup(); }
+});
+
+for (const filter of ["all", "upcoming", "past"]) {
+  test("portal matches uses the requested filter: " + filter, async () => {
+    const h = await createHarness();
+    try {
+      const request = h.auth.profileService.matches(filter);
+      const pending = await h.waitForFetch();
+      assert.equal(pending.request, "/api/portal/matches?filter=" + filter);
+      const portalMatch = {
+        match_id: 23,
+        kickoff_at: "2026-09-03T21:45:00+03:00",
+        is_upcoming: false,
+        status: "scheduled",
+        home_team: { id: 9, name: "Al Riyadi Al Abasiya", logo: "teams/home.png" },
+        away_team: { id: 5, name: "Al Safa", logo: null },
+        stadium: "Camille Chamoun Sports City Stadium",
+        ticket_count: 1,
+      };
+      pending.pending.resolve(response(200, { data: [portalMatch] }));
+      assert.deepEqual((await request).items, [portalMatch]);
+    } finally { h.cleanup(); }
+  });
+}
+
+test("match tickets preserves paginated normalization and sends the selected numeric match ID", async () => {
+  const h = await createHarness();
+  try {
+    const request = h.auth.profileService.tickets(23);
+    const pending = await h.waitForFetch();
+    assert.equal(pending.request, "/api/portal/tickets?match_id=23");
+    const ticket = {
+      ticket_code: "5108299550",
+      holder_name: "Match 2",
+      status: "valid",
+      order_code: "ORD-1172",
+      match: {
+        id: 23,
+        kickoff_at: "21:45:00",
+        home_team: "Al Riyadi Al Abasiya",
+        home_team_logo: "teams/home.png",
+        away_team: "Al Safa",
+        away_team_logo: null,
+      },
+      zone: { id: 18, name: "Zone A" },
+      seat: null,
+      checked_in_at: null,
+      created_at: "2026-09-03 13:20:00",
+      qr_image: "data:image/png;base64,abc",
+    };
+    pending.pending.resolve(response(200, {
+      data: [ticket],
+      meta: { page: 1, per_page: 20, total: 1, last_page: 1 },
+    }));
+    assert.deepEqual(await request, { items: [ticket], total: 1 });
+  } finally { h.cleanup(); }
+});
+
+test("an ordinary HTTP 503 activates sticky global maintenance without clearing authentication", async () => {
+  const h = await createHarness();
+  try {
+    await install(h, "token-a", 1);
+    let notifications = 0;
+    const unsubscribe = h.api.subscribeMaintenance(() => {
+      notifications += 1;
+    });
+
+    const request = h.api.apiRequest("/portal/matches?filter=all");
+    const pending = await h.waitForFetch();
+    pending.pending.resolve(response(503, { message: "Service unavailable" }));
+
+    await assert.rejects(request, (error) => error.status === 503);
+    assert.equal(h.api.getMaintenanceSnapshot(), true);
+    assert.equal(notifications, 1);
+    assert.equal((await h.api.captureAuthenticationSnapshot()).token, "token-a");
+    assert.deepEqual(JSON.parse(h.state.values.get("lfa_portal_user")), { id: 1 });
+    unsubscribe();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("network failures do not activate maintenance", async () => {
+  const h = await createHarness();
+  try {
+    const request = h.api.apiRequest("/portal/matches?filter=all");
+    const pending = await h.waitForFetch();
+    pending.pending.reject(new Error("offline"));
+
+    await assert.rejects(
+      request,
+      (error) => error.category === "network",
+    );
+    assert.equal(h.api.getMaintenanceSnapshot(), false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("the PDF transport also activates maintenance only for an HTTP 503", async () => {
+  const h = await createHarness();
+  try {
+    await install(h, "token-a", 1);
+    const request = h.auth.profileService.orderPdf("ORD-1172");
+    const pending = await h.waitForFetch();
+    pending.pending.resolve(response(503, { message: "Maintenance in progress" }));
+
+    await assert.rejects(request, { message: "Maintenance in progress" });
+    assert.equal(h.api.getMaintenanceSnapshot(), true);
+    assert.equal((await h.api.captureAuthenticationSnapshot()).token, "token-a");
+  } finally {
+    h.cleanup();
   }
 });

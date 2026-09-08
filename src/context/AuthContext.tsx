@@ -28,6 +28,11 @@ type AuthContextValue = {
   updateUser: (nextUser: User) => Promise<void>;
   logout: () => Promise<void>;
   deleteAccount: (password: string) => Promise<void>;
+  changePassword: (
+    currentPassword: string,
+    password: string,
+    passwordConfirmation: string,
+  ) => Promise<string>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -119,6 +124,30 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [clearSessionState],
   );
 
+  const changePassword = useCallback(async (
+    currentPassword: string,
+    password: string,
+    passwordConfirmation: string,
+  ) => {
+    const successMessage = await authService.changePassword(
+      currentPassword,
+      password,
+      passwordConfirmation,
+    );
+    Keyboard.dismiss();
+    clearSessionState();
+    try {
+      await authService.clearSession();
+    } catch (error) {
+      console.error("Password-change session cleanup failed:", error);
+    }
+    const resetRouter = router as typeof router & { dismissAll?: () => void };
+    resetRouter.dismissAll?.();
+    router.replace("/");
+    requestAnimationFrame(() => router.push("/auth"));
+    return successMessage;
+  }, [clearSessionState]);
+
   const value = useMemo(
     () => ({
       user,
@@ -129,8 +158,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       updateUser,
       logout,
       deleteAccount,
+      changePassword,
     }),
-    [deleteAccount, isReady, logout, refreshAuth, token, updateUser, user],
+    [changePassword, deleteAccount, isReady, logout, refreshAuth, token, updateUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

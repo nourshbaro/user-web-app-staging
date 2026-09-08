@@ -1,3 +1,4 @@
+import { withAuthRequired } from "@/components/withAuthRequired";
 import { AppHeader } from "@/components/AppHeader";
 import { CybersourceUnifiedCheckout } from "@/components/CybersourceUnifiedCheckout";
 import { InternationalPhoneInput } from "@/components/InternationalPhoneInput";
@@ -96,7 +97,7 @@ function readBillingInfo(payload: unknown) {
   };
 }
 
-export default function CheckoutScreen() {
+function CheckoutScreen() {
   const cart = useCart();
   const auth = useAuth();
   const responsive = useResponsive();
@@ -806,3 +807,5 @@ const localGlyph = {
   activeBorder: { borderColor: "#FFFFFF" },
   activeFill: { backgroundColor: "#FFFFFF" },
 };
+
+export default withAuthRequired(CheckoutScreen);

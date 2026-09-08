@@ -26,6 +26,64 @@ export type ApiMatch = {
   stadium?: ApiStadium;
 };
 
+export type PortalMatchTeam = {
+  id: number;
+  name: string;
+  logo: string | null;
+};
+
+export type PortalMatch = {
+  match_id: number;
+  kickoff_at: string;
+  is_upcoming: boolean;
+  status: string;
+  home_team: PortalMatchTeam;
+  away_team: PortalMatchTeam;
+  stadium: string | null;
+  ticket_count: number;
+};
+
+export type PortalTicketMatch = {
+  id: number;
+  kickoff_at: string;
+  home_team: string;
+  home_team_logo: string | null;
+  away_team: string;
+  away_team_logo: string | null;
+};
+
+export type PortalTicketZone = {
+  id: number;
+  name: string;
+};
+
+export type PortalTicketSeat = Record<string, unknown> | null;
+
+export type PortalTicket = {
+  ticket_code: string;
+  holder_name: string;
+  status: string;
+  order_code: string;
+  match: PortalTicketMatch;
+  zone: PortalTicketZone;
+  seat: PortalTicketSeat;
+  checked_in_at: string | null;
+  created_at: string;
+  qr_image: string;
+};
+
+export type PortalTicketsMeta = {
+  page: number;
+  per_page: number;
+  total: number;
+  last_page: number;
+};
+
+export type PortalTicketsResponse = {
+  data: PortalTicket[];
+  meta: PortalTicketsMeta;
+};
+
 export type ApiZone = {
   id: number;
   name: string;

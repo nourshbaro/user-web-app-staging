@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import { authTokenStorage } from "@/lib/authTokenStorage";
 
 type UnauthenticatedListener = () => void;
+type MaintenanceListener = () => void;
 type ApiRequestInit = RequestInit & { skipUnauthenticatedNotify?: boolean };
 export type PersistedAuthenticationValue<T> =
   | { status: "missing" }
@@ -23,6 +24,8 @@ export type AuthenticationRestoration<T> =
   }
   | { status: "stale" };
 const unauthenticatedListeners = new Set<UnauthenticatedListener>();
+const maintenanceListeners = new Set<MaintenanceListener>();
+let maintenanceActive = false;
 const authenticationAuthority = createAuthenticationAuthority();
 let suppressedAuthenticationGeneration: number | null = null;
 let authenticationMutation = Promise.resolve();
@@ -92,11 +95,16 @@ export async function clearToken() {
 }
 
 export async function clearAuthentication(cleanup?: () => Promise<void>) {
-  replaceAuthentication(null);
+  const ownership = replaceAuthentication(null);
+  // A failed disk removal must never make an invalidated token usable again.
+  suppressedAuthenticationGeneration = ownership.generation;
 
   await enqueueAuthenticationMutation(async () => {
-    await authTokenStorage.remove();
-    if (cleanup) await cleanup();
+    try {
+      await authTokenStorage.remove();
+    } finally {
+      if (cleanup) await cleanup();
+    }
   });
 }
 
@@ -275,6 +283,23 @@ export function notifyUnauthenticated() {
   unauthenticatedListeners.forEach((listener) => listener());
 }
 
+export function activateMaintenance() {
+  if (maintenanceActive) return;
+  maintenanceActive = true;
+  maintenanceListeners.forEach((listener) => listener());
+}
+
+export function getMaintenanceSnapshot() {
+  return maintenanceActive;
+}
+
+export function subscribeMaintenance(listener: MaintenanceListener) {
+  maintenanceListeners.add(listener);
+  return () => {
+    maintenanceListeners.delete(listener);
+  };
+}
+
 export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const authentication = await captureAuthenticationSnapshot();
   const token = authentication.token;
@@ -317,6 +342,7 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
+      if (response.status === 503) activateMaintenance();
       if (!skipUnauthenticatedNotify && (response.status === 401 || response.status === 403)) {
         await invalidateAuthentication(authentication);
       }

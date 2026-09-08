@@ -1,10 +1,11 @@
-import { Platform } from "react-native";
 import { config } from "@/lib/config";
 import { normalizePaginatedProfileResult } from "@/lib/profilePortal";
-import { File } from "expo-file-system";
+import { storage } from "@/lib/storage";
+import { backendResponseMessage } from "@/lib/userFacingError";
 import {
   ApiError,
   ApiTransportError,
+  activateMaintenance,
   apiRequest,
   beginAuthenticationLogout,
   captureAuthenticationSnapshot,
@@ -15,18 +16,83 @@ import {
   unwrapData,
   type PersistedAuthenticationValue,
 } from "@/services/api";
-import { storage } from "@/lib/storage";
-import type { Order, User } from "@/types";
+import type {
+  Order,
+  PortalMatch,
+  PortalMatchTeam,
+  PortalTicket,
+  PortalTicketsResponse,
+  User,
+} from "@/types";
+import { File } from "expo-file-system";
+import { Platform } from "react-native";
 
 const USER_KEY = "lfa_portal_user";
 export type OtpTarget =
   | string
   | { userId?: string | null; email?: string | null };
 
-class PdfDownloadHttpError extends Error {}
+export class PdfDownloadHttpError extends Error {}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPortalMatchTeam(value: unknown): value is PortalMatchTeam {
+  return (
+    isRecord(value) &&
+    typeof value.id === "number" &&
+    Number.isInteger(value.id) &&
+    typeof value.name === "string" &&
+    (value.logo === null || typeof value.logo === "string")
+  );
+}
+
+function isPortalMatch(value: unknown): value is PortalMatch {
+  return (
+    isRecord(value) &&
+    typeof value.match_id === "number" &&
+    Number.isInteger(value.match_id) &&
+    value.match_id > 0 &&
+    typeof value.kickoff_at === "string" &&
+    typeof value.is_upcoming === "boolean" &&
+    typeof value.status === "string" &&
+    isPortalMatchTeam(value.home_team) &&
+    isPortalMatchTeam(value.away_team) &&
+    (value.stadium === null || typeof value.stadium === "string") &&
+    typeof value.ticket_count === "number" &&
+    Number.isInteger(value.ticket_count) &&
+    value.ticket_count >= 0
+  );
+}
+
+function isPortalTicket(value: unknown): value is PortalTicket {
+  if (!isRecord(value) || !isRecord(value.match) || !isRecord(value.zone))
+    return false;
+  const match = value.match;
+  const zone = value.zone;
+  return (
+    typeof value.ticket_code === "string" &&
+    typeof value.holder_name === "string" &&
+    typeof value.status === "string" &&
+    typeof value.order_code === "string" &&
+    typeof match.id === "number" &&
+    Number.isInteger(match.id) &&
+    typeof match.kickoff_at === "string" &&
+    typeof match.home_team === "string" &&
+    (match.home_team_logo === null ||
+      typeof match.home_team_logo === "string") &&
+    typeof match.away_team === "string" &&
+    (match.away_team_logo === null ||
+      typeof match.away_team_logo === "string") &&
+    typeof zone.id === "number" &&
+    Number.isInteger(zone.id) &&
+    typeof zone.name === "string" &&
+    (value.seat === null || isRecord(value.seat)) &&
+    (value.checked_in_at === null || typeof value.checked_in_at === "string") &&
+    typeof value.created_at === "string" &&
+    typeof value.qr_image === "string"
+  );
 }
 
 function hasValidOptionalUserFields(value: Record<string, unknown>) {
@@ -234,6 +300,50 @@ export const authService = {
     return payload;
   },
 
+  async changePassword(
+    currentPassword: string,
+    password: string,
+    passwordConfirmation: string,
+  ) {
+    const path = "/auth/change-password";
+    const fields = ["current_password", "password", "password_confirmation"];
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      // console.log("Change password request", {
+      //   path,
+      //   fields,
+      //   authenticated: Boolean(await getToken()),
+      // });
+    }
+    let payload: unknown;
+    try {
+      payload = await apiRequest<unknown>(path, {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: currentPassword,
+          password,
+          password_confirmation: passwordConfirmation,
+        }),
+      });
+    } catch (error) {
+      if (
+        typeof __DEV__ !== "undefined" &&
+        __DEV__ &&
+        error instanceof ApiError
+      ) {
+        console.log("Change password response", {
+          path,
+          status: error.status,
+          body: error.body,
+        });
+      }
+      throw error;
+    }
+    const message = isRecord(payload) ? payload.message : null;
+    return typeof message === "string" && message.trim()
+      ? message
+      : "Password changed. Please log in again.";
+  },
+
   async uploadProfilePicture(file: {
     uri: string;
     name: string;
@@ -280,6 +390,18 @@ export async function registerDevice(
 }
 
 export const profileService = {
+  async matches(filter: "all" | "upcoming" | "past") {
+    const payload = await apiRequest<unknown>(
+      `/portal/matches?filter=${filter}`,
+    );
+    if (!isRecord(payload) || !Array.isArray(payload.data)) {
+      throw new Error("Invalid portal matches collection");
+    }
+    const result = normalizePaginatedProfileResult<unknown>(payload);
+    if (!result.items.every(isPortalMatch))
+      throw new Error("Invalid portal match response");
+    return { items: result.items as PortalMatch[], total: result.total };
+  },
   async billingInfo() {
     return unwrapData(await apiRequest("/portal/billing-info"));
   },
@@ -293,10 +415,21 @@ export const profileService = {
       await apiRequest(`/portal/orders/${encodeURIComponent(String(orderId))}`),
     ) as Record<string, unknown>;
   },
-  async tickets() {
-    return normalizePaginatedProfileResult<Record<string, unknown>>(
-      await apiRequest("/portal/tickets"),
+  async tickets(matchId: string | number) {
+    const payload = await apiRequest<PortalTicketsResponse>(
+      `/portal/tickets?match_id=${encodeURIComponent(String(matchId))}`,
     );
+    if (
+      !isRecord(payload) ||
+      !Array.isArray(payload.data) ||
+      !isRecord(payload.meta)
+    ) {
+      throw new Error("Invalid portal tickets collection");
+    }
+    const result = normalizePaginatedProfileResult<unknown>(payload);
+    if (!result.items.every(isPortalTicket))
+      throw new Error("Invalid portal ticket response");
+    return { items: result.items as PortalTicket[], total: result.total };
   },
   async ticket(ticketCode: string | number) {
     return unwrapData(
@@ -344,12 +477,14 @@ export const profileService = {
           if (didTimeout) throw error;
         }
 
+        if (response.status === 503) activateMaintenance();
+
         if (response.status === 401 || response.status === 403) {
           await invalidateAuthentication(authentication);
         }
 
         throw new PdfDownloadHttpError(
-          body?.message ?? body?.error ?? "Failed to download PDF.",
+          backendResponseMessage(body) ?? "Failed to download PDF.",
         );
       }
 

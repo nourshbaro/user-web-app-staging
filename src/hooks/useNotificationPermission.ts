@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import { AppState, Linking } from "react-native";
 
 import {
@@ -12,18 +13,25 @@ export function useNotificationPermission() {
     useState<NotificationPermissionState>("undetermined");
 
   const [loading, setLoading] = useState(true);
+  const request = useRef(0);
 
   const refresh = useCallback(async () => {
+    const id = ++request.current;
+    setLoading(true);
     try {
       const next = await getNotificationPermissionStatus();
-      setStatus(next);
+      if (id === request.current) setStatus(next);
+    } catch {
+      // Keep the last OS reading; never substitute a local preference.
     } finally {
-      setLoading(false);
+      if (id === request.current) setLoading(false);
     }
   }, []);
 
+  useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
+
   useEffect(() => {
-    void refresh();
+    const activeRequest = request;
 
     const subscription = AppState.addEventListener(
       "change",
@@ -35,6 +43,7 @@ export function useNotificationPermission() {
     );
 
     return () => {
+      ++activeRequest.current;
       subscription.remove();
     };
   }, [refresh]);

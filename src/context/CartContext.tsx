@@ -1,3 +1,4 @@
+import { useAuth } from "@/context/AuthContext";
 import { router } from "expo-router";
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Keyboard, Platform } from "react-native";
@@ -51,6 +52,7 @@ function dismissEverythingAndGoHome() {
 }
 
 export function CartProvider({ children }: PropsWithChildren) {
+  const auth = useAuth();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<Date | null>(null);
   const [items, setItems] = useState<CartItem[]>([]);
@@ -240,6 +242,10 @@ export function CartProvider({ children }: PropsWithChildren) {
     const refreshGuard = refreshGuardRef.current;
     mountedRef.current = true;
     void sessionAuthorityRef.current.enqueuePersistence(async () => {
+      if (!auth.isReady || !auth.isAuthenticated) {
+        await storage.remove(SESSION_KEY);
+        return;
+      }
       const stored = await storage.get(SESSION_KEY);
       if (!mountedRef.current) return;
 
@@ -262,7 +268,7 @@ export function CartProvider({ children }: PropsWithChildren) {
       mountedRef.current = false;
       refreshGuard.invalidate();
     };
-  }, [resetCartState]);
+  }, [auth.isReady, auth.isAuthenticated, resetCartState]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -299,6 +305,7 @@ export function CartProvider({ children }: PropsWithChildren) {
   const addItem = useCallback((
     payload: Omit<AddCartRequest, "checkout_session_id">,
   ) => {
+    if (!auth.isReady || !auth.isAuthenticated) { router.push("/auth"); return Promise.resolve(); }
     const expected = sessionAuthorityRef.current.captureCurrent();
 
     return addMutationGuardRef.current.run(
@@ -381,7 +388,7 @@ export function CartProvider({ children }: PropsWithChildren) {
         });
       }),
     );
-  }, [applyCart, items, operationQueue, publishCartResponseIfCurrent, resetCartState]);
+  }, [auth.isReady, auth.isAuthenticated, applyCart, items, operationQueue, publishCartResponseIfCurrent, resetCartState]);
 
   const removeItem = useCallback((lockKey: string) => {
     const expected = sessionAuthorityRef.current.capture();

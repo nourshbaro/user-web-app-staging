@@ -1,3 +1,4 @@
+import { useAuth } from "@/context/AuthContext";
 import { AppHeader } from "@/components/AppHeader";
 import { Button, Card, Empty, Loading, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
@@ -44,6 +45,7 @@ export default function MatchDetail() {
   const seatRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const selectedZoneRef = useRef<ApiZone | null>(null);
   const selectedZoneMatchIdRef = useRef<string | null>(null);
+  const auth = useAuth();
   const cart = useCart();
   const { openCartSheet } = useCartSheet();
   const toast = useToast();
@@ -220,6 +222,7 @@ export default function MatchDetail() {
   };
 
   const addToCart = async () => {
+    if (!auth.isAuthenticated) { router.push("/cart"); return; }
     if (!selectedZone) return;
     try {
       await cart.addItem({

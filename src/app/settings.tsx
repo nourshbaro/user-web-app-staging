@@ -1,12 +1,14 @@
 import { AccountDeletionModal } from "@/components/AccountDeletionModal";
 import { AppHeader } from "@/components/AppHeader";
 import { Screen, useResponsive, useTheme } from "@/components/ui";
+import { withAuthRequired } from "@/components/withAuthRequired";
+import { useToast } from "@/context/ToastContext";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
-import type { ThemeMode } from "@/lib/themePalette";
-import { SymbolView } from "expo-symbols";
-import { Stack } from "expo-router";
-import { useState } from "react";
 import { registerPushDevice } from "@/lib/registerPushDevice";
+import type { ThemeMode } from "@/lib/themePalette";
+import { Stack } from "expo-router";
+import { SymbolView } from "expo-symbols";
+import { useEffect, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -21,36 +23,37 @@ const APPEARANCE: {
   label: string;
   icon: any;
 }[] = [
-    {
-      value: "system",
-      label: "System",
-      icon: {
-        ios: "circle.lefthalf.filled",
-        android: "contrast",
-        web: "contrast",
-      },
+  {
+    value: "system",
+    label: "System",
+    icon: {
+      ios: "circle.lefthalf.filled",
+      android: "contrast",
+      web: "contrast",
     },
-    {
-      value: "light",
-      label: "Light",
-      icon: {
-        ios: "sun.max",
-        android: "light_mode",
-        web: "light_mode",
-      },
+  },
+  {
+    value: "light",
+    label: "Light",
+    icon: {
+      ios: "sun.max",
+      android: "light_mode",
+      web: "light_mode",
     },
-    {
-      value: "dark",
-      label: "Dark",
-      icon: {
-        ios: "moon",
-        android: "dark_mode",
-        web: "dark_mode",
-      },
+  },
+  {
+    value: "dark",
+    label: "Dark",
+    icon: {
+      ios: "moon",
+      android: "dark_mode",
+      web: "dark_mode",
     },
-  ];
+  },
+];
 
-export default function SettingsScreen() {
+function SettingsScreen() {
+  const toast = useToast();
   const responsive = useResponsive();
   const theme = useTheme();
 
@@ -59,7 +62,6 @@ export default function SettingsScreen() {
   const {
     status: pushPermission,
     loading: pushPermissionLoading,
-    requestPermission,
     openSettings,
   } = useNotificationPermission();
 
@@ -74,28 +76,21 @@ export default function SettingsScreen() {
         ? "Enable notifications in device settings"
         : "Allow notifications from LFA";
 
+  useEffect(() => {
+    if (pushGranted) void registerPushDevice().catch(() => {});
+  }, [pushGranted]);
+
   const handlePushPress = async () => {
-    if (pushPermissionLoading) {
-      return;
-    }
-
-    if (pushGranted) {
-      return;
-    }
-
-    if (pushDenied) {
+    if (pushPermissionLoading) return;
+    try {
       await openSettings();
-      return;
-    }
-
-    const next = await requestPermission();
-
-    if (next === "granted") {
-      try {
-        await registerPushDevice();
-      } catch (error) {
-        console.error("Device registration failed:", error);
-      }
+    } catch {
+      toast.showToast({
+        variant: "error",
+        title: "Could not open settings",
+        message:
+          "Open your device settings and select LFA to change notification permission.",
+      });
     }
   };
 
@@ -122,12 +117,20 @@ export default function SettingsScreen() {
               onPress={handlePushPress}
               trailing={
                 <Switch
+                  trackColor={{
+                    false: theme.colors.muted,
+                    true: theme.colors.primary,
+                  }}
+                  thumbColor={
+                    theme.isDark ? theme.colors.ink : theme.colors.panel
+                  }
+                  ios_backgroundColor={theme.colors.muted}
                   value={pushGranted}
-                  disabled={pushPermissionLoading || pushGranted}
+                  disabled={pushPermissionLoading}
                   accessibilityLabel="Push Notifications permission"
                   accessibilityState={{
                     checked: pushGranted,
-                    disabled: pushPermissionLoading || pushGranted,
+                    disabled: pushPermissionLoading,
                   }}
                   onValueChange={() => {
                     void handlePushPress();
@@ -148,6 +151,14 @@ export default function SettingsScreen() {
               }}
               trailing={
                 <Switch
+                  trackColor={{
+                    false: theme.colors.muted,
+                    true: theme.colors.primary,
+                  }}
+                  thumbColor={
+                    theme.isDark ? theme.colors.ink : theme.colors.panel
+                  }
+                  ios_backgroundColor={theme.colors.muted}
                   value={false}
                   disabled
                   accessibilityLabel="Email Notifications unavailable"
@@ -199,22 +210,15 @@ export default function SettingsScreen() {
               </View>
 
               <View style={styles.copy}>
-                <Text
-                  style={[styles.rowTitle, { color: theme.colors.ink }]}
-                >
+                <Text style={[styles.rowTitle, { color: theme.colors.ink }]}>
                   Appearance
                 </Text>
 
-                <Text style={theme.styles.muted}>
-                  Choose how the app looks
-                </Text>
+                <Text style={theme.styles.muted}>Choose how the app looks</Text>
               </View>
             </View>
 
-            <View
-              accessibilityRole="radiogroup"
-              style={styles.appearanceGrid}
-            >
+            <View accessibilityRole="radiogroup" style={styles.appearanceGrid}>
               {APPEARANCE.map((option) => {
                 const selected = theme.mode === option.value;
 
@@ -242,9 +246,7 @@ export default function SettingsScreen() {
                       name={option.icon}
                       size={20}
                       tintColor={
-                        selected
-                          ? theme.colors.primary
-                          : theme.colors.muted
+                        selected ? theme.colors.primary : theme.colors.muted
                       }
                       fallback={<Text>{option.label[0]}</Text>}
                     />
@@ -299,9 +301,7 @@ function Section({
 
   return (
     <View style={styles.section}>
-      <Text
-        style={[styles.sectionTitle, { color: theme.colors.muted }]}
-      >
+      <Text style={[styles.sectionTitle, { color: theme.colors.muted }]}>
         {title}
       </Text>
 
@@ -324,12 +324,7 @@ function Divider() {
   const theme = useTheme();
 
   return (
-    <View
-      style={[
-        styles.divider,
-        { backgroundColor: theme.colors.line },
-      ]}
-    />
+    <View style={[styles.divider, { backgroundColor: theme.colors.line }]} />
   );
 }
 
@@ -352,18 +347,11 @@ function SettingRow({
 
   const content = (
     <>
-      <View
-        style={[
-          styles.icon,
-          { backgroundColor: theme.colors.panelSoft },
-        ]}
-      >
+      <View style={[styles.icon, { backgroundColor: theme.colors.panelSoft }]}>
         <SymbolView
           name={icon}
           size={19}
-          tintColor={
-            destructive ? theme.colors.danger : theme.colors.primary
-          }
+          tintColor={destructive ? theme.colors.danger : theme.colors.primary}
           fallback={<Text>{title[0]}</Text>}
         />
       </View>
@@ -373,18 +361,14 @@ function SettingRow({
           style={[
             styles.rowTitle,
             {
-              color: destructive
-                ? theme.colors.danger
-                : theme.colors.ink,
+              color: destructive ? theme.colors.danger : theme.colors.ink,
             },
           ]}
         >
           {title}
         </Text>
 
-        {detail ? (
-          <Text style={theme.styles.muted}>{detail}</Text>
-        ) : null}
+        {detail ? <Text style={theme.styles.muted}>{detail}</Text> : null}
       </View>
 
       {trailing}
@@ -397,10 +381,7 @@ function SettingRow({
         accessibilityRole="button"
         accessibilityLabel={title}
         onPress={onPress}
-        style={({ pressed }) => [
-          styles.row,
-          pressed && styles.pressed,
-        ]}
+        style={({ pressed }) => [styles.row, pressed && styles.pressed]}
       >
         {content}
       </Pressable>
@@ -512,3 +493,4 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
 });
+export default withAuthRequired(SettingsScreen);

@@ -1,3 +1,4 @@
+import { withAuthRequired } from "@/components/withAuthRequired";
 import { router } from "expo-router";
 import { ScrollView, Text, View } from "react-native";
 import { AppHeader } from "@/components/AppHeader";
@@ -8,7 +9,7 @@ import { groupCartItems } from "@/lib/cartDisplay";
 import { formatMoney, minutesSeconds } from "@/lib/format";
 import { userFacingError } from "@/lib/userFacingError";
 
-export default function CartScreen() {
+function CartScreen() {
   const cart = useCart();
   const responsive = useResponsive();
   const theme = useTheme();
@@ -147,3 +148,5 @@ const local = {
   itemMain: { flex: 1, gap: 4 },
   itemPrice: { fontSize: 16, fontWeight: "900" as const },
 };
+
+export default withAuthRequired(CartScreen);

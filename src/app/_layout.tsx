@@ -18,6 +18,7 @@ import {
 
 import { handleNotificationNavigation } from "@/lib/notificationNavigation";
 import { registerPushDevice } from "@/lib/registerPushDevice";
+import { MaintenanceGuard } from "@/components/maintenance/MaintenanceGuard";
 
 SplashScreen.preventAutoHideAsync();
 SplashScreen.setOptions({ duration: 500, fade: true });
@@ -71,8 +72,8 @@ useEffect(() => {
     }
   };
 
-  void setupNotifications();
-}, []);
+  if (auth.isReady && auth.isAuthenticated) void setupNotifications();
+}, [auth.isReady, auth.isAuthenticated]);
 
 useEffect(() => {
   const handleInitialNotification = async () => {
@@ -122,12 +123,12 @@ useEffect(() => {
   }
 
   return (
-    <CartProvider>
-      <ToastProvider>
+    <ToastProvider>
+      <CartProvider key={auth.isAuthenticated ? auth.userCacheKey ?? "authenticated" : "guest"}>
         <CartSheetProvider>
           <StatusBar style={theme.isDark ? "light" : "dark"} />
-
-          <Stack
+          <MaintenanceGuard>
+            <Stack
             screenOptions={{
               headerStyle: { backgroundColor: theme.colors.panel },
               headerTintColor: theme.colors.ink,
@@ -168,9 +169,10 @@ useEffect(() => {
               name="match/[id]"
               options={{ headerShown: false }}
             />
-          </Stack>
+            </Stack>
+          </MaintenanceGuard>
         </CartSheetProvider>
-      </ToastProvider>
-    </CartProvider>
+      </CartProvider>
+    </ToastProvider>
   );
 }

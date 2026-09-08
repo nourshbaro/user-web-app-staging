@@ -1,3 +1,4 @@
+import { withAuthRequired } from "@/components/withAuthRequired";
 import { AuthRequired } from "@/components/AuthRequired";
 import { ContactBrandIcon } from "@/components/ContactBrandIcon";
 import { MainHeader } from "@/components/MainHeader";
@@ -20,7 +21,7 @@ import {
   View,
 } from "react-native";
 
-export default function ProfileScreen() {
+function ProfileScreen() {
   const auth = useAuth();
   const toast = useToast();
   const theme = useTheme();
@@ -434,3 +435,5 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 });
+
+export default withAuthRequired(ProfileScreen);

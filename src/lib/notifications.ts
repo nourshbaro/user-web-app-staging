@@ -34,9 +34,6 @@ export async function getNotificationPermissionStatus(): Promise<NotificationPer
 }
 
 export async function requestNotificationPermission() {
-  const current =
-    await Notifications.getPermissionsAsync();
-
   const requested =
     await Notifications.requestPermissionsAsync();
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { profilePdfOrderIdentifier, resolveOrderDetailIdentifier, resolveTicketMatchId } from "./ticketActions.ts";
+import { normalizeOrderIdentifier, profilePdfOrderIdentifier, resolveOrderDetailIdentifier, resolveTicketMatchId } from "./ticketActions.ts";
+test("order identifiers remove only a leading ORD- prefix", () => { assert.equal(normalizeOrderIdentifier("ORD-1173"), "1173"); assert.equal(normalizeOrderIdentifier("1173"), "1173"); assert.equal(normalizeOrderIdentifier("X-ORD-1173"), "X-ORD-1173"); });
 test("order detail uses the working web contract's order_number", () => { const order = { id: 118, order_number: "118", order_code: "ORD-1118" }; assert.equal(resolveOrderDetailIdentifier(order), "118"); assert.equal(resolveOrderDetailIdentifier({ id: 118, order_code: "ORD-1118" }), null); });
 test("PDF identifier exactly follows the proven Profile detail precedence", () => { assert.equal(profilePdfOrderIdentifier({ order_number: "118", order_code: "ORD-1118", id: 9 }), "118"); assert.equal(profilePdfOrderIdentifier({ order_code: "ORD-1118", code: "fallback", id: 9 }), "ORD-1118"); assert.equal(profilePdfOrderIdentifier({ code: "CODE", reference: "REF", id: 9 }), "CODE"); assert.equal(profilePdfOrderIdentifier({ reference: "REF", id: 9 }), "REF"); assert.equal(profilePdfOrderIdentifier({ id: 9 }), "9"); assert.equal(profilePdfOrderIdentifier({}), null); });
 test("See Match prefers the selected ticket's authoritative match id", () => { assert.equal(resolveTicketMatchId({ match: { id: 42 } }, { match: { id: 99 } }), "42"); assert.equal(resolveTicketMatchId({ match_id: "43" }, {}), "43"); });

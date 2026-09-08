@@ -10,6 +10,10 @@ const layoutSource = await readFile(
   new URL("../app/_layout.tsx", import.meta.url),
   "utf8",
 );
+const authContextSource = await readFile(
+  new URL("../context/AuthContext.tsx", import.meta.url),
+  "utf8",
+);
 
 function extractBottomNavigation() {
   const match = uiSource.match(
@@ -21,9 +25,8 @@ function extractBottomNavigation() {
 }
 
 function findScreenDeclaration(routeName) {
-  const declaration = layoutSource
-    .split(/\r?\n/)
-    .find((line) => line.includes(`<Stack.Screen name="${routeName}"`));
+  const declaration = [...layoutSource.matchAll(/<Stack\.Screen\s+name="([^"]+)"[\s\S]*?\/>/g)]
+    .find((match) => match[1] === routeName)?.[0];
 
   assert.ok(declaration, `Stack.Screen declaration for ${routeName} was not found.`);
   return declaration;
@@ -79,4 +82,22 @@ test("detail and action screens retain their existing transition configuration",
     assert.match(declaration, /headerShown:\s*false/);
     assert.doesNotMatch(declaration, /\banimation\s*:/);
   }
+});
+
+test("password-change success clears auth and leaves Login above public Home", () => {
+  const changePassword = authContextSource.match(
+    /const changePassword = useCallback\([\s\S]*?\}, \[clearSessionState\]\);/,
+  );
+
+  assert.ok(changePassword, "Change Password auth flow was not found.");
+  assert.match(changePassword[0], /clearSessionState\(\)/);
+  assert.match(changePassword[0], /await authService\.clearSession\(\)/);
+  assert.doesNotMatch(changePassword[0], /authService\.logout\(\)/);
+  assert.match(changePassword[0], /dismissAll\?\.\(\)/);
+  assert.match(changePassword[0], /router\.replace\("\/"\)/);
+  assert.match(changePassword[0], /router\.push\("\/auth"\)/);
+  assert.ok(
+    changePassword[0].indexOf('router.replace("/")') <
+      changePassword[0].indexOf('router.push("/auth")'),
+  );
 });

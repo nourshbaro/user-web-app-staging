@@ -1,3 +1,5 @@
+import { useAuth } from "@/context/AuthContext";
+import { router } from "expo-router";
 import { createContext, PropsWithChildren, useContext, useState } from "react";
 import { CartSheet } from "@/components/CartSheet";
 
@@ -9,12 +11,13 @@ type CartSheetContextValue = {
 const CartSheetContext = createContext<CartSheetContextValue | null>(null);
 
 export function CartSheetProvider({ children }: PropsWithChildren) {
+  const auth = useAuth();
   const [visible, setVisible] = useState(false);
 
   return (
-    <CartSheetContext.Provider value={{ openCartSheet: () => setVisible(true), closeCartSheet: () => setVisible(false) }}>
+    <CartSheetContext.Provider value={{ openCartSheet: () => { if (auth.isAuthenticated) setVisible(true); else router.push("/cart"); }, closeCartSheet: () => setVisible(false) }}>
       {children}
-      <CartSheet visible={visible} onClose={() => setVisible(false)} />
+      <CartSheet visible={auth.isAuthenticated && visible} onClose={() => setVisible(false)} />
     </CartSheetContext.Provider>
   );
 }
