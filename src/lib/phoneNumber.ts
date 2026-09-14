@@ -204,6 +204,16 @@ export function updateNationalPhone(
     };
 }
 
+/**
+ * Converts an E.164 canonical phone number (e.g. "+96171123456") into the
+ * digits-only format the backend expects (e.g. "96171123456").
+ */
+export function toBackendPhoneDigits(
+    canonicalPhone: string | null | undefined,
+): string {
+    return canonicalPhone ? canonicalPhone.replace(/^\+/, "") : "";
+}
+
 export function initializePhoneValue(
     savedPhone: string | null | undefined,
     fallbackPhoneCountry: PhoneCountryCode = DEFAULT_PHONE_COUNTRY,

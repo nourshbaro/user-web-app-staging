@@ -3,14 +3,15 @@ import { Pressable, Text, View } from "react-native";
 import { useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
 import { useCartSheet } from "@/context/CartSheetContext";
+import { CartTimerPill } from "@/components/CartTimer";
 import { groupCartItems } from "@/lib/cartDisplay";
-import { minutesSeconds } from "@/lib/format";
 
 type HeaderActionsProps = {
   hideCart?: boolean;
+  onCartPress?: () => void;
 };
 
-export function HeaderActions({ hideCart = false }: HeaderActionsProps) {
+export function HeaderActions({ hideCart = false, onCartPress }: HeaderActionsProps) {
   const theme = useTheme();
   const cart = useCart();
   const { openCartSheet } = useCartSheet();
@@ -27,7 +28,7 @@ export function HeaderActions({ hideCart = false }: HeaderActionsProps) {
     <View style={local.headerActions}>
       {!hideCart ? (
         <Pressable
-          onPress={openCartSheet}
+          onPress={onCartPress ?? openCartSheet}
           style={[actionButton, local.cartButton, cartCount > 0 && { borderColor: theme.colors.primary }]}
           accessibilityLabel="Cart"
         >
@@ -45,13 +46,11 @@ export function HeaderActions({ hideCart = false }: HeaderActionsProps) {
               >
                 <Text style={local.cartBadgeText}>{cartCount}</Text>
               </View>
-              <View style={[local.cartTimerBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.bg }]}>
-                <Text style={local.cartTimerText}>{minutesSeconds(cart.secondsLeft)}</Text>
-              </View>
             </>
           ) : null}
         </Pressable>
       ) : null}
+      {cartCount > 0 ? <CartTimerPill seconds={cart.secondsLeft} /> : null}
     </View>
   );
 }
@@ -99,23 +98,5 @@ const local = {
     fontSize: 10,
     fontWeight: "900" as const,
     lineHeight: 12,
-  },
-  cartTimerBadge: {
-    position: "absolute" as const,
-    right: -7,
-    bottom: -9,
-    minWidth: 34,
-    height: 18,
-    borderRadius: 9,
-    paddingHorizontal: 5,
-    borderWidth: 2,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  cartTimerText: {
-    color: "#FFFFFF",
-    fontSize: 9,
-    fontWeight: "900" as const,
-    lineHeight: 11,
   },
 };

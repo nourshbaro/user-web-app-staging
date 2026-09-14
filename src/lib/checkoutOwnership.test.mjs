@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   createCheckoutBilling,
-  getActiveBillingForm,
   getActiveCaptureState,
 } from "./checkoutOwnership.ts";
 
@@ -19,107 +19,6 @@ test("the current session capture context is active", () => {
     getActiveCaptureState({ sessionId: "B", status: "ready", context: "context-b" }, "B"),
     { sessionId: "B", status: "ready", context: "context-b" },
   );
-});
-
-test("user A billing data is inactive for user B even with matching visible fields", () => {
-  const userA = {
-    owner: "id:1",
-    name: "Same",
-    email: "same@example.com",
-    phoneCountry: "PS",
-    phoneNationalValue: "0599 123 456",
-    canonicalPhone: "+970599123456",
-  };
-  const userB = {
-    owner: "id:2",
-    name: "Same",
-    email: "same@example.com",
-    phoneCountry: "LB",
-    phoneNationalValue: "",
-    canonicalPhone: null,
-  };
-
-  assert.deepEqual(getActiveBillingForm(userA, "id:2", userB), userB);
-});
-
-test("logout makes authenticated billing data inactive", () => {
-  const userA = {
-    owner: "id:1",
-    name: "User A",
-    email: "a@example.com",
-    phoneCountry: "FR",
-    phoneNationalValue: "06 12 34 56 78",
-    canonicalPhone: "+33612345678",
-  };
-  const guest = {
-    owner: null,
-    name: "",
-    email: "",
-    phoneCountry: "LB",
-    phoneNationalValue: "",
-    canonicalPhone: null,
-  };
-
-  assert.deepEqual(getActiveBillingForm(userA, null, guest), guest);
-});
-
-test("current-user billing result is active", () => {
-  const current = {
-    owner: "id:2",
-    name: "User B",
-    email: "b@example.com",
-    phoneCountry: "US",
-    phoneNationalValue: "(202) 555-0123",
-    canonicalPhone: "+12025550123",
-  };
-
-  assert.equal(getActiveBillingForm(current, "id:2", current), current);
-});
-
-test("current-user edited billing phone values remain active together", () => {
-  const edited = {
-    owner: "id:2",
-    name: "Edited",
-    email: "edited@example.com",
-    phoneCountry: "PS",
-    phoneNationalValue: "0599 123 456",
-    canonicalPhone: "+970599123456",
-  };
-  const fallback = {
-    owner: "id:2",
-    name: "Original",
-    email: "original@example.com",
-    phoneCountry: "LB",
-    phoneNationalValue: "",
-    canonicalPhone: null,
-  };
-
-  assert.equal(getActiveBillingForm(edited, "id:2", fallback), edited);
-});
-
-test("stale owner cannot publish any phone-country state", () => {
-  const stale = {
-    owner: "id:1",
-    name: "Stale",
-    email: "stale@example.com",
-    phoneCountry: "FR",
-    phoneNationalValue: "06 12 34 56 78",
-    canonicalPhone: "+33612345678",
-  };
-  const active = {
-    owner: "id:2",
-    name: "Active",
-    email: "active@example.com",
-    phoneCountry: "LB",
-    phoneNationalValue: "71 123 456",
-    canonicalPhone: "+96171123456",
-  };
-
-  const result = getActiveBillingForm(stale, "id:2", active);
-
-  assert.equal(result.phoneCountry, "LB");
-  assert.equal(result.phoneNationalValue, "71 123 456");
-  assert.equal(result.canonicalPhone, "+96171123456");
 });
 
 test("checkout billing rejects a missing canonical phone", () => {
@@ -151,4 +50,22 @@ test("checkout billing always retains Lebanon as billing country", () => {
       country: "LB",
     });
   }
+});
+
+test("checkout maps billing fields from the current authenticated user", async () => {
+  const source = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const name = auth\.user\?\.name\.trim\(\) \?\? ""/);
+  assert.match(source, /const email = auth\.user\?\.email\.trim\(\) \?\? ""/);
+  assert.match(source, /auth\.user\?\.phone \?\? ""/);
+  assert.match(source, /createCheckoutBilling\(name, email, canonicalPhone\)/);
+  assert.doesNotMatch(source, /billingForm|billingInfo|profileService/);
+  assert.doesNotMatch(source, /\/portal\/billing-info/);
+});
+
+test("checkout refreshes the shared auth profile on focus and blocks while it refreshes", async () => {
+  const source = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /void refreshUser\(\)\.catch/);
+  assert.match(source, /loading \|\| auth\.isRefreshingUser/);
 });

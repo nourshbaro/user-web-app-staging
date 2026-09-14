@@ -1,11 +1,12 @@
-import { router } from "expo-router";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { BottomSheetModal } from "@/components/BottomSheetModal";
 import { Button, Card, Empty, useResponsive, useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
 import { groupCartItems } from "@/lib/cartDisplay";
-import { formatMoney, minutesSeconds } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import { userFacingError } from "@/lib/userFacingError";
+import { router } from "expo-router";
+import { ScrollView, Text, View } from "react-native";
 
 type CartSheetProps = {
   visible: boolean;
@@ -23,158 +24,186 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
   const removeItems = async (lockKeys: string[]) => {
     try {
       await cart.removeItems(lockKeys);
-      toast.showToast({ variant: "success", title: "Removed from cart", message: "The ticket reservation was removed." });
+      toast.showToast({
+        variant: "success",
+        title: "Removed from cart",
+        message: "The ticket reservation was removed.",
+      });
     } catch (err) {
       toast.showToast({
         variant: "error",
         title: "Could not remove item",
-        message: userFacingError(err, "Could not update your cart. Please try again."),
+        message: userFacingError(
+          err,
+          "Could not update your cart. Please try again.",
+        ),
       });
     }
   };
 
+  const viewCart = () => {
+    onClose();
+    router.navigate("/cart");
+  };
+
   const checkout = () => {
     onClose();
-    router.push("/checkout");
+    router.navigate("/checkout/ticket-holders");
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={[local.modalOverlay, theme.isDark && local.modalOverlayDark]}>
-        <View style={[local.modalSheet, { backgroundColor: theme.colors.bg, borderColor: theme.colors.line }]}> 
-          <View style={[local.sheetHandle, { backgroundColor: theme.colors.muted }]} />
-          <View style={[local.modalHeader, { borderBottomColor: theme.colors.line }]}>
-            <View style={local.modalTitleWrap}>
-              <Text style={[local.modalTitle, { color: theme.colors.ink }]}>Your cart</Text>
-              <Text style={[theme.styles.muted, local.modalSubtitle]}>
-                {groupedItems.length ? `${groupedItems.length} item${groupedItems.length > 1 ? "s" : ""} reserved` : "No active reservation"}
-              </Text>
-            </View>
-            <Pressable onPress={onClose} style={[local.closeButton, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-              <Text style={[local.closeText, { color: theme.colors.ink }]}>Close</Text>
-            </Pressable>
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={local.content}>
-            {groupedItems.length ? (
-              <View style={[local.cartLayout, isWide && local.cartLayoutWide]}>
-                <View style={[local.itemsColumn, isWide && local.itemsColumnWide]}>
-                  <Card>
-                    <View style={theme.styles.row}>
-                      <Text style={theme.styles.h2}>Reservation</Text>
-                      <Text style={[local.timer, { color: theme.colors.primary }]}>{minutesSeconds(cart.secondsLeft)}</Text>
-                    </View>
-                    <Text style={theme.styles.muted}>Checkout before the timer ends to keep these tickets.</Text>
-                  </Card>
-
-                  {groupedItems.map((item) => (
-                    <Card key={item.key}>
-                      <View style={theme.styles.row}>
-                        <View style={local.itemMain}>
-                          <Text style={theme.styles.h2}>{item.zone_name ?? "Ticket"}</Text>
-                          <Text style={theme.styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
-                          <Text style={theme.styles.muted}>
-                            {item.seats.length
-                              ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}`
-                              : `Qty: ${item.quantity}`}
-                          </Text>
-                        </View>
-                        <Text style={[local.itemPrice, { color: theme.colors.primary }]}>{formatMoney(item.subtotal, item.currency)}</Text>
-                      </View>
-                      <View style={theme.styles.row}>
-                        <Text style={theme.styles.muted}>{formatMoney(item.unit_price, item.currency)} / ticket</Text>
-                        <Button title="Remove" variant="danger" onPress={() => void removeItems(item.lockKeys)} />
-                      </View>
-                    </Card>
-                  ))}
+    <BottomSheetModal
+      visible={visible}
+      onClose={onClose}
+      title="Your cart"
+      subtitle={
+        groupedItems.length
+          ? `${groupedItems.length} item${groupedItems.length > 1 ? "s" : ""} reserved`
+          : "No active reservation"
+      }
+    >
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={local.content}
+      >
+        {groupedItems.length ? (
+          <View style={[local.cartLayout, isWide && local.cartLayoutWide]}>
+            <View style={[local.itemsColumn, isWide && local.itemsColumnWide]}>
+              {/* <Card>
+                <View style={theme.styles.row}>
+                  <Text style={theme.styles.h2}>Reservation</Text>
+                  <CartTimerPill seconds={cart.secondsLeft} />
                 </View>
+                <Text style={theme.styles.muted}>Checkout before the timer ends to keep these tickets.</Text>
+              </Card> */}
 
-                <View style={[local.summaryColumn, isWide && local.summaryColumnWide]}>
-                  <Card>
-                    <Text style={theme.styles.h2}>Order summary</Text>
-                    <Text style={theme.styles.muted}>{groupedItems.length} item{groupedItems.length === 1 ? "" : "s"} reserved</Text>
-                    {groupedItems.map((item) => (
-                      <View key={item.key} style={[local.summaryItem, { borderTopColor: theme.colors.line }]}>
-                        <View style={local.summaryMain}>
-                          <Text numberOfLines={1} style={[local.summaryTitle, { color: theme.colors.ink }]}>{item.zone_name ?? "Ticket"}</Text>
-                          <Text numberOfLines={1} style={theme.styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
-                          <Text style={theme.styles.muted}>
-                            {item.seats.length
-                              ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}`
-                              : `Qty: ${item.quantity}`}
-                          </Text>
-                        </View>
-                        <Text style={[local.summaryPrice, { color: theme.colors.ink }]}>{formatMoney(item.subtotal, item.currency)}</Text>
-                      </View>
-                    ))}
-                    <View style={[local.summaryTotal, { borderTopColor: theme.colors.line }]}>
-                      <Text style={theme.styles.h2}>Total</Text>
-                      <Text style={theme.styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
+              {groupedItems.map((item) => (
+                <Card key={item.key}>
+                  <View style={theme.styles.row}>
+                    <View style={local.itemMain}>
+                      <Text style={theme.styles.h2}>
+                        {item.zone_name ?? "Ticket"}
+                      </Text>
+                      <Text style={theme.styles.muted}>
+                        {item.match_title ?? `Match ${item.match_id}`}
+                      </Text>
+                      <Text style={theme.styles.muted}>
+                        {item.seats.length
+                          ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}`
+                          : `Qty: ${item.quantity}`}
+                      </Text>
                     </View>
-                  </Card>
+                    <Text
+                      style={[local.itemPrice, { color: theme.colors.primary }]}
+                    >
+                      {formatMoney(item.subtotal, item.currency)}
+                    </Text>
+                  </View>
+                  <View style={theme.styles.row}>
+                    <Text style={theme.styles.muted}>
+                      {formatMoney(item.unit_price, item.currency)} / ticket
+                    </Text>
+                    <Button
+                      title="Remove"
+                      variant="danger"
+                      onPress={() => void removeItems(item.lockKeys)}
+                    />
+                  </View>
+                </Card>
+              ))}
+            </View>
 
+            <View
+              style={[local.summaryColumn, isWide && local.summaryColumnWide]}
+            >
+              {/* <Card>
+                <Text style={theme.styles.h2}>Order summary</Text>
+                <Text style={theme.styles.muted}>
+                  {groupedItems.length} item
+                  {groupedItems.length === 1 ? "" : "s"} reserved
+                </Text>
+                {groupedItems.map((item) => (
+                  <View
+                    key={item.key}
+                    style={[
+                      local.summaryItem,
+                      { borderTopColor: theme.colors.line },
+                    ]}
+                  >
+                    <View style={local.summaryMain}>
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          local.summaryTitle,
+                          { color: theme.colors.ink },
+                        ]}
+                      >
+                        {item.zone_name ?? "Ticket"}
+                      </Text>
+                      <Text numberOfLines={1} style={theme.styles.muted}>
+                        {item.match_title ?? `Match ${item.match_id}`}
+                      </Text>
+                      <Text style={theme.styles.muted}>
+                        {item.seats.length
+                          ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}`
+                          : `Qty: ${item.quantity}`}
+                      </Text>
+                    </View>
+                    <Text
+                      style={[local.summaryPrice, { color: theme.colors.ink }]}
+                    >
+                      {formatMoney(item.subtotal, item.currency)}
+                    </Text>
+                  </View>
+                ))}
+                <View
+                  style={[
+                    local.summaryTotal,
+                    { borderTopColor: theme.colors.line },
+                  ]}
+                >
+                  <Text style={theme.styles.h2}>Total</Text>
+                  <Text style={theme.styles.h2}>
+                    {formatMoney(cart.total, cart.currency)}
+                  </Text>
+                </View>
+              </Card> */}
+
+              <View style={local.actionsRow}>
+                <View style={{ flex: 1 }}>
+                  <Button
+                    title="View Cart"
+                    variant="secondary"
+                    onPress={viewCart}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
                   <Button title="Checkout" onPress={checkout} />
                 </View>
               </View>
-            ) : cart.cartRefreshError ? (
-              <Card>
-                <Empty title="Unable to load your cart" detail={cart.cartRefreshError} />
-                <Button title="Retry" onPress={() => void cart.refreshCart()} />
-              </Card>
-            ) : (
-              <Empty title="Your cart is empty" detail="Pick a match and reserve tickets to start checkout." />
-            )}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
+            </View>
+          </View>
+        ) : cart.cartRefreshError ? (
+          <Card>
+            <Empty
+              title="Unable to load your cart"
+              detail={cart.cartRefreshError}
+            />
+            <Button title="Retry" onPress={() => void cart.refreshCart()} />
+          </Card>
+        ) : (
+          <Empty
+            title="Your cart is empty"
+            detail="Pick a match and reserve tickets to start checkout."
+          />
+        )}
+      </ScrollView>
+    </BottomSheetModal>
   );
 }
 
 const local = {
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "flex-end" as const,
-    backgroundColor: "rgba(21,26,44,0.48)",
-  },
-  modalOverlayDark: { backgroundColor: "rgba(0,0,0,0.78)" },
-  modalSheet: {
-    maxHeight: "92%" as const,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    shadowColor: "#000000",
-    shadowOpacity: 0.45,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: -8 },
-    elevation: 24,
-  },
-  sheetHandle: { width: 42, height: 4, borderRadius: 2, opacity: 0.45, alignSelf: "center" as const, marginBottom: 10 },
-  modalHeader: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    gap: 12,
-    borderBottomWidth: 1,
-    paddingBottom: 12,
-  },
-  modalTitleWrap: { flex: 1, minWidth: 0 },
-  modalTitle: { fontSize: 22, fontWeight: "900" as const, lineHeight: 28 },
-  modalSubtitle: { lineHeight: 18 },
-  closeButton: {
-    minHeight: 38,
-    borderRadius: 13,
-    borderWidth: 1,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-    paddingHorizontal: 12,
-  },
-  closeText: { fontSize: 13, fontWeight: "900" as const },
-  content: { gap: 12, paddingTop: 12, paddingBottom: 26 },
+  content: { gap: 12, paddingTop: 12, paddingBottom: 12 },
   cartLayout: { gap: 12 },
   cartLayoutWide: {
     flexDirection: "row" as const,
@@ -201,7 +230,7 @@ const local = {
     borderTopWidth: 1,
     paddingTop: 12,
   },
-  timer: { fontWeight: "900" as const },
   itemMain: { flex: 1, gap: 4 },
   itemPrice: { fontSize: 16, fontWeight: "900" as const },
+  actionsRow: { flexDirection: "row" as const, gap: 10 },
 };

@@ -12,6 +12,7 @@ import {
 import { Keyboard } from "react-native";
 import { authService } from "@/services/auth";
 import {
+  captureAuthenticationSnapshot,
   isAuthenticationSnapshotCurrent,
   onUnauthenticated,
 } from "@/services/api";
@@ -24,7 +25,9 @@ type AuthContextValue = {
   userCacheKey: string | null;
   isAuthenticated: boolean;
   isReady: boolean;
+  isRefreshingUser: boolean;
   refreshAuth: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   updateUser: (nextUser: User) => Promise<void>;
   logout: () => Promise<void>;
   deleteAccount: (password: string) => Promise<void>;
@@ -41,7 +44,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setTokenState] = useState<string | null>(null);
   const [isReady, setReady] = useState(false);
+  const [isRefreshingUser, setRefreshingUser] = useState(false);
   const userCacheKeyRef = useRef<string | null>(null);
+  const userRefreshIdRef = useRef(0);
 
   const applySession = useCallback(
     (nextToken: string | null, nextUser: User | null) => {
@@ -57,6 +62,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   );
 
   const clearSessionState = useCallback(() => {
+    userRefreshIdRef.current += 1;
     clearUserScopedCaches();
     userCacheKeyRef.current = null;
     setUser(null);
@@ -80,6 +86,26 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setReady(true);
     }
   }, [applySession, clearSessionState]);
+
+  const refreshUser = useCallback(async () => {
+    if (!token) return;
+
+    const refreshId = ++userRefreshIdRef.current;
+    const authentication = await captureAuthenticationSnapshot();
+    setRefreshingUser(true);
+    try {
+      const nextUser = await authService.me();
+      if (
+        refreshId !== userRefreshIdRef.current ||
+        !isAuthenticationSnapshotCurrent(authentication)
+      )
+        return;
+      setUser(nextUser);
+      await authService.persistUser(nextUser);
+    } finally {
+      if (refreshId === userRefreshIdRef.current) setRefreshingUser(false);
+    }
+  }, [token]);
 
   const updateUser = useCallback(async (nextUser: User) => {
     setUser(nextUser);
@@ -154,13 +180,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
       userCacheKey: token ? userCacheKey(user) : null,
       isAuthenticated: Boolean(token),
       isReady,
+      isRefreshingUser,
       refreshAuth,
+      refreshUser,
       updateUser,
       logout,
       deleteAccount,
       changePassword,
     }),
-    [changePassword, deleteAccount, isReady, logout, refreshAuth, token, updateUser, user],
+    [changePassword, deleteAccount, isReady, isRefreshingUser, logout, refreshAuth, refreshUser, token, updateUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

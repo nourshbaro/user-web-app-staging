@@ -22,6 +22,7 @@ import type {
   PortalMatchTeam,
   PortalTicket,
   PortalTicketsResponse,
+  RegisterRequest,
   User,
 } from "@/types";
 import { File } from "expo-file-system";
@@ -31,6 +32,9 @@ const USER_KEY = "lfa_portal_user";
 export type OtpTarget =
   | string
   | { userId?: string | null; email?: string | null };
+export type LoginResult =
+  | { status: "authenticated"; payload: unknown }
+  | { status: "phone_required"; message: string };
 
 export class PdfDownloadHttpError extends Error {}
 
@@ -92,6 +96,23 @@ function isPortalTicket(value: unknown): value is PortalTicket {
     (value.checked_in_at === null || typeof value.checked_in_at === "string") &&
     typeof value.created_at === "string" &&
     typeof value.qr_image === "string"
+  );
+}
+
+function isUser(value: unknown): value is User {
+  return (
+    isRecord(value) &&
+    typeof value.id === "number" &&
+    Number.isFinite(value.id) &&
+    typeof value.name === "string" &&
+    typeof value.email === "string" &&
+    (value.phone === null || typeof value.phone === "string") &&
+    (value.avatar === null || typeof value.avatar === "string") &&
+    (value.email_verified_at === null ||
+      typeof value.email_verified_at === "string") &&
+    typeof value.created_at === "string" &&
+    typeof value.updated_at === "string" &&
+    (value.deleted_at === null || typeof value.deleted_at === "string")
   );
 }
 
@@ -172,6 +193,18 @@ function readUser(payload: any): User | null {
   return payload?.user ?? payload?.data?.user ?? payload?.customer ?? null;
 }
 
+function phoneRequiredResult(payload: unknown): LoginResult | null {
+  const data = unwrapData(payload);
+  if (!isRecord(data) || data.reason !== "phone_required") return null;
+  return {
+    status: "phone_required",
+    message:
+      typeof data.message === "string" && data.message.trim()
+        ? data.message.trim()
+        : "Please add your phone number to continue.",
+  };
+}
+
 function otpTargetBody(target: OtpTarget) {
   if (typeof target === "string") return { user_id: target };
   return {
@@ -205,14 +238,72 @@ export const authService = {
     return { token, user };
   },
 
-  async login(email: string, password: string) {
-    const payload = await apiRequest("/auth/login", {
+  async login(
+    email: string,
+    password: string,
+    remember: boolean,
+  ): Promise<LoginResult> {
+    let payload: unknown;
+    try {
+      payload = await apiRequest("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password, remember }),
+        skipUnauthenticatedNotify: true,
+      });
+    } catch (error) {
+      const phoneRequired =
+        error instanceof ApiError ? phoneRequiredResult(error.body) : null;
+      if (phoneRequired) return phoneRequired;
+      throw error;
+    }
+    const phoneRequired = phoneRequiredResult(payload);
+    if (phoneRequired) return phoneRequired;
+    await this.saveSession(payload);
+    return { status: "authenticated", payload };
+  },
+
+  async completePhone(email: string, password: string, phone: string) {
+    const payload = await apiRequest("/auth/complete-phone", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, phone }),
       skipUnauthenticatedNotify: true,
     });
     await this.saveSession(payload);
     return payload;
+  },
+
+  async forgotPassword(email: string) {
+    return apiRequest("/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+      skipUnauthenticatedNotify: true,
+    });
+  },
+
+  async verifyForgotPasswordOtp(email: string, code: string) {
+    return apiRequest("/auth/forgot-password/verify-otp", {
+      method: "POST",
+      body: JSON.stringify({ email, code }),
+      skipUnauthenticatedNotify: true,
+    });
+  },
+
+  async resetPassword(
+    email: string,
+    code: string,
+    password: string,
+    passwordConfirmation: string,
+  ) {
+    return apiRequest("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        code,
+        password,
+        "password_confirmation": passwordConfirmation,
+      }),
+      skipUnauthenticatedNotify: true,
+    });
   },
 
   async checkEmailVerification(email: string) {
@@ -245,19 +336,31 @@ export const authService = {
     email: string,
     password: string,
     passwordConfirmation: string,
+    phone: string,
   ) {
+    const body: RegisterRequest = {
+      name,
+      email,
+      password,
+      password_confirmation: passwordConfirmation,
+      phone,
+    };
     const payload = await apiRequest("/auth/register", {
       method: "POST",
-      body: JSON.stringify({
-        name,
-        email,
-        password,
-        password_confirmation: passwordConfirmation,
-      }),
+      body: JSON.stringify(body),
       skipUnauthenticatedNotify: true,
     });
     await this.saveSession(payload);
     return payload;
+  },
+
+  async me() {
+    const payload = await apiRequest<unknown>("/auth/me");
+    const data = unwrapData(payload);
+    if (!isUser(data)) {
+      throw new Error("Invalid /auth/me response");
+    }
+    return data;
   },
 
   async verifyOtp(target: OtpTarget, code: string) {
@@ -401,9 +504,6 @@ export const profileService = {
     if (!result.items.every(isPortalMatch))
       throw new Error("Invalid portal match response");
     return { items: result.items as PortalMatch[], total: result.total };
-  },
-  async billingInfo() {
-    return unwrapData(await apiRequest("/portal/billing-info"));
   },
   async orders() {
     return normalizePaginatedProfileResult<Order>(

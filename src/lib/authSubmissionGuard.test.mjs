@@ -14,6 +14,7 @@ async function loadAuthService(apiModuleSource) {
   const configUrl = moduleUrl("export const config = { timeoutMs: 15000, apiBaseUrl: '' };");
   const storageUrl = moduleUrl("export const storage = { get: async () => null, set: async () => {}, remove: async () => {} };");
   const profilePortalUrl = moduleUrl("export const normalizePaginatedProfileResult = (payload) => payload;");
+  const userFacingErrorUrl = moduleUrl("export const backendResponseMessage = () => null;");
   const apiUrl = moduleUrl(apiModuleSource);
   const source = await readFile(new URL("../services/auth.ts", import.meta.url), "utf8");
   const executable = ts.transpileModule(source, {
@@ -24,6 +25,7 @@ async function loadAuthService(apiModuleSource) {
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)
     .replace('from "@/lib/profilePortal"', `from ${JSON.stringify(profilePortalUrl)}`)
     .replace('from "@/lib/storage"', `from ${JSON.stringify(storageUrl)}`)
+    .replace('from "@/lib/userFacingError"', `from ${JSON.stringify(userFacingErrorUrl)}`)
     .replace('from "@/services/api"', `from ${JSON.stringify(apiUrl)}`);
   const [authModule, apiModule] = await Promise.all([
     import(moduleUrl(executable)),
@@ -52,7 +54,7 @@ async function guardedSubmit(guard, flow) {
   }
 }
 
-for (const flowName of ["login", "register"]) {
+for (const flowName of ["login", "register", "complete-phone"]) {
   test(`${flowName} ignores a second submission while the first is pending and permits a later attempt`, async () => {
     const guard = createAuthSubmissionGuard();
     const first = deferred();
@@ -115,6 +117,7 @@ test("verification fallback executes distinct endpoints in order and stops after
       return { verified: true };
     }
     export const ApiTransportError = Error;
+    export const activateMaintenance = () => {};
     export const beginAuthenticationLogout = async () => ({ token: null });
     export const captureAuthenticationSnapshot = async () => ({ generation: 0, token: null });
     export const clearAuthentication = async () => {};
@@ -129,4 +132,158 @@ test("verification fallback executes distinct endpoints in order and stops after
     "/auth/check-email",
     "/auth/email-verification-status",
   ]);
+});
+
+test("normal login saves its session and returns an authenticated result", async () => {
+  const { authService, apiModule } = await loadAuthService(`
+    export class ApiError extends Error {
+      constructor(message, status, body) { super(message); this.status = status; this.body = body; }
+    }
+    export const calls = [];
+    export const tokens = [];
+    export async function apiRequest(path, init) {
+      calls.push({ path, init });
+      return { token: "session-token", user: { id: 7, email: "fan@example.com" } };
+    }
+    export const ApiTransportError = Error;
+    export const activateMaintenance = () => {};
+    export const beginAuthenticationLogout = async () => ({ token: null });
+    export const captureAuthenticationSnapshot = async () => ({ generation: 0, token: null });
+    export const clearAuthentication = async () => {};
+    export const invalidateAuthentication = async () => {};
+    export const restoreAuthentication = async () => ({ status: "unauthenticated", authentication: { generation: 0, token: null } });
+    export const setToken = async (token) => { tokens.push(token); };
+    export const unwrapData = (value) => value?.data ?? value;
+  `);
+
+  const result = await authService.login("fan@example.com", "secret", true);
+
+  assert.equal(result.status, "authenticated");
+  assert.deepEqual(apiModule.tokens, ["session-token"]);
+  assert.deepEqual(apiModule.calls.map(({ path }) => path), ["/auth/login"]);
+});
+
+test("phone-required login response becomes a continuation without saving a session", async () => {
+  const { authService, apiModule } = await loadAuthService(`
+    export class ApiError extends Error {
+      constructor(message, status, body) { super(message); this.status = status; this.body = body; }
+    }
+    export const calls = [];
+    export const tokens = [];
+    export async function apiRequest(path, init) {
+      calls.push({ path, init });
+      return { message: "Please add your phone number to continue.", reason: "phone_required" };
+    }
+    export const ApiTransportError = Error;
+    export const activateMaintenance = () => {};
+    export const beginAuthenticationLogout = async () => ({ token: null });
+    export const captureAuthenticationSnapshot = async () => ({ generation: 0, token: null });
+    export const clearAuthentication = async () => {};
+    export const invalidateAuthentication = async () => {};
+    export const restoreAuthentication = async () => ({ status: "unauthenticated", authentication: { generation: 0, token: null } });
+    export const setToken = async (token) => { tokens.push(token); };
+    export const unwrapData = (value) => value?.data ?? value;
+  `);
+
+  const result = await authService.login("fan@example.com", "secret", false);
+
+  assert.deepEqual(result, {
+    status: "phone_required",
+    message: "Please add your phone number to continue.",
+  });
+  assert.deepEqual(apiModule.tokens, []);
+  assert.deepEqual(apiModule.calls.map(({ path }) => path), ["/auth/login"]);
+});
+
+test("phone-required API error also becomes the same continuation", async () => {
+  const { authService, apiModule } = await loadAuthService(`
+    export class ApiError extends Error {
+      constructor(message, status, body) { super(message); this.status = status; this.body = body; }
+    }
+    export const calls = [];
+    export async function apiRequest(path, init) {
+      calls.push({ path, init });
+      throw new ApiError("Phone required", 422, {
+        message: "Please add your phone number to continue.",
+        reason: "phone_required",
+      });
+    }
+    export const ApiTransportError = Error;
+    export const activateMaintenance = () => {};
+    export const beginAuthenticationLogout = async () => ({ token: null });
+    export const captureAuthenticationSnapshot = async () => ({ generation: 0, token: null });
+    export const clearAuthentication = async () => {};
+    export const invalidateAuthentication = async () => {};
+    export const restoreAuthentication = async () => ({ status: "unauthenticated", authentication: { generation: 0, token: null } });
+    export const setToken = async () => {};
+    export const unwrapData = (value) => value?.data ?? value;
+  `);
+
+  const result = await authService.login("fan@example.com", "secret", false);
+
+  assert.equal(result.status, "phone_required");
+  assert.deepEqual(apiModule.calls.map(({ path }) => path), ["/auth/login"]);
+});
+
+test("invalid credentials remain an error and never call complete-phone", async () => {
+  const { authService, apiModule } = await loadAuthService(`
+    export class ApiError extends Error {
+      constructor(message, status, body) { super(message); this.status = status; this.body = body; }
+    }
+    export const calls = [];
+    export async function apiRequest(path, init) {
+      calls.push({ path, init });
+      throw new ApiError("Invalid credentials", 422, { message: "Invalid credentials" });
+    }
+    export const ApiTransportError = Error;
+    export const activateMaintenance = () => {};
+    export const beginAuthenticationLogout = async () => ({ token: null });
+    export const captureAuthenticationSnapshot = async () => ({ generation: 0, token: null });
+    export const clearAuthentication = async () => {};
+    export const invalidateAuthentication = async () => {};
+    export const restoreAuthentication = async () => ({ status: "unauthenticated", authentication: { generation: 0, token: null } });
+    export const setToken = async () => {};
+    export const unwrapData = (value) => value?.data ?? value;
+  `);
+
+  await assert.rejects(
+    authService.login("fan@example.com", "wrong", false),
+    /Invalid credentials/,
+  );
+  assert.deepEqual(apiModule.calls.map(({ path }) => path), ["/auth/login"]);
+});
+
+test("complete-phone posts exact credentials and international digits then saves the session", async () => {
+  const { authService, apiModule } = await loadAuthService(`
+    export class ApiError extends Error {
+      constructor(message, status, body) { super(message); this.status = status; this.body = body; }
+    }
+    export const calls = [];
+    export const tokens = [];
+    export async function apiRequest(path, init) {
+      calls.push({ path, init });
+      return { token: "completed-token", user: { id: 7, email: "fan@example.com" } };
+    }
+    export const ApiTransportError = Error;
+    export const activateMaintenance = () => {};
+    export const beginAuthenticationLogout = async () => ({ token: null });
+    export const captureAuthenticationSnapshot = async () => ({ generation: 0, token: null });
+    export const clearAuthentication = async () => {};
+    export const invalidateAuthentication = async () => {};
+    export const restoreAuthentication = async () => ({ status: "unauthenticated", authentication: { generation: 0, token: null } });
+    export const setToken = async (token) => { tokens.push(token); };
+    export const unwrapData = (value) => value?.data ?? value;
+  `);
+
+  await authService.completePhone("fan@example.com", "secret", "96171037568");
+
+  assert.equal(apiModule.calls.length, 1);
+  assert.equal(apiModule.calls[0].path, "/auth/complete-phone");
+  assert.equal(apiModule.calls[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(apiModule.calls[0].init.body), {
+    email: "fan@example.com",
+    password: "secret",
+    phone: "96171037568",
+  });
+  assert.deepEqual(apiModule.tokens, ["completed-token"]);
 });

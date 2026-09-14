@@ -2,6 +2,9 @@ import { ApiError, ApiTransportError } from "@/services/api";
 
 export function userFacingError(error: unknown, fallback: string) {
   if (error instanceof ApiTransportError) return error.message;
+  if (error instanceof ApiError) {
+    return backendResponseMessage(error.body) ?? fallback;
+  }
   return fallback;
 }
 

@@ -15,8 +15,28 @@ const executable = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText.replace('from "@/services/api"', `from ${JSON.stringify(apiMock)}`);
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(executable).toString("base64")}`;
-const { backendProvidedError, backendResponseMessage } = await import(moduleUrl);
+const { userFacingError, backendProvidedError, backendResponseMessage } = await import(moduleUrl);
 const { ApiError, ApiTransportError } = await import(apiMock);
+
+test("userFacingError surfaces the backend message and only falls back when absent", () => {
+  assert.equal(
+    userFacingError(new ApiError("request failed", 400, { message: "Email already registered" }), "fallback"),
+    "Email already registered",
+  );
+  assert.equal(
+    userFacingError(new ApiError("request failed", 422, { errors: { email: ["The email field is required."] } }), "fallback"),
+    "The email field is required.",
+  );
+  assert.equal(
+    userFacingError(new ApiError("Request failed with 500", 500, null), "fallback"),
+    "fallback",
+  );
+  assert.equal(
+    userFacingError(new ApiTransportError("Unable to reach the server."), "fallback"),
+    "Unable to reach the server.",
+  );
+  assert.equal(userFacingError(new Error("internal detail"), "fallback"), "fallback");
+});
 
 test("backend-provided errors prefer message, error, then validation text", () => {
   assert.equal(

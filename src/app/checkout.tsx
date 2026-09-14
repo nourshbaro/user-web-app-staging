@@ -1,15 +1,32 @@
-import { withAuthRequired } from "@/components/withAuthRequired";
 import { AppHeader } from "@/components/AppHeader";
-import { CybersourceUnifiedCheckout } from "@/components/CybersourceUnifiedCheckout";
-import { InternationalPhoneInput } from "@/components/InternationalPhoneInput";
-import { Button, Card, Empty, Input, Screen, useResponsive, useTheme, type ThemeColors } from "@/components/ui";
+import { MatchSummaryBlock } from "@/components/MatchSummaryBlock";
+import {
+  PaymentMethodIcon,
+  PaymentMethodSheet,
+  type PaymentMethodOption,
+} from "@/components/PaymentMethodSheet";
+import { TicketHoldersBlock } from "@/components/TicketHoldersBlock";
+import {
+  Button,
+  Card,
+  Empty,
+  Screen,
+  useResponsive,
+  useTheme,
+  type ThemeColors,
+} from "@/components/ui";
+import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
+import { useTicketHolders } from "@/context/TicketHoldersContext";
 import { useToast } from "@/context/ToastContext";
-import { clearBluePaymentHandoff, createBluePaymentHandoff } from "@/lib/bluePaymentHandoff";
+import {
+  clearBluePaymentHandoff,
+  createBluePaymentHandoff,
+  readPendingBluePaymentAttempt,
+  savePendingBluePaymentAttempt,
+} from "@/lib/bluePaymentHandoff";
 import { validateBluePaymentUrl } from "@/lib/bluePaymentRedirect";
-import { paymentError, userFacingError } from "@/lib/userFacingError";
-import { groupCartItems } from "@/lib/cartDisplay";
 import {
   beginCaptureContextRequest,
   invalidateCaptureContextRequestRefs,
@@ -17,251 +34,238 @@ import {
   shouldInitializeCaptureContext,
 } from "@/lib/captureContextRequestGuard";
 import {
+  clearCardPaymentHandoff,
+  createCardPaymentHandoff,
+} from "@/lib/cardPaymentHandoff";
+import { groupCartItems, type CartDisplayItem } from "@/lib/cartDisplay";
+import {
   createCheckoutBilling,
-  getActiveBillingForm,
   getActiveCaptureState,
-  type BillingFormState,
   type CaptureState,
 } from "@/lib/checkoutOwnership";
-import { checkoutResultRouteParams, parseCheckoutResultParams } from "@/lib/checkoutResultParams";
 import { createCheckoutSubmissionAuthority } from "@/lib/checkoutSubmissionAuthority";
 import { config } from "@/lib/config";
-import { formatMoney, minutesSeconds } from "@/lib/format";
-import {
-  DEFAULT_PHONE_COUNTRY,
-  createEmptyPhoneValue,
-  initializePhoneValue,
-} from "@/lib/phoneNumber";
+import { formatMoney } from "@/lib/format";
+import { initializePhoneValue } from "@/lib/phoneNumber";
 import { createRequestAuthority } from "@/lib/requestAuthority";
-import { profileService } from "@/services/auth";
+import { paymentError, userFacingError } from "@/lib/userFacingError";
 import { checkoutService } from "@/services/checkout";
-import type { CartSessionTicket } from "@/lib/cartSessionAuthority";
-import type { CheckoutSubmitRequest } from "@/types";
-import { router } from "expo-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
-
-type PaymentMethod = CheckoutSubmitRequest["payment_method"];
-type BillingInfoPayload = Record<string, unknown>;
-
-const paymentOptions: { id: PaymentMethod; title: string; detail: string }[] = [
-  { id: "blue", title: "Blue Wallet", detail: "Redirect to Blue to complete payment." },
-  { id: "cybersource", title: "Credit / Debit Card", detail: "Visa and Mastercard secure checkout." },
-];
-const CHECKOUT_COUNTRY_LABEL = "Lebanon";
+import { router, Stack, useFocusEffect, useIsFocused } from "expo-router";
+import { SymbolView } from "expo-symbols";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  ActivityIndicator,
+  BackHandler,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 
 function getCheckoutOrigin() {
-  if (Platform.OS === "web" && typeof window !== "undefined") return window.location.origin;
+  if (Platform.OS === "web" && typeof window !== "undefined")
+    return window.location.origin;
   return config.siteUrl;
 }
 
 function readCaptureContext(payload: unknown) {
   if (typeof payload !== "object" || payload === null) return null;
-  const record = payload as { capture_context?: unknown; data?: { capture_context?: unknown } };
+  const record = payload as {
+    capture_context?: unknown;
+    data?: { capture_context?: unknown };
+  };
   const value = record.data?.capture_context ?? record.capture_context;
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function isRecord(value: unknown): value is BillingInfoPayload {
-  return typeof value === "object" && value !== null;
-}
-
-function billingString(value: unknown) {
-  return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
-}
-
-function billingField(data: unknown, keys: string[]) {
-  if (!isRecord(data)) return "";
-  for (const key of keys) {
-    const value = billingString(data[key]);
-    if (value) return value;
-  }
-  return "";
-}
-
-function unwrapBillingInfo(payload: unknown): BillingInfoPayload | null {
-  if (!isRecord(payload)) return {};
-  if (isRecord(payload.data)) return payload.data;
-  if (isRecord(payload.billing)) return payload.billing;
-  if (isRecord(payload.billing_info)) return payload.billing_info;
-  return payload;
-}
-
-function readBillingInfo(payload: unknown) {
-  const data = unwrapBillingInfo(payload);
-
-  return {
-    name: billingField(data, ["name", "full_name"]),
-    email: billingField(data, ["email"]),
-    phone: billingField(data, ["phone", "phone_number", "mobile", "mobile_number", "telephone", "billing_phone", "billing_phone_number"]),
-  };
+/** Groups cart display items by match, preserving the order matches first appear in the cart. */
+function groupByMatch(items: CartDisplayItem[]) {
+  const order: string[] = [];
+  const byMatch = new Map<string, CartDisplayItem[]>();
+  items.forEach((item) => {
+    if (!byMatch.has(item.match_id)) {
+      order.push(item.match_id);
+      byMatch.set(item.match_id, []);
+    }
+    byMatch.get(item.match_id)!.push(item);
+  });
+  return order.map((matchId) => ({
+    matchId,
+    matchTitle: byMatch.get(matchId)![0]?.match_title ?? `Match ${matchId}`,
+    items: byMatch.get(matchId)!,
+  }));
 }
 
 function CheckoutScreen() {
   const cart = useCart();
   const auth = useAuth();
+  const { refreshUser } = auth;
   const responsive = useResponsive();
   const theme = useTheme();
-  const local = useMemo(() => createCheckoutStyles(theme.colors), [theme.colors]);
+  const local = useMemo(
+    () => createCheckoutStyles(theme.colors),
+    [theme.colors],
+  );
   const toast = useToast();
-  const [billingForm, setBillingForm] = useState<BillingFormState | null>(null);
-  const [holderNames, setHolderNames] = useState<Record<string, string>>({});
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("blue");
+  const isFocused = useIsFocused();
+  const { ticketSlots, holderNames } = useTicketHolders();
+  const [paymentMethod, setPaymentMethod] =
+    useState<PaymentMethodOption | null>(null);
+  const [paymentSheetVisible, setPaymentSheetVisible] = useState(false);
+  const [holdersExpanded, setHoldersExpanded] = useState(false);
   const [captureState, setCaptureState] = useState<CaptureState | null>(null);
-  const [billingRequestState, setBillingRequestState] = useState<{ owner: string; status: "loading" | "ready" } | null>(null);
   const [loading, setLoading] = useState(false);
   const captureSessionRef = useRef<string | null>(null);
   const captureRetrySessionRef = useRef<string | null>(null);
+  const capturePromiseRef = useRef<{
+    sessionId: string;
+    promise: Promise<string>;
+  } | null>(null);
   const captureRequestAuthority = useMemo(() => createRequestAuthority(), []);
-  const billingRequestAuthority = useMemo(() => createRequestAuthority(), []);
-  const billingProfileRef = useRef<{ owner: string | null; name: string; email: string }>({
-    owner: auth.userCacheKey,
-    name: auth.user?.name ?? "",
-    email: auth.user?.email ?? "",
-  });
   const checkoutSubmissionAuthority = useMemo(
     () => createCheckoutSubmissionAuthority(),
     [],
-  )
+  );
   const submitInFlightRef = useRef(false);
   const blueHandoffStartedRef = useRef(false);
-  const billingOwner = auth.isReady && auth.isAuthenticated ? auth.userCacheKey : null;
-  const billingFallback = useMemo<BillingFormState>(() => ({
-    owner: billingOwner,
-    name: auth.user?.name ?? "",
-    email: auth.user?.email ?? "",
-    phoneCountry: DEFAULT_PHONE_COUNTRY,
-    phoneNationalValue: "",
-    canonicalPhone: null,
-  }), [auth.user?.email, auth.user?.name, billingOwner]);
-  const activeBillingForm = getActiveBillingForm(billingForm, billingOwner, billingFallback);
-  const {
-    name,
-    email,
-    phoneCountry,
-    phoneNationalValue,
-    canonicalPhone,
-  } = activeBillingForm;
-  const phoneError =
-    phoneNationalValue && !canonicalPhone
-      ? "Enter a valid phone number for the selected phone country."
-      : undefined;
-  const billingInfoLoading =
-    billingOwner !== null
-    && (billingRequestState?.owner !== billingOwner || billingRequestState.status === "loading");
-  const activeCaptureState = getActiveCaptureState(captureState, cart.sessionId);
-  const captureContext = activeCaptureState?.status === "ready" ? activeCaptureState.context : null;
-  const captureError = activeCaptureState?.status === "error" ? activeCaptureState.error : null;
+  const name = auth.user?.name.trim() ?? "";
+  const email = auth.user?.email.trim() ?? "";
+  const canonicalPhone = initializePhoneValue(
+    auth.user?.phone ?? "",
+  ).canonicalPhone;
+  const activeCaptureState = getActiveCaptureState(
+    captureState,
+    cart.sessionId,
+  );
+  const captureContext =
+    activeCaptureState?.status === "ready" ? activeCaptureState.context : null;
+  const captureError =
+    activeCaptureState?.status === "error" ? activeCaptureState.error : null;
   const captureLoading =
-    cart.sessionId !== null
-    && (activeCaptureState === null || activeCaptureState.status === "loading");
+    cart.sessionId !== null &&
+    (activeCaptureState === null || activeCaptureState.status === "loading");
   const groupedItems = groupCartItems(cart.items);
-  const isCheckoutLocked = loading;
-  // Native tablets can rotate without inheriting the web-only sticky two-column layout.
-  const isWide = Platform.OS === "web" && responsive.width >= 920;
+  const matchGroups = useMemo(() => groupByMatch(groupedItems), [groupedItems]);
+  const isCheckoutLocked = loading || auth.isRefreshingUser;
+  const returnToCart = useCallback(() => router.replace("/cart"), []);
 
-  const updateBillingForm = useCallback((updates: Partial<Omit<BillingFormState, "owner">>) => {
-    setBillingForm((current) => ({
-      ...(current?.owner === billingOwner ? current : billingFallback),
-      ...updates,
-      owner: billingOwner,
-    }));
-  }, [billingFallback, billingOwner]);
-
-  const ticketSlots = useMemo(
-    () => cart.items.flatMap((item) => {
-      const matchId = String(item.match_id);
-      if (item.seats?.length) {
-        return item.seats.map((seat) => ({
-          key: `${item.lock_key}_seat_${seat.id}`,
-          matchId,
-          label: `${item.zone_name ?? "Zone"} - Seat ${seat.label ?? `${seat.row}${seat.number}`}`,
-        }));
-      }
-      return Array.from({ length: Number(item.quantity ?? 1) }, (_, index) => ({
-        key: `${item.lock_key}_ticket_${index}`,
-        matchId,
-        label: `${item.zone_name ?? "Zone"} - Ticket ${index + 1}`,
-      }));
-    }),
-    [cart.items],
+  useFocusEffect(
+    useCallback(() => {
+      // A BLUE route launch is single-flight only while Checkout is handing off.
+      // Returning from an unresolved payment attempt must permit a fresh action.
+      blueHandoffStartedRef.current = false;
+      void refreshUser().catch(() => {});
+    }, [refreshUser]),
   );
 
-  const loadCaptureContext = useCallback(async (sessionId: string, force = false) => {
-    const started = beginCaptureContextRequest(
-      captureSessionRef,
-      captureRetrySessionRef,
-      sessionId,
-      force,
+  const launchBluePayment = useCallback(
+    (paymentUrl: string, sessionId: string) => {
+      if (Platform.OS === "web" && typeof window === "undefined") {
+        throw new Error("Blue payment navigation is unavailable.");
+      }
+
+      blueHandoffStartedRef.current = true;
+      if (Platform.OS === "web") {
+        try {
+          window.location.assign(paymentUrl);
+        } catch (error) {
+          blueHandoffStartedRef.current = false;
+          throw error;
+        }
+        return;
+      }
+
+      const handoffId = createBluePaymentHandoff(paymentUrl, sessionId);
+      try {
+        router.navigate({
+          pathname: "/checkout/blue/payment",
+          params: { handoff: handoffId },
+        });
+      } catch (error) {
+        clearBluePaymentHandoff(handoffId);
+        blueHandoffStartedRef.current = false;
+        throw error;
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        returnToCart();
+        return true;
+      },
     );
-    if (!started) return;
+    return () => subscription.remove();
+  }, [returnToCart]);
 
-    const ticket = captureRequestAuthority.begin(sessionId);
+  useEffect(() => {
+    if (isFocused && !cart.isLoading && !cart.sessionId && !cart.items.length)
+      router.replace("/cart");
+  }, [cart.isLoading, cart.items.length, cart.sessionId, isFocused]);
 
-    setCaptureState({ sessionId, status: "loading" });
-    try {
-      const response = await checkoutService.captureContext(sessionId, [getCheckoutOrigin()]);
-      const context = readCaptureContext(response);
-      if (!context) throw new Error("Payment form could not be prepared.");
-      if (!captureRequestAuthority.isCurrent(ticket)) return;
-      setCaptureState({ sessionId, status: "ready", context });
-    } catch (err) {
-      if (!captureRequestAuthority.isCurrent(ticket)) return;
-      captureSessionRef.current = null;
-      setCaptureState({
+  const loadCaptureContext = useCallback(
+    (sessionId: string, force = false): Promise<string> => {
+      const existing = capturePromiseRef.current;
+      if (!force && existing?.sessionId === sessionId) return existing.promise;
+      const started = beginCaptureContextRequest(
+        captureSessionRef,
+        captureRetrySessionRef,
         sessionId,
-        status: "error",
-        error: userFacingError(err, "Could not prepare card payment. Please try again."),
-      });
-    } finally {
-      releaseCaptureContextRetry(captureRetrySessionRef, sessionId, force);
-    }
-  }, [captureRequestAuthority]);
+        force,
+      );
+      if (!started) {
+        return (
+          existing?.promise ??
+          Promise.reject(
+            new Error("Payment preparation is already in progress."),
+          )
+        );
+      }
 
-  const loadBillingInfo = useCallback(async (owner: string) => {
-    const ticket = billingRequestAuthority.begin(owner);
-    const profile = billingProfileRef.current;
-    setBillingRequestState({ owner, status: "loading" });
+      const ticket = captureRequestAuthority.begin(sessionId);
 
-    try {
-      const payload = await profileService.billingInfo();
-      if (!billingRequestAuthority.isCurrent(ticket)) return;
-      const nextBillingInfo = readBillingInfo(payload);
-      const restoredPhone = initializePhoneValue(nextBillingInfo.phone);
-
-      setBillingForm({
-        owner,
-        name: nextBillingInfo.name || profile.name,
-        email: nextBillingInfo.email || profile.email,
-        phoneCountry: restoredPhone.phoneCountry,
-        phoneNationalValue: restoredPhone.phoneNationalValue,
-        canonicalPhone: restoredPhone.canonicalPhone,
-      });
-    } catch {
-      if (!billingRequestAuthority.isCurrent(ticket)) return;
-      const emptyPhone = createEmptyPhoneValue();
-
-      setBillingForm({
-        owner,
-        name: profile.name,
-        email: profile.email,
-        phoneCountry: emptyPhone.phoneCountry,
-        phoneNationalValue: emptyPhone.phoneNationalValue,
-        canonicalPhone: emptyPhone.canonicalPhone,
-      });
-    } finally {
-      if (!billingRequestAuthority.isCurrent(ticket)) return;
-      setBillingRequestState({ owner, status: "ready" });
-    }
-  }, [billingRequestAuthority]);
-
-  useLayoutEffect(() => {
-    billingProfileRef.current = {
-      owner: billingOwner,
-      name: auth.user?.name ?? "",
-      email: auth.user?.email ?? "",
-    };
-  }, [auth.user?.email, auth.user?.name, billingOwner]);
+      setCaptureState({ sessionId, status: "loading" });
+      const promise = (async () => {
+        try {
+          const response = await checkoutService.captureContext(sessionId, [
+            getCheckoutOrigin(),
+          ]);
+          const context = readCaptureContext(response);
+          if (!context) throw new Error("Payment form could not be prepared.");
+          if (!captureRequestAuthority.isCurrent(ticket))
+            throw new Error("Payment session changed.");
+          setCaptureState({ sessionId, status: "ready", context });
+          return context;
+        } catch (err) {
+          const message = userFacingError(
+            err,
+            "Could not prepare card payment. Please try again.",
+          );
+          if (captureRequestAuthority.isCurrent(ticket)) {
+            captureSessionRef.current = null;
+            setCaptureState({ sessionId, status: "error", error: message });
+          }
+          throw new Error(message);
+        } finally {
+          releaseCaptureContextRetry(captureRetrySessionRef, sessionId, force);
+        }
+      })();
+      capturePromiseRef.current = { sessionId, promise };
+      return promise;
+    },
+    [captureRequestAuthority],
+  );
 
   useLayoutEffect(() => {
     captureRequestAuthority.invalidate(cart.sessionId);
@@ -272,91 +276,92 @@ function CheckoutScreen() {
     );
   }, [captureRequestAuthority, cart.sessionId]);
 
-  useLayoutEffect(() => {
-    billingRequestAuthority.invalidate(billingOwner);
-  }, [billingOwner, billingRequestAuthority]);
-
   useEffect(() => {
     const sessionId = cart.sessionId;
-    if (!shouldInitializeCaptureContext(paymentMethod, sessionId)) return;
+    if (!shouldInitializeCaptureContext(paymentMethod ?? "", sessionId)) return;
 
     let active = true;
     void Promise.resolve().then(() => {
-      if (active) return loadCaptureContext(sessionId);
+      if (active) void loadCaptureContext(sessionId).catch(() => {});
     });
     return () => {
       active = false;
     };
   }, [cart.sessionId, loadCaptureContext, paymentMethod]);
 
+  // Ticket-holder names are collected in the dedicated step-by-step flow
+  // before checkout (see /checkout/ticket-holders). If the cart changed
+  // since then (or this screen was reached directly), send the user back
+  // there instead of allowing an incomplete submission.
   useEffect(() => {
-    if (!billingOwner) return;
-    let active = true;
-    void Promise.resolve().then(() => {
-      if (active) return loadBillingInfo(billingOwner);
-    });
-    return () => {
-      active = false;
-    };
-  }, [billingOwner, loadBillingInfo]);
-
-  const dismissAllRoutes = () => {
-    const resetRouter = router as typeof router & { dismissAll?: () => void };
-    resetRouter.dismissAll?.();
-  };
+    if (!cart.items.length || !ticketSlots.length) return;
+    const missing = ticketSlots.some((slot) => !holderNames[slot.key]?.trim());
+    if (missing) router.replace("/checkout/ticket-holders");
+  }, [cart.items.length, holderNames, ticketSlots]);
 
   useEffect(() => {
     captureRequestAuthority.mount();
-    billingRequestAuthority.mount();
     checkoutSubmissionAuthority.mount();
     return () => {
       captureRequestAuthority.unmount();
-      billingRequestAuthority.unmount();
       checkoutSubmissionAuthority.unmount();
       captureSessionRef.current = null;
       captureRetrySessionRef.current = null;
+      capturePromiseRef.current = null;
     };
-  }, [billingRequestAuthority, captureRequestAuthority, checkoutSubmissionAuthority]);
+  }, [captureRequestAuthority, checkoutSubmissionAuthority]);
 
-  const submit = async (transientToken?: string) => {
-    if (!cart.sessionId || submitInFlightRef.current || blueHandoffStartedRef.current) return;
+  const submitBlue = async () => {
+    if (
+      !cart.sessionId ||
+      !paymentMethod ||
+      submitInFlightRef.current ||
+      blueHandoffStartedRef.current
+    )
+      return;
 
     const cartSessionTicket = cart.captureCartSession();
     if (!cartSessionTicket) return;
 
-    const missingHolder = ticketSlots.find((slot) => !holderNames[slot.key]?.trim());
+    const missingHolder = ticketSlots.find(
+      (slot) => !holderNames[slot.key]?.trim(),
+    );
     if (missingHolder) {
       toast.showToast({
         variant: "warning",
         title: "Ticket holder required",
         message: `Enter the holder name for ${missingHolder.label}.`,
       });
+      router.replace("/checkout/ticket-holders");
       return;
     }
 
-    const checkoutBilling = createCheckoutBilling(
-      name,
-      email,
-      canonicalPhone,
+    const reusableAttempt = readPendingBluePaymentAttempt(
+      cartSessionTicket.sessionId as string,
     );
+    if (reusableAttempt) {
+      try {
+        launchBluePayment(
+          reusableAttempt.paymentUrl,
+          reusableAttempt.sessionId,
+        );
+      } catch (err) {
+        toast.showToast({
+          variant: "error",
+          title: "Payment unavailable",
+          message: userFacingError(err, paymentError()),
+        });
+      }
+      return;
+    }
+
+    const checkoutBilling = createCheckoutBilling(name, email, canonicalPhone);
 
     if (!checkoutBilling) {
       toast.showToast({
         variant: "warning",
-        title: "Valid phone required",
-        message: "Select a phone country and enter a valid phone number.",
-      });
-      return;
-    }
-
-    if (paymentMethod === "cybersource" && !transientToken) {
-      toast.showToast({
-        variant: "warning",
-        title: "Card confirmation required",
-        message: captureContext
-          ? "Use the secure card checkout button to enter your card details."
-          : captureError ?? "Card payment is still preparing. Try Blue Wallet or wait a moment.",
-        duration: 5200,
+        title: "Profile phone number required",
+        message: "Add a valid phone number to your profile to continue.",
       });
       return;
     }
@@ -364,14 +369,17 @@ function CheckoutScreen() {
     const submissionTicket = checkoutSubmissionAuthority.begin(
       cartSessionTicket.sessionId as string,
     );
-    let publicationCartTicket: CartSessionTicket = cartSessionTicket;
-
     try {
       submitInFlightRef.current = true;
       setLoading(true);
 
-      const ticketsByMatch = ticketSlots.reduce<Record<string, { holder_name: string }[]>>((acc, slot) => {
-        acc[slot.matchId] = [...(acc[slot.matchId] ?? []), { holder_name: holderNames[slot.key].trim() }];
+      const ticketsByMatch = ticketSlots.reduce<
+        Record<string, { holder_name: string }[]>
+      >((acc, slot) => {
+        acc[slot.matchId] = [
+          ...(acc[slot.matchId] ?? []),
+          { holder_name: holderNames[slot.key].trim() },
+        ];
         return acc;
       }, {});
 
@@ -379,93 +387,45 @@ function CheckoutScreen() {
         checkout_session_id: submissionTicket.sessionId,
         billing: checkoutBilling,
         tickets_by_match: ticketsByMatch,
-        payment_method: paymentMethod,
-        ...(transientToken ? { payment: { transient_token: transientToken } } : {}),
+        payment_method: "blue",
       });
 
       if (
-        !checkoutSubmissionAuthority.isCurrent(submissionTicket)
-        || !cart.isCartSessionCurrent(cartSessionTicket)
-      ) return;
-
-      if (paymentMethod === "blue") {
-        const validatedUrl = validateBluePaymentUrl(
-          response.payment?.payment_url,
-          config.bluePaymentAllowedOrigin,
-        );
-
-        if (Platform.OS === "web" && typeof window === "undefined") {
-          throw new Error("Blue payment navigation is unavailable.");
-        }
-
-        const clearedCartTicket = await cart.clearCartIfSession(cartSessionTicket);
-        if (!clearedCartTicket) return;
-        publicationCartTicket = clearedCartTicket;
-
-        if (
-          !checkoutSubmissionAuthority.isCurrent(submissionTicket)
-          || !cart.isCartSessionCurrent(clearedCartTicket)
-        ) return;
-
-        blueHandoffStartedRef.current = true;
-
-        if (Platform.OS === "web") {
-          try {
-            window.location.assign(validatedUrl);
-          } catch (error) {
-            blueHandoffStartedRef.current = false;
-            throw error;
-          }
-          return;
-        }
-
-        const handoffId = createBluePaymentHandoff(validatedUrl);
-        try {
-          dismissAllRoutes();
-          router.replace({
-            pathname: "/checkout/blue/payment",
-            params: { handoff: handoffId },
-          });
-        } catch (error) {
-          clearBluePaymentHandoff(handoffId);
-          blueHandoffStartedRef.current = false;
-          throw error;
-        }
+        !checkoutSubmissionAuthority.isCurrent(submissionTicket) ||
+        !cart.isCartSessionCurrent(cartSessionTicket)
+      )
         return;
-      }
 
-      const resultParams = checkoutResultRouteParams(parseCheckoutResultParams({
-        provider: "cybersource",
-        order_id: response.order_id,
-        order_number: response.order_number,
-        reference:
-          response.reference
-          ?? response.payment_reference
-          ?? response.payment?.reference
-          ?? response.payment?.payment_reference,
-        status: response.status ?? response.payment?.status,
-      }));
+      const validatedUrl = validateBluePaymentUrl(
+        response.payment?.payment_url,
+        config.bluePaymentAllowedOrigin,
+      );
 
-      if (
-        !checkoutSubmissionAuthority.isCurrent(submissionTicket)
-        || !cart.isCartSessionCurrent(cartSessionTicket)
-      ) return;
+      savePendingBluePaymentAttempt({
+        sessionId: submissionTicket.sessionId,
+        paymentUrl: validatedUrl,
+        ...(response.order_id !== undefined
+          ? { orderId: String(response.order_id) }
+          : {}),
+        ...(response.order_number !== undefined
+          ? { orderNumber: String(response.order_number) }
+          : {}),
+        ...(response.reference !== undefined
+          ? { reference: String(response.reference) }
+          : {}),
+        ...(response.payment_reference !== undefined
+          ? { paymentReference: String(response.payment_reference) }
+          : response.payment?.payment_reference !== undefined
+            ? { paymentReference: String(response.payment.payment_reference) }
+            : {}),
+      });
 
-      const clearedCartTicket = await cart.clearCartIfSession(cartSessionTicket);
-      if (!clearedCartTicket) return;
-      publicationCartTicket = clearedCartTicket;
-
-      if (
-        !checkoutSubmissionAuthority.isCurrent(submissionTicket)
-        || !cart.isCartSessionCurrent(clearedCartTicket)
-      ) return;
-
-      dismissAllRoutes();
-      router.replace({ pathname: "/checkout/success", params: resultParams });
+      launchBluePayment(validatedUrl, submissionTicket.sessionId);
+      return;
     } catch (err) {
       if (
-        checkoutSubmissionAuthority.isCurrent(submissionTicket)
-        && cart.isCartSessionCurrent(publicationCartTicket)
+        checkoutSubmissionAuthority.isCurrent(submissionTicket) &&
+        cart.isCartSessionCurrent(cartSessionTicket)
       ) {
         toast.showToast({
           variant: "error",
@@ -482,182 +442,247 @@ function CheckoutScreen() {
     }
   };
 
-  const handleCardSuccess = (transientToken: string) => {
-    void submit(transientToken);
+  const canContinue =
+    !isCheckoutLocked &&
+    !!paymentMethod &&
+    !!name &&
+    !!email &&
+    !!canonicalPhone &&
+    !!ticketSlots.length &&
+    !ticketSlots.some((slot) => !holderNames[slot.key]?.trim());
+
+  const handleContinue = () => {
+    if (!canContinue) return;
+    if (paymentMethod === "cybersource") {
+      const cartSessionTicket = cart.captureCartSession();
+      const checkoutBilling = createCheckoutBilling(
+        name,
+        email,
+        canonicalPhone,
+      );
+      if (!cartSessionTicket || !checkoutBilling) return;
+      const ticketsByMatch = ticketSlots.reduce<
+        Record<string, { holder_name: string }[]>
+      >((acc, slot) => {
+        acc[slot.matchId] = [
+          ...(acc[slot.matchId] ?? []),
+          { holder_name: holderNames[slot.key].trim() },
+        ];
+        return acc;
+      }, {});
+      const handoffId = createCardPaymentHandoff({
+        sessionId: cartSessionTicket.sessionId as string,
+        captureContext,
+        prepareCaptureContext: (force = false) =>
+          loadCaptureContext(cartSessionTicket.sessionId as string, force),
+        request: {
+          checkout_session_id: cartSessionTicket.sessionId as string,
+          billing: checkoutBilling,
+          tickets_by_match: ticketsByMatch,
+          payment_method: "cybersource",
+        },
+      });
+      try {
+        router.navigate({
+          pathname: "/checkout/card/payment",
+          params: { handoff: handoffId },
+        });
+      } catch (error) {
+        clearCardPaymentHandoff(handoffId);
+        throw error;
+      }
+      return;
+    }
+    void submitBlue();
   };
 
-  const handleCardError = (message: string) => {
-    toast.showToast({
-      variant: "warning",
-      title: "Payment was not completed",
-      message,
-      duration: 5200,
-    });
-  };
+  const paymentMethodLabel =
+    paymentMethod === "cybersource"
+      ? "Card"
+      : paymentMethod === "blue"
+        ? "BLUE Wallet"
+        : null;
 
   return (
     <Screen>
+      <Stack.Screen options={{ gestureEnabled: false }} />
       <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <AppHeader title="Checkout" subtitle={cart.items.length ? "Review and pay securely" : "No active reservation"} hideCart />
-        <ScrollView style={{ width: "100%" }} contentContainerStyle={{ width: "100%", gap: 12, paddingBottom: 28 }}>
+        <AppHeader
+          title="Checkout"
+          subtitle={
+            cart.items.length
+              ? "Review and pay securely"
+              : "No active reservation"
+          }
+          hideCart
+          showTimer={Boolean(cart.items.length)}
+          onBack={returnToCart}
+        />
+        <ScrollView
+          style={{ width: "100%" }}
+          contentContainerStyle={{ width: "100%", gap: 12, paddingBottom: 28 }}
+        >
           {!cart.items.length ? (
-            <Empty title="Nothing to checkout" detail="Your reserved tickets will appear here." />
+            <Empty
+              title="Nothing to checkout"
+              detail="Your reserved tickets will appear here."
+            />
           ) : (
-            <View style={[local.checkoutLayout, isWide && local.checkoutLayoutWide]}>
-              <View style={[local.checkoutMain, isWide && local.checkoutMainWide]}>
-                <Card>
-                  <View style={theme.styles.row}>
-                    <Text style={theme.styles.h2}>Billing</Text>
-                    {billingInfoLoading ? <Text style={theme.styles.muted}>Loading saved info...</Text> : null}
-                  </View>
-                  <Input label="Name" value={name} onChangeText={(value) => updateBillingForm({ name: value })} autoCapitalize="words" editable={!isCheckoutLocked} />
-                  <Input label="Email" value={email} onChangeText={(value) => updateBillingForm({ email: value })} keyboardType="email-address" autoCapitalize="none" editable={!isCheckoutLocked} />
-                  <InternationalPhoneInput
-                    value={{
-                      phoneCountry,
-                      phoneNationalValue,
-                      canonicalPhone,
-                      validation: canonicalPhone
-                        ? "valid"
-                        : phoneNationalValue
-                          ? "invalid"
-                          : "empty",
-                    }}
-                    error={phoneError}
-                    disabled={isCheckoutLocked}
-                    onChange={(phoneValue) => {
-                      updateBillingForm({
-                        phoneCountry: phoneValue.phoneCountry,
-                        phoneNationalValue: phoneValue.phoneNationalValue,
-                        canonicalPhone: phoneValue.canonicalPhone,
-                      });
-                    }}
-                  />
-                  <Input label="Country" value={CHECKOUT_COUNTRY_LABEL} editable={false} />
-                </Card>
+            <>
+              {matchGroups.map((group) => (
+                <MatchSummaryBlock
+                  key={group.matchId}
+                  matchTitle={group.matchTitle}
+                  items={group.items}
+                />
+              ))}
 
-                <Card>
-                  <Text style={theme.styles.h2}>Ticket holders</Text>
-                  <Text style={theme.styles.muted}>Name printed on each ticket.</Text>
-                  {ticketSlots.map((slot) => (
-                    <Input
-                      key={slot.key}
-                      label={slot.label}
-                      value={holderNames[slot.key] ?? ""}
-                      onChangeText={(value) => setHolderNames((current) => ({ ...current, [slot.key]: value }))}
-                      autoCapitalize="words"
-                      editable={!isCheckoutLocked}
-                    />
-                  ))}
-                </Card>
+              <TicketHoldersBlock
+                ticketSlots={ticketSlots}
+                holderNames={holderNames}
+                expanded={holdersExpanded}
+                onToggle={() => setHoldersExpanded((value) => !value)}
+              />
 
-                <Card>
-                  <Text style={theme.styles.h2}>Payment method</Text>
-                  <Text style={theme.styles.muted}>Choose how you want to pay.</Text>
-                  <View style={local.paymentGrid}>
-                    {paymentOptions.map((option) => {
-                      const active = paymentMethod === option.id;
-                      return (
-                        <Pressable
-                          key={option.id}
-                          disabled={isCheckoutLocked}
-                          onPress={() => setPaymentMethod(option.id)}
-                          style={[
-                            local.paymentOption,
-                            { backgroundColor: theme.colors.panel, borderColor: theme.colors.line },
-                            active && local.paymentOptionActive,
-                            isCheckoutLocked && local.lockedControl,
-                          ]}
-                        >
-                          <View style={[local.paymentIcon, { backgroundColor: theme.colors.panelSoft }, active && local.paymentIconActive]}>
-                            {option.id === "blue" ? <WalletGlyph active={active} /> : <CardGlyph active={active} />}
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={[local.paymentTitle, { color: theme.colors.ink }]}>{option.title}</Text>
-                            <Text style={theme.styles.muted}>{option.detail}</Text>
-                          </View>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </Card>
-              </View>
-
-              <View style={[local.checkoutAside, isWide && local.checkoutAsideWide]}>
-                <Card>
-                  <View style={theme.styles.row}>
-                    <Text style={theme.styles.h2}>Order summary</Text>
-                    <Text style={local.timer}>{minutesSeconds(cart.secondsLeft)}</Text>
-                  </View>
-                  <Text style={theme.styles.muted}>{ticketSlots.length} ticket holder{ticketSlots.length === 1 ? "" : "s"}</Text>
-                  {groupedItems.map((item) => (
-                    <View key={item.key} style={[local.summaryItem, { borderTopColor: theme.colors.line }]}>
-                      <View style={{ flex: 1 }}>
-                        <Text numberOfLines={1} style={[local.summaryTitle, { color: theme.colors.ink }]}>{item.zone_name ?? "Ticket"}</Text>
-                        <Text numberOfLines={1} style={theme.styles.muted}>{item.match_title ?? `Match ${item.match_id}`}</Text>
-                        <Text style={theme.styles.muted}>{item.seats.length ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}` : `Qty ${item.quantity}`}</Text>
+              <Card>
+                <Text style={theme.styles.h2}>Pay with</Text>
+                {auth.isRefreshingUser ? (
+                  <Text style={theme.styles.muted}>
+                    Loading profile info...
+                  </Text>
+                ) : null}
+                <Pressable
+                  onPress={() => setPaymentSheetVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Select payment method"
+                  style={[
+                    local.payWithRow,
+                    {
+                      borderColor: theme.colors.line,
+                      backgroundColor: theme.colors.panelSoft,
+                    },
+                  ]}
+                >
+                  <View style={local.payWithSelection}>
+                    {paymentMethod ? (
+                      <View
+                        style={[
+                          local.payWithIcon,
+                          { backgroundColor: theme.colors.panel },
+                        ]}
+                      >
+                        <PaymentMethodIcon method={paymentMethod} size={22} />
                       </View>
-                      <Text style={[local.summaryPrice, { color: theme.colors.ink }]}>{formatMoney(item.subtotal, item.currency)}</Text>
-                    </View>
-                  ))}
-                  <View style={[local.summaryTotal, { borderTopColor: theme.colors.line }]}>
-                    <Text style={theme.styles.h2}>Total</Text>
-                    <Text style={theme.styles.h2}>{formatMoney(cart.total, cart.currency)}</Text>
-                  </View>
-                </Card>
-
-                <Card>
-                  <Text style={theme.styles.h2}>Payment</Text>
-                  <View style={[local.paymentNotice, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
-                    <Text style={[local.paymentNoticeText, { color: theme.colors.secondary }]}>
-                      {paymentMethod === "cybersource"
-                        ? captureLoading
-                          ? "Preparing secure card checkout..."
-                          : captureError
-                            ? captureError
-                            : captureContext
-                              ? "Secure card checkout is prepared."
-                              : "Card checkout is not ready yet."
-                        : "Blue Wallet will open securely inside the app."}
+                    ) : null}
+                    <Text
+                      numberOfLines={1}
+                      style={[local.payWithLabel, { color: theme.colors.ink }]}
+                    >
+                      {paymentMethodLabel ?? "Select payment method"}
                     </Text>
                   </View>
-                  {paymentMethod === "cybersource" && captureError ? (
-                    <Button title="Retry card setup" variant="secondary" disabled={isCheckoutLocked || captureLoading} onPress={() => cart.sessionId && void loadCaptureContext(cart.sessionId, true)} />
-                  ) : null}
-                  {paymentMethod === "cybersource" && captureContext && !isCheckoutLocked ? (
-                    <CybersourceUnifiedCheckout
-                      captureContext={captureContext}
-                      onSuccess={handleCardSuccess}
-                      onError={handleCardError}
-                    />
-                  ) : null}
-                  {paymentMethod === "blue" ? (
+                  <SymbolView
+                    name={{
+                      ios: "chevron.right",
+                      android: "chevron_right",
+                      web: "chevron_right",
+                    }}
+                    size={20}
+                    tintColor={theme.colors.muted}
+                    fallback={<View />}
+                  />
+                </Pressable>
+                {!canonicalPhone && !auth.isRefreshingUser ? (
+                  <View
+                    style={[
+                      local.phoneNotice,
+                      {
+                        backgroundColor: theme.colors.panelSoft,
+                        borderColor: theme.colors.line,
+                      },
+                    ]}
+                  >
+                    <Text style={theme.styles.muted}>
+                      Add a phone number to your profile to complete checkout.
+                    </Text>
                     <Button
-                      title={loading ? "Submitting..." : "Confirm and pay"}
-                      disabled={
-                        loading ||
-                        !name ||
-                        !email ||
-                        !canonicalPhone ||
-                        !ticketSlots.length
-                      }
-                      onPress={() => void submit()}
-                    />) : loading ? (
-                      <Text style={theme.styles.muted}>Confirming your order...</Text>
-                    ) : null}
-                  {/* {!auth.isAuthenticated ? <Button title="Login first" variant="secondary" disabled={isCheckoutLocked} onPress={() => router.push("/auth")} /> : null} */}
+                      title="Update profile"
+                      variant="secondary"
+                      onPress={() => router.push("/edit-profile")}
+                    />
+                  </View>
+                ) : null}
+                {paymentMethod === "cybersource" && captureError ? (
+                  <Button
+                    title="Retry card setup"
+                    variant="secondary"
+                    disabled={isCheckoutLocked || captureLoading}
+                    onPress={() =>
+                      cart.sessionId &&
+                      void loadCaptureContext(cart.sessionId, true)
+                    }
+                  />
+                ) : null}
+              </Card>
+
+              {paymentMethod ? (
+                <Card>
+                  <View
+                    style={[
+                      local.summaryTotal,
+                      { borderTopColor: "transparent", paddingTop: 0 },
+                    ]}
+                  >
+                    <Text style={theme.styles.h2}>Subtotal</Text>
+                    <Text style={theme.styles.h2}>
+                      {formatMoney(cart.total, cart.currency)}
+                    </Text>
+                  </View>
+                  <Button
+                    title={loading ? "Submitting..." : "Continue"}
+                    disabled={!canContinue}
+                    onPress={handleContinue}
+                  />
                 </Card>
+              ) : null}
+
+              <View style={local.termsNotice}>
+                <Text style={[theme.styles.muted, local.termsText]}>
+                  By confirming your order, you agree to{`\n`}
+                  <Text
+                    style={[local.termsTextStrong, { color: theme.colors.ink }]}
+                  >
+                    LFA General Terms and Conditions
+                  </Text>{" "}
+                  and{" "}
+                  <Text
+                    style={[local.termsTextStrong, { color: theme.colors.ink }]}
+                  >
+                    Privacy Policy
+                  </Text>
+                  .
+                </Text>
               </View>
-            </View>
+            </>
           )}
         </ScrollView>
       </View>
+
+      <PaymentMethodSheet
+        visible={paymentSheetVisible}
+        onClose={() => setPaymentSheetVisible(false)}
+        selected={paymentMethod}
+        onSelect={setPaymentMethod}
+      />
+
       {loading ? (
         <View style={local.overlay}>
           <View style={local.overlayPanel}>
             <ActivityIndicator color={theme.colors.primary} />
             <Text style={local.overlayTitle}>Confirming your order...</Text>
-            <Text style={theme.styles.muted}>Please do not close this page.</Text>
+            <Text style={theme.styles.muted}>
+              Please do not close this page.
+            </Text>
           </View>
         </View>
       ) : null}
@@ -668,31 +693,6 @@ function CheckoutScreen() {
 function createCheckoutStyles(colors: ThemeColors) {
   return {
     shell: { flex: 1, alignSelf: "center" as const },
-    checkoutLayout: { gap: 12 },
-    checkoutLayoutWide: {
-      flexDirection: "row" as const,
-      alignItems: "flex-start" as const,
-    },
-    checkoutMain: { gap: 12 },
-    checkoutMainWide: {
-      flex: 1,
-      minWidth: 0,
-    },
-    checkoutAside: { gap: 12 },
-    checkoutAsideWide: {
-      width: 350,
-      position: "sticky" as any,
-      top: 0,
-    },
-    timer: { color: colors.primary, fontSize: 13, fontWeight: "900" as const },
-    summaryItem: {
-      flexDirection: "row" as const,
-      alignItems: "flex-start" as const,
-      gap: 12,
-      borderTopWidth: 1,
-      borderTopColor: colors.line,
-      paddingTop: 10,
-    },
     summaryTotal: {
       flexDirection: "row" as const,
       alignItems: "center" as const,
@@ -701,40 +701,49 @@ function createCheckoutStyles(colors: ThemeColors) {
       borderTopColor: colors.line,
       paddingTop: 12,
     },
-    summaryTitle: { color: colors.ink, fontSize: 14, fontWeight: "900" as const },
-    summaryPrice: { color: colors.ink, fontSize: 13, fontWeight: "900" as const },
-    paymentGrid: { gap: 10 },
-    paymentOption: {
-      minHeight: 74,
-      borderRadius: 16,
+    payWithRow: {
+      minHeight: 52,
+      borderRadius: 14,
       borderWidth: 1,
-      borderColor: colors.line,
-      backgroundColor: colors.panel,
-      padding: 12,
+      paddingHorizontal: 14,
       flexDirection: "row" as const,
       alignItems: "center" as const,
-      gap: 12,
+      justifyContent: "space-between" as const,
+      gap: 10,
     },
-    paymentOptionActive: { borderColor: colors.primary, backgroundColor: "rgba(200,16,46,0.06)" },
-    paymentIcon: {
-      width: 42,
-      height: 42,
-      borderRadius: 14,
-      backgroundColor: colors.panelSoft,
+    payWithSelection: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 10,
+    },
+    payWithIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 11,
       alignItems: "center" as const,
       justifyContent: "center" as const,
+      flexShrink: 0,
     },
-    paymentIconActive: { backgroundColor: colors.primary },
-    paymentTitle: { color: colors.ink, fontSize: 14, fontWeight: "900" as const },
-    paymentNotice: {
+    payWithLabel: { flexShrink: 1, fontSize: 15, fontWeight: "800" as const },
+    phoneNotice: {
       borderRadius: 14,
       borderWidth: 1,
-      borderColor: colors.line,
-      backgroundColor: colors.panelSoft,
       padding: 12,
+      gap: 10,
     },
-    paymentNoticeText: { color: colors.secondary, fontSize: 13, lineHeight: 18 },
-    lockedControl: { opacity: 0.62 },
+    termsNotice: {
+      alignItems: "center" as const,
+      paddingHorizontal: 16,
+      paddingVertical: 4,
+    },
+    termsText: {
+      textAlign: "center" as const,
+    },
+    termsTextStrong: {
+      fontWeight: "700" as const,
+    },
     overlay: {
       position: "absolute" as const,
       top: 0,
@@ -757,55 +766,37 @@ function createCheckoutStyles(colors: ThemeColors) {
       alignItems: "center" as const,
       gap: 8,
     },
-    overlayTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" as const },
+    overlayTitle: {
+      color: colors.ink,
+      fontSize: 16,
+      fontWeight: "900" as const,
+    },
+    cardModalScreen: { flex: 1 },
+    cardModalHeader: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      justifyContent: "space-between" as const,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    cardModalBack: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 6,
+      minHeight: 40,
+      borderRadius: 14,
+      borderWidth: 1,
+      paddingHorizontal: 12,
+    },
+    backChevron: {
+      width: 9,
+      height: 9,
+      borderLeftWidth: 2,
+      borderBottomWidth: 2,
+      transform: [{ rotate: "45deg" }],
+    },
+    cardModalBody: { flexGrow: 1, padding: 16 },
   };
 }
-
-function WalletGlyph({ active }: { active: boolean }) {
-  const theme = useTheme();
-  const glyphColor = active ? "#FFFFFF" : theme.colors.ink;
-
-  return (
-    <View style={[localGlyph.wallet, { borderColor: glyphColor }]}>
-      <View style={[localGlyph.walletLine, { backgroundColor: glyphColor }]} />
-    </View>
-  );
-}
-
-function CardGlyph({ active }: { active: boolean }) {
-  const theme = useTheme();
-  const glyphColor = active ? "#FFFFFF" : theme.colors.ink;
-
-  return (
-    <View style={[localGlyph.card, { borderColor: glyphColor }]}>
-      <View style={[localGlyph.cardStripe, { backgroundColor: glyphColor }]} />
-      <View style={[localGlyph.cardDot, { backgroundColor: glyphColor }]} />
-    </View>
-  );
-}
-
-const localGlyph = {
-  wallet: {
-    width: 22,
-    height: 18,
-    borderRadius: 5,
-    borderWidth: 2,
-    justifyContent: "center" as const,
-    paddingHorizontal: 4,
-  },
-  walletLine: { height: 2, borderRadius: 1 },
-  card: {
-    width: 24,
-    height: 17,
-    borderRadius: 4,
-    borderWidth: 2,
-    paddingTop: 4,
-    paddingHorizontal: 3,
-  },
-  cardStripe: { height: 2, borderRadius: 1 },
-  cardDot: { width: 5, height: 2, borderRadius: 1, marginTop: 4 },
-  activeBorder: { borderColor: "#FFFFFF" },
-  activeFill: { backgroundColor: "#FFFFFF" },
-};
 
 export default withAuthRequired(CheckoutScreen);

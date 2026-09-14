@@ -1,4 +1,5 @@
 import { useTheme } from "@/components/ui";
+import { SheetDismissHandle } from "@/components/SheetDismissHandle";
 import {
     PHONE_COUNTRIES,
     createEmptyPhoneValue,
@@ -8,6 +9,7 @@ import {
     type PhoneValue,
 } from "@/lib/phoneNumber";
 import { useMemo, useState } from "react";
+import { SymbolView } from "expo-symbols";
 import {
     FlatList,
     Keyboard,
@@ -171,13 +173,17 @@ export function InternationalPhoneInput({
                 statusBarTranslucent
                 onRequestClose={closeSelector}
             >
-                <View
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Close phone-country selector"
+                    onPress={closeSelector}
                     style={[
                         styles.modalBackdrop,
                         { backgroundColor: "rgba(15, 23, 42, 0.56)" },
                     ]}
                 >
                     <SafeAreaView
+                        onTouchEnd={(event) => event.stopPropagation()}
                         accessibilityViewIsModal
                         accessibilityLabel="Phone-country selector"
                         style={[
@@ -188,6 +194,7 @@ export function InternationalPhoneInput({
                             },
                         ]}
                     >
+                        <SheetDismissHandle onDismiss={closeSelector} color={theme.colors.muted} />
                         <View style={styles.modalHeader}>
                             <View style={styles.modalHeading}>
                                 <Text style={[styles.modalTitle, { color: theme.colors.ink }]}>
@@ -212,9 +219,7 @@ export function InternationalPhoneInput({
                                     pressed && styles.pressed,
                                 ]}
                             >
-                                <Text style={[styles.closeButtonText, { color: theme.colors.ink }]}>
-                                    Close
-                                </Text>
+                                <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={19} tintColor={theme.colors.ink} fallback={<View />} />
                             </Pressable>
                         </View>
 
@@ -314,7 +319,7 @@ export function InternationalPhoneInput({
                             }}
                         />
                     </SafeAreaView>
-                </View>
+                </Pressable>
             </Modal>
         </View>
     );

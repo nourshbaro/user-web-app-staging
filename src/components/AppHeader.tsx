@@ -2,6 +2,8 @@ import { router } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { useTheme } from "@/components/ui";
 import { HeaderActions } from "@/components/HeaderActions";
+import { CartTimerPill } from "@/components/CartTimer";
+import { useCart } from "@/context/CartContext";
 
 export function AppHeader({
   title,
@@ -9,14 +11,19 @@ export function AppHeader({
   showBack = true,
   hideCart = false,
   onBack,
+  showTimer = false,
+  showCartWithTimer = false,
 }: {
   title: string;
   subtitle?: string;
   showBack?: boolean;
   hideCart?: boolean;
   onBack?: () => void;
+  showTimer?: boolean;
+  showCartWithTimer?: boolean;
 }) {
   const theme = useTheme();
+  const cart = useCart();
   const handleBack = () => {
     if (onBack) {
       onBack();
@@ -42,7 +49,13 @@ export function AppHeader({
           {subtitle ? <Text numberOfLines={1} style={theme.styles.muted}>{subtitle}</Text> : null}
         </View>
       </View>
-      <HeaderActions hideCart={hideCart} />
+      {showCartWithTimer ? (
+        <HeaderActions onCartPress={() => router.navigate("/cart")} />
+      ) : showTimer && cart.sessionId ? (
+        <CartTimerPill seconds={cart.secondsLeft} />
+      ) : (
+        <HeaderActions hideCart={hideCart} />
+      )}
     </View>
   );
 }

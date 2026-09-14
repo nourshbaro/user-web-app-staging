@@ -7,8 +7,25 @@ import {
   getPhoneCallingCode,
   initializePhoneValue,
   isAllowedPhoneCountry,
+  toBackendPhoneDigits,
   updateNationalPhone,
 } from "./phoneNumber.ts";
+
+test("phone completion uses selected calling code plus national digits", () => {
+  const lebanon = updateNationalPhone("71 037 568", "LB");
+  const palestine = updateNationalPhone("0599 123 456", "PS");
+  const internationalPaste = updateNationalPhone("+970599123456", "LB");
+
+  assert.equal(lebanon.validation, "valid");
+  assert.equal(toBackendPhoneDigits(lebanon.canonicalPhone), "96171037568");
+  assert.equal(palestine.validation, "valid");
+  assert.equal(toBackendPhoneDigits(palestine.canonicalPhone), "970599123456");
+  assert.equal(internationalPaste.phoneCountry, "PS");
+  assert.equal(
+    toBackendPhoneDigits(internationalPaste.canonicalPhone),
+    "970599123456",
+  );
+});
 
 test("country metadata has unique identities and human-readable names", () => {
   assert.equal(DEFAULT_PHONE_COUNTRY, "LB");

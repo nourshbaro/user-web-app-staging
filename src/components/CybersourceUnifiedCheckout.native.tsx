@@ -11,6 +11,7 @@ type Props = {
   captureContext: string;
   onSuccess: (token: string) => void;
   onError: (message: string) => void;
+  fullscreen?: boolean;
 };
 
 type CheckoutMessage =
@@ -39,11 +40,14 @@ function buildCheckoutHtml(captureContext: string) {
         color: #151a2c;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         width: 100%;
-        overflow: hidden;
+        min-height: 100%;
+        overflow: auto;
       }
       #uc-payment-buttons,
       #uc-payment-form {
         width: 100%;
+        max-width: none;
+        box-sizing: border-box;
       }
     </style>
   </head>
@@ -124,10 +128,12 @@ function buildCheckoutHtml(captureContext: string) {
           if (typeof checkout.on === "function") checkout.on("ready", markReady);
 
           try {
-            const transientToken = await checkout.mount({
+            const tokenPromise = checkout.mount({
               paymentSelection: "#uc-payment-buttons",
               paymentScreen: "#uc-payment-form"
             });
+            requestAnimationFrame(() => requestAnimationFrame(markReady));
+            const transientToken = await tokenPromise;
             post({ type: "success", token: transientToken });
           } finally {
             stopObservingCheckout();
@@ -148,7 +154,7 @@ function buildCheckoutHtml(captureContext: string) {
 </html>`;
 }
 
-export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError }: Props) {
+export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError, fullscreen = false }: Props) {
   const theme = useTheme();
   const onSuccessRef = useRef(onSuccess);
   const onErrorRef = useRef(onError);
@@ -174,6 +180,17 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
     }, 0);
     return () => clearTimeout(resetTimer);
   }, [captureContext]);
+
+  useEffect(() => {
+    if (status !== "loading") return;
+    const timeout = setTimeout(() => {
+      const message = "Unable to load payment. Please try again.";
+      setStatus("error");
+      setError(message);
+      onErrorRef.current(message);
+    }, 20000);
+    return () => clearTimeout(timeout);
+  }, [attempt, status]);
 
   const handleMessage = (event: WebViewMessageEvent) => {
     let message: CheckoutMessage;
@@ -214,7 +231,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
   };
 
   return (
-    <View style={local.wrap}>
+    <View style={[local.wrap, fullscreen && local.fullscreenWrap]}>
       {/* <View style={local.heading}>
         <View style={[local.secureMark, { backgroundColor: theme.colors.success }]}>
           <Text style={local.secureMarkText}>✓</Text>
@@ -225,7 +242,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
         </View>
       </View> */}
 
-      <View style={[local.frame, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }]}>
+      <View style={[local.frame, fullscreen && local.fullscreenFrame, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }]}>
         {status !== "error" ? (
           <WebView
             key={`${captureContext}-${attempt}`}
@@ -235,8 +252,8 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
             domStorageEnabled
             mixedContentMode="never"
             onMessage={handleMessage}
-            scrollEnabled={false}
-            style={[local.webview, { height: webViewHeight, opacity: status === "ready" ? 1 : 0 }]}
+            scrollEnabled={fullscreen}
+            style={[local.webview, fullscreen ? local.fullscreenWebView : { height: webViewHeight }, { opacity: status === "ready" ? 1 : 0 }]}
           />
         ) : null}
 
@@ -277,13 +294,14 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
         ) : null}
       </View>
 
-      <Text style={[local.footer, { color: theme.colors.muted }]}>Payments processed securely</Text>
+      {!fullscreen ? <Text style={[local.footer, { color: theme.colors.muted }]}>Payments processed securely</Text> : null}
     </View>
   );
 }
 
 const local = StyleSheet.create({
   wrap: { width: "100%", maxWidth: 520, alignSelf: "center", gap: 14 },
+  fullscreenWrap: { flex: 1, maxWidth: undefined, gap: 0 },
   heading: { flexDirection: "row", alignItems: "flex-start", gap: 11 },
   headingCopy: { flex: 1, gap: 3 },
   secureMark: { width: 32, height: 32, borderRadius: 10, alignItems: "center", justifyContent: "center" },
@@ -291,7 +309,9 @@ const local = StyleSheet.create({
   title: { fontSize: 16, lineHeight: 21, fontWeight: "900" },
   subtitle: { fontSize: 12, lineHeight: 17 },
   frame: { width: "100%", overflow: "hidden", borderWidth: 1, borderRadius: 18 },
+  fullscreenFrame: { flex: 1, borderWidth: 0, borderRadius: 0 },
   webview: { width: "100%", backgroundColor: "#FFFFFF" },
+  fullscreenWebView: { flex: 1 },
   loading: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, padding: 24, alignItems: "center", justifyContent: "center" },
   loadingTitle: { marginTop: 14, fontSize: 15, lineHeight: 20, fontWeight: "800" },
   loadingText: { marginTop: 3, fontSize: 12, lineHeight: 17 },

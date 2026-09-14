@@ -10,6 +10,10 @@ import {
 import { classifyCartRefreshFailure, createCartRefreshGuard } from "@/lib/cartRefreshPolicy";
 import { createCartOperationQueue } from "@/lib/cartOperationQueue";
 import {
+  clearPendingBluePaymentAttempt,
+  invalidatePendingBluePaymentAttemptUnlessSession,
+} from "@/lib/bluePaymentHandoff";
+import {
   clearCartSessionIfCurrent,
   createCartSessionAuthority,
   publishCartSessionIfCurrent,
@@ -17,6 +21,7 @@ import {
 } from "@/lib/cartSessionAuthority";
 import { addWithSessionRecovery, createSingleFlight } from "@/lib/cartSessionRecovery";
 import { storage } from "@/lib/storage";
+import { userFacingError } from "@/lib/userFacingError";
 import { ApiError } from "@/services/api";
 import { cartService, getCartItems } from "@/services/cart";
 import type { AddCartRequest, CartItem } from "@/types";
@@ -93,6 +98,7 @@ export function CartProvider({ children }: PropsWithChildren) {
   );
 
   const resetCartDisplayState = useCallback(() => {
+    clearPendingBluePaymentAttempt();
     setSessionId(null);
     setExpiresAt(null);
     setItems([]);
@@ -101,6 +107,10 @@ export function CartProvider({ children }: PropsWithChildren) {
     setSecondsLeft(0);
     setCartRefreshError(null);
   }, []);
+
+  useEffect(() => {
+    invalidatePendingBluePaymentAttemptUnlessSession(sessionId);
+  }, [sessionId]);
 
   const resetCartState = useCallback(() => {
     sessionAuthorityRef.current.replace(null);
@@ -224,7 +234,7 @@ export function CartProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      setCartRefreshError("We couldn't refresh your cart. Your reservation reference was kept; please try again.");
+      setCartRefreshError(userFacingError(error, "We couldn't refresh your cart. Your reservation reference was kept; please try again."));
     }
   }, [applyCart, clearCartIfSession, publishCartResponseIfCurrent]);
 

@@ -59,7 +59,7 @@ test("checkout source retains synchronous duplicate-submit protection", async ()
 
   assert.match(
     source,
-    /if \(!cart\.sessionId \|\| submitInFlightRef\.current \|\| blueHandoffStartedRef\.current\) return;/,
+    /if \(!cart\.sessionId \|\| !paymentMethod \|\| submitInFlightRef\.current \|\| blueHandoffStartedRef\.current\) return;/,
   );
   assert.match(source, /submitInFlightRef\.current = true;/);
 });
@@ -74,10 +74,7 @@ test("checkout response and stale error publication are ownership-gated", async 
     "!checkoutSubmissionAuthority.isCurrent(submissionTicket)",
     responseIndex,
   );
-  const paymentBranchIndex = source.indexOf(
-    'if (paymentMethod === "blue")',
-    responseIndex,
-  );
+  const handoffIndex = source.indexOf("launchBluePayment(validatedUrl", responseIndex);
   const catchIndex = source.indexOf("} catch (err) {", responseIndex);
   const catchOwnershipIndex = source.indexOf(
     "checkoutSubmissionAuthority.isCurrent(submissionTicket)",
@@ -87,62 +84,80 @@ test("checkout response and stale error publication are ownership-gated", async 
 
   assert.ok(responseIndex >= 0);
   assert.ok(firstOwnershipIndex > responseIndex);
-  assert.ok(paymentBranchIndex > firstOwnershipIndex);
+  assert.ok(handoffIndex > firstOwnershipIndex);
   assert.ok(catchOwnershipIndex > catchIndex);
   assert.ok(toastIndex > catchOwnershipIndex);
 });
 
-test("Blue handoff is created only after conditional clear and revalidation", async () => {
+test("Blue handoff is created while the authoritative cart session remains active", async () => {
   const source = await readFile(
     new URL("../app/checkout.tsx", import.meta.url),
     "utf8",
   );
-  const blueIndex = source.indexOf('if (paymentMethod === "blue")');
-  const clearIndex = source.indexOf(
-    "await cart.clearCartIfSession(cartSessionTicket)",
+  const blueIndex = source.indexOf("const submitBlue = async");
+  const handoffIndex = source.indexOf(
+    "launchBluePayment(validatedUrl, submissionTicket.sessionId)",
     blueIndex,
   );
-  const postClearCheckIndex = source.indexOf(
-    "!cart.isCartSessionCurrent(clearedCartTicket)",
-    clearIndex,
-  );
-  const handoffIndex = source.indexOf(
-    "createBluePaymentHandoff(validatedUrl)",
-    clearIndex,
-  );
+  const blueBranchEnd = source.indexOf("const canContinue", blueIndex);
+  const blueBranch = source.slice(blueIndex, blueBranchEnd);
 
-  assert.ok(clearIndex > blueIndex);
-  assert.ok(postClearCheckIndex > clearIndex);
-  assert.ok(handoffIndex > postClearCheckIndex);
+  assert.ok(handoffIndex > blueIndex);
+  assert.doesNotMatch(blueBranch, /clearCartIfSession/);
+  assert.match(blueBranch, /launchBluePayment/);
 });
 
-test("CyberSource navigation and finalization are ownership-gated", async () => {
+test("returning from BLUE releases the route-launch guard and reuses the same session attempt", async () => {
   const source = await readFile(
     new URL("../app/checkout.tsx", import.meta.url),
     "utf8",
   );
-  const resultIndex = source.indexOf(
-    "const resultParams = checkoutResultRouteParams",
-  );
-  const clearIndex = source.indexOf(
-    "await cart.clearCartIfSession(cartSessionTicket)",
-    resultIndex,
-  );
-  const postClearCheckIndex = source.indexOf(
-    "!cart.isCartSessionCurrent(clearedCartTicket)",
-    clearIndex,
-  );
-  const navigationIndex = source.indexOf(
-    'router.replace({ pathname: "/checkout/success"',
-    clearIndex,
-  );
-  const finishIndex = source.indexOf(
-    "checkoutSubmissionAuthority.finish(submissionTicket)",
-    navigationIndex,
-  );
 
-  assert.ok(clearIndex > resultIndex);
-  assert.ok(postClearCheckIndex > clearIndex);
-  assert.ok(navigationIndex > postClearCheckIndex);
-  assert.ok(finishIndex > navigationIndex);
+  assert.match(source, /useFocusEffect\(useCallback\(\(\) => \{[\s\S]*blueHandoffStartedRef\.current = false;/);
+  assert.match(source, /readPendingBluePaymentAttempt\(cartSessionTicket\.sessionId as string\)/);
+  assert.match(source, /launchBluePayment\(reusableAttempt\.paymentUrl, reusableAttempt\.sessionId\)/);
+  assert.match(source, /savePendingBluePaymentAttempt\(\{/);
+});
+test("card payment is a dedicated route rather than a Checkout modal", async () => {
+  const source = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
+  const cardScreen = await readFile(new URL("../components/CardPaymentScreen.tsx", import.meta.url), "utf8");
+  const cardProvider = await readFile(new URL("../components/CybersourceUnifiedCheckout.native.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /<Modal[\s>]/);
+  assert.match(source, /pathname: "\/checkout\/card\/payment"/);
+  assert.doesNotMatch(source, /Card payment is not ready/);
+  assert.doesNotMatch(source, /Please wait while secure card payment is prepared/);
+  assert.match(source, /prepareCaptureContext: \(force = false\) =>/);
+  assert.match(cardScreen, /fullscreen/);
+  assert.doesNotMatch(cardScreen, /<Screen[\s>]/);
+  assert.match(cardScreen, /root: \{ flex: 1, width: "100%" \}/);
+  assert.match(cardScreen, /paymentArea: \{ flex: 1, width: "100%" \}/);
+  assert.match(cardProvider, /fullscreenFrame: \{ flex: 1, borderWidth: 0, borderRadius: 0 \}/);
+  assert.match(cardProvider, /requestAnimationFrame\(\(\) => requestAnimationFrame\(markReady\)\)/);
+  assert.match(cardProvider, /Unable to load payment\. Please try again\./);
+  assert.match(cardScreen, /Loading payment\.\.\./);
+  assert.match(cardScreen, /handoff\.prepareCaptureContext\(force\)/);
+  assert.match(cardScreen, /title="Retry"/);
+  assert.match(cardScreen, /router\.dismissTo\("\/checkout"\)/);
+});
+test("payment cancellation preserves cart and success owns conditional cleanup", async () => {
+  const cardScreen = await readFile(new URL("../components/CardPaymentScreen.tsx", import.meta.url), "utf8");
+  const blueScreen = await readFile(new URL("../components/BluePaymentScreen.native.tsx", import.meta.url), "utf8");
+
+  const cardBack = cardScreen.slice(cardScreen.indexOf("const returnToCheckout"), cardScreen.indexOf("useEffect", cardScreen.indexOf("const returnToCheckout")));
+  const blueFailure = blueScreen.slice(blueScreen.indexOf('if (result === "failed")'), blueScreen.indexOf("const ticket", blueScreen.indexOf('if (result === "failed")')));
+  assert.doesNotMatch(cardBack, /clearCart/);
+  assert.doesNotMatch(blueFailure, /clearCart/);
+  assert.match(cardScreen, /await cart\.clearCartIfSession\(cartTicket\)/);
+  assert.match(blueScreen, /await cart\.clearCartIfSession\(ticket\)/);
+});
+
+test("background Checkout cannot replace authoritative Card success with Cart", async () => {
+  const checkout = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
+  const cardScreen = await readFile(new URL("../components/CardPaymentScreen.tsx", import.meta.url), "utf8");
+
+  assert.match(checkout, /if \(isFocused && !cart\.isLoading && !cart\.sessionId && !cart\.items\.length\) router\.replace\("\/cart"\)/);
+  assert.match(cardScreen, /await cart\.clearCartIfSession\(cartTicket\)/);
+  assert.match(cardScreen, /resetRouter\.dismissAll\?\.\(\)/);
+  assert.match(cardScreen, /pathname: "\/checkout\/success"/);
 });
