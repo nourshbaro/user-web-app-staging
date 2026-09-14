@@ -29,7 +29,9 @@ async function harness(changePassword = async () => {}) {
     export const useToast = () => state.toast;
     export const useTheme = () => ({ styles: { muted: {} }, colors: { danger: "red", line: "gray", panelSoft: "white", primary: "red", ink: "black", muted: "gray" } });
     export class ApiError extends Error {}
-    export const Text = "Text", View = "View", Button = "Button", Input = "Input", Pressable = "Pressable", SymbolView = "SymbolView";
+    export const Text = "Text", View = "View", Button = "Button", TextInput = "TextInput", Pressable = "Pressable", SymbolView = "SymbolView", ScrollView = "ScrollView", KeyboardAvoidingView = "KeyboardAvoidingView", BottomSheetModal = "BottomSheetModal";
+    export const Platform = { OS: "ios" };
+    export const Fragment = Symbol("Fragment");
     export const StyleSheet = { create: value => value, hairlineWidth: 1 };
     export const jsx = (type, props) => ({ type, props });
     export const jsxs = jsx;
@@ -38,39 +40,46 @@ async function harness(changePassword = async () => {}) {
   code = code.replace(/from "[^"]+"/g, "from " + JSON.stringify(mocks));
   const { ChangePassword } = await import(moduleUrl(code));
   const render = () => { state.cursor = 0; return ChangePassword(); };
-  const nodes = (node) => !node || typeof node !== "object" ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)];
+  const nodes = (node) => {
+    if (!node || typeof node !== "object") return [];
+    const rendered = typeof node.type === "function" ? node.type(node.props) : null;
+    return [node, ...nodes(rendered), ...[node.props?.children].flat(Infinity).flatMap(nodes)];
+  };
   const find = (type, title) => nodes(render()).find(node => node.type === type && (!title || node.props.title === title));
   const press = title => {
     const control = find("Button", title) ?? nodes(render()).find(node => node.type === "Pressable" && node.props.accessibilityLabel === title);
     assert.ok(control, title);
     control.props.onPress();
   };
-  const enter = (label, value) => nodes(render()).find(node => node.type === "Input" && node.props.label === label).props.onChangeText(value);
+  const enter = (label, value) => nodes(render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === label).props.onChangeText(value);
   return { render, find, press, enter, nodes, state, cleanup: () => delete globalThis[key] };
 }
 
-test("password wizard requires each field, preserves back navigation, and rejects mismatched confirmation", async () => {
+test("password modal uses the shared sheet, requires each field, and rejects mismatched confirmation", async () => {
   let calls = 0;
   const h = await harness(async () => { calls++; });
   try {
     h.press("Change Password");
-    assert.equal(h.find("Input").props.label, "Current Password");
-    h.press("Continue");
-    assert.equal(h.find("Input").props.label, "Current Password");
-    h.enter("Current Password", "old password"); h.press("Continue");
-    assert.equal(h.find("Input").props.label, "New Password");
-    assert.ok(h.nodes(h.render()).find(node => node.type === "Input" && node.props.label === "Re-enter New Password"));
-    h.press("Submit");
+    const modal = h.find("BottomSheetModal");
+    assert.equal(modal.props.visible, true);
+    assert.equal(modal.props.title, "Change Password");
+    assert.equal(modal.props.dismissible, true);
+    assert.equal(h.find("TextInput").props.accessibilityLabel, "Current Password");
+    assert.ok(h.nodes(h.render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === "New Password"));
+    assert.ok(h.nodes(h.render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === "Confirm New Password"));
+    h.press("Update Password");
     assert.equal(calls, 0);
-    h.enter("New Password", "new password"); h.press("Submit");
+    h.enter("Current Password", "old password"); h.press("Update Password");
     assert.equal(calls, 0);
-    h.enter("Re-enter New Password", "NEW password"); h.press("Submit");
+    h.enter("New Password", "new password"); h.press("Update Password");
     assert.equal(calls, 0);
-    h.press("Back");
-    assert.equal(h.find("Input").props.value, "old password");
-    assert.equal(h.find("Input").props.secureTextEntry, true);
-    h.press("Close change password"); h.press("Change Password");
-    assert.equal(h.find("Input").props.value, "");
+    h.enter("Confirm New Password", "NEW password"); h.press("Update Password");
+    assert.equal(calls, 0);
+    assert.equal(h.find("TextInput").props.secureTextEntry, true);
+    h.find("BottomSheetModal").props.onClose();
+    assert.equal(h.find("BottomSheetModal").props.visible, false);
+    h.press("Change Password");
+    assert.equal(h.find("TextInput").props.value, "");
   } finally { h.cleanup(); }
 });
 
@@ -80,19 +89,19 @@ test("keyboard and button submission share a synchronous guard and send exact pa
   const calls = [];
   const h = await harness((...args) => { calls.push(args); return pending; });
   try {
-    h.press("Change Password"); h.enter("Current Password", " old "); h.press("Continue");
-    h.enter("New Password", " new "); h.enter("Re-enter New Password", " new ");
-    const input = h.nodes(h.render()).find(node => node.type === "Input" && node.props.label === "Re-enter New Password");
+    h.press("Change Password"); h.enter("Current Password", " old ");
+    h.enter("New Password", " new "); h.enter("Confirm New Password", " new ");
+    const input = h.nodes(h.render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === "Confirm New Password");
     input.props.onSubmitEditing(); input.props.onSubmitEditing();
     assert.deepEqual(calls, [[" old ", " new ", " new "]]);
-    assert.equal(h.find("Input").props.editable, false);
+    assert.equal(h.find("TextInput").props.editable, false);
+    assert.equal(h.find("BottomSheetModal").props.dismissible, false);
     complete("Password changed. Please log in again."); await pending; await Promise.resolve();
     assert.deepEqual(h.state.toastMessages.at(-1), {
       variant: "success",
       title: "Password changed",
       message: "Password changed. Please log in again.",
     });
-    assert.ok(h.nodes(h.render()).find(node => node.type === "Pressable" && node.props.accessibilityLabel === "Change Password"));
-    assert.equal(h.find("Input"), undefined);
+    assert.equal(h.find("BottomSheetModal").props.visible, false);
   } finally { h.cleanup(); }
 });

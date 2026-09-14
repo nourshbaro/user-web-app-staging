@@ -1,8 +1,10 @@
-import { withAuthRequired } from "@/components/withAuthRequired";
 import { AuthRequired } from "@/components/AuthRequired";
 import { ContactBrandIcon } from "@/components/ContactBrandIcon";
 import { MainHeader } from "@/components/MainHeader";
+import { SheetDismissHandle } from "@/components/SheetDismissHandle";
 import { Loading, Screen, useResponsive, useTheme } from "@/components/ui";
+import { withAuthRequired } from "@/components/withAuthRequired";
+import { useAlertDialog } from "@/context/AlertDialogContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { storageUrl } from "@/lib/config";
@@ -14,6 +16,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,11 +26,22 @@ import {
 
 function ProfileScreen() {
   const auth = useAuth();
+  const alertDialog = useAlertDialog();
   const toast = useToast();
   const theme = useTheme();
   const responsive = useResponsive();
   const [contactVisible, setContactVisible] = useState(false);
   const logout = async () => {
+    const confirmed = await alertDialog.showAlert({
+      title: "Log out?",
+      message: "Are you sure you want to log out?",
+      variant: "destructive",
+      cancelLabel: "Cancel",
+      confirmLabel: "Log out",
+      dismissible: true,
+    });
+    if (!confirmed) return;
+
     try {
       await auth.logout();
     } catch {
@@ -40,9 +54,18 @@ function ProfileScreen() {
       router.replace("/");
     }
   };
-  const openContact = async (url: string) => {
+  const openContact = async (contact: (typeof OFFICIAL_CONTACTS)[number]) => {
+    if ("appUrl" in contact && Platform.OS !== "web") {
+      try {
+        await Linking.openURL(contact.appUrl);
+        return;
+      } catch {
+        // WhatsApp is unavailable; continue with the universal web URL.
+      }
+    }
+
     try {
-      await Linking.openURL(url);
+      await Linking.openURL(contact.url);
     } catch {
       toast.showToast({
         variant: "error",
@@ -194,13 +217,9 @@ function ProfileScreen() {
               { backgroundColor: theme.colors.panel },
             ]}
           >
-            <View
-              style={[
-                styles.sheetHandle,
-                {
-                  backgroundColor: theme.colors.muted,
-                },
-              ]}
+            <SheetDismissHandle
+              onDismiss={() => setContactVisible(false)}
+              color={theme.colors.muted}
             />
             <View style={styles.sheetHeader}>
               <Text style={[styles.sheetTitle, { color: theme.colors.ink }]}>
@@ -212,7 +231,12 @@ function ProfileScreen() {
                 onPress={() => setContactVisible(false)}
                 style={styles.sheetClose}
               >
-                <Text style={{ color: theme.colors.ink, fontSize: 26 }}>×</Text>
+                <SymbolView
+                  name={{ ios: "xmark", android: "close", web: "close" }}
+                  size={20}
+                  tintColor={theme.colors.ink}
+                  fallback={<View />}
+                />
               </Pressable>
             </View>
             <View
@@ -222,7 +246,7 @@ function ProfileScreen() {
                 <ContactRow
                   key={contact.label}
                   contact={contact}
-                  onPress={() => void openContact(contact.url)}
+                  onPress={() => void openContact(contact)}
                 />
               ))}
             </View>
@@ -244,7 +268,11 @@ function ContactRow({
   return (
     <Pressable
       accessibilityRole="link"
-      accessibilityLabel={contact.label}
+      accessibilityLabel={
+        "accessibilityLabel" in contact
+          ? contact.accessibilityLabel
+          : contact.label
+      }
       onPress={onPress}
       style={({ pressed }) => [
         styles.contactRow,
@@ -273,7 +301,16 @@ function ContactRow({
       <Text style={[styles.rowText, { color: theme.colors.ink }]}>
         {contact.label}
       </Text>
-      <Text style={{ color: theme.colors.muted, fontSize: 22 }}>›</Text>
+      <SymbolView
+        name={{
+          ios: "chevron.right",
+          android: "chevron_right",
+          web: "chevron_right",
+        }}
+        size={20}
+        tintColor={theme.colors.muted}
+        fallback={<View />}
+      />
     </Pressable>
   );
 }
@@ -321,7 +358,16 @@ function MenuRow({
       >
         {title}
       </Text>
-      <Text style={{ color: theme.colors.muted, fontSize: 24 }}>›</Text>
+      <SymbolView
+        name={{
+          ios: "chevron.right",
+          android: "chevron_right",
+          web: "chevron_right",
+        }}
+        size={20}
+        tintColor={theme.colors.muted}
+        fallback={<View />}
+      />
     </Pressable>
   );
 }

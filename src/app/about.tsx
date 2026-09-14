@@ -1,6 +1,7 @@
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { AppHeader } from "@/components/AppHeader";
-import { Button, Screen, useResponsive, useTheme } from "@/components/ui";
+import { BottomSheetModal } from "@/components/BottomSheetModal";
+import { Screen, useResponsive, useTheme } from "@/components/ui";
 import { userFacingError } from "@/lib/userFacingError";
 import { legalService } from "@/services/legal";
 import { SymbolView } from "expo-symbols";
@@ -8,7 +9,6 @@ import { Stack } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,6 +20,7 @@ function AboutScreen() {
   const theme = useTheme();
   const responsive = useResponsive();
   const [visible, setVisible] = useState(false);
+  const [termsVisible, setTermsVisible] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,32 +72,16 @@ function AboutScreen() {
               android: "description",
               web: "description",
             }}
-            disabled
+            onPress={() => setTermsVisible(true)}
           />
-          <Row
+          {/* <Row
             title="FAQ"
             icon={{ ios: "questionmark.circle", android: "help", web: "help" }}
             disabled
-          />
+          /> */}
         </View>
       </View>
-      <Modal
-        visible={visible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setVisible(false)}
-      >
-        <View style={styles.backdrop}>
-          <View
-            accessibilityViewIsModal
-            style={[styles.sheet, { backgroundColor: theme.colors.panel }]}
-          >
-            <View
-              style={[styles.handle, { backgroundColor: theme.colors.muted }]}
-            />
-            <Text style={[styles.title, { color: theme.colors.ink }]}>
-              Privacy Policy
-            </Text>
+      <BottomSheetModal visible={visible} onClose={() => setVisible(false)} title="Privacy Policy" wide>
             <ScrollView contentContainerStyle={styles.policy}>
               {loading ? (
                 <ActivityIndicator color={theme.colors.primary} />
@@ -113,14 +98,19 @@ function AboutScreen() {
                 </Text>
               ) : null}
             </ScrollView>
-            <Button
-              title="Close"
-              variant="secondary"
-              onPress={() => setVisible(false)}
-            />
-          </View>
-        </View>
-      </Modal>
+      </BottomSheetModal>
+      <BottomSheetModal
+        visible={termsVisible}
+        onClose={() => setTermsVisible(false)}
+        title="Terms of Use"
+        wide
+      >
+        <ScrollView contentContainerStyle={styles.policy}>
+          <Text style={[styles.body, { color: theme.colors.secondary }]}>
+            Terms of Use will be available soon.
+          </Text>
+        </ScrollView>
+      </BottomSheetModal>
     </Screen>
   );
 }
@@ -158,9 +148,11 @@ function Row({
         />
       </View>
       <Text style={[styles.rowText, { color: theme.colors.ink }]}>{title}</Text>
-      <Text style={{ color: theme.colors.muted }}>
-        {disabled ? "Unavailable" : "›"}
-      </Text>
+      {disabled ? (
+        <Text style={{ color: theme.colors.muted }}>Unavailable</Text>
+      ) : (
+        <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={20} tintColor={theme.colors.muted} fallback={<View />} />
+      )}
     </Pressable>
   );
 }

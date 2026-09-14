@@ -1,7 +1,9 @@
 import { ChangePassword } from "@/components/ChangePassword";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { AppHeader } from "@/components/AppHeader";
+import { SheetDismissHandle } from "@/components/SheetDismissHandle";
 import {
+  Empty,
   Loading,
   Screen,
   useResponsive,
@@ -10,11 +12,13 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { storageUrl } from "@/lib/config";
-import { authService, profileService } from "@/services/auth";
+import { userFacingError } from "@/lib/userFacingError";
+import { authService } from "@/services/auth";
+import type { User } from "@/types";
 import * as ImagePicker from "expo-image-picker";
 import { Stack } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -35,30 +39,67 @@ function EditProfileScreen() {
   const modalWidth = Math.min(windowWidth - 32, 520);
   const isTablet = windowWidth >= 768;
   const auth = useAuth();
+  const { isAuthenticated, updateUser } = auth;
   const toast = useToast();
   const theme = useTheme();
   const responsive = useResponsive();
 
-  const [phone, setPhone] = useState("");
+  const [profile, setProfile] = useState<User | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
 
   const [removePhotoVisible, setRemovePhotoVisible] = useState(false);
 
+  // /auth/me is the source of truth for the current user's profile data;
+  // locally cached login/register data (auth.user) is only used as a
+  // fallback while the fresh copy is loading.
+  const loadProfile = useCallback(() => {
+    let cancelled = false;
+    setProfileLoading(true);
+    setProfileError(null);
+    authService
+      .me()
+      .then((nextUser) => {
+        if (cancelled) return;
+        setProfile(nextUser);
+        void updateUser(nextUser);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setProfileError(
+          userFacingError(error, "Unable to load your profile."),
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setProfileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [updateUser]);
+
   useEffect(() => {
-    if (!auth.isAuthenticated) return;
-    void profileService
-      .billingInfo()
-      .then((value: any) =>
-        setPhone(typeof value?.phone === "string" ? value.phone : ""),
-      )
-      .catch(() => undefined);
-  }, [auth.isAuthenticated]);
+    if (!isAuthenticated) return;
+    let cleanup: (() => void) | undefined;
+    const timeout = setTimeout(() => {
+      cleanup = loadProfile();
+    }, 0);
+    return () => {
+      clearTimeout(timeout);
+      cleanup?.();
+    };
+  }, [isAuthenticated, loadProfile]);
 
   if (!auth.isReady) return <Loading />;
 
-  const name = auth.user?.name?.trim() || "LFA supporter";
-  const avatar = auth.user?.avatar ? storageUrl(auth.user.avatar) : null;
+  const displayUser = profile ?? auth.user;
+  const name = displayUser?.name?.trim() || "LFA supporter";
+  const avatar = displayUser?.avatar ? storageUrl(displayUser.avatar) : null;
+  const phone = displayUser?.phone ?? "";
+  const showLoading = profileLoading && !displayUser;
+  const showError = Boolean(profileError) && !displayUser;
 
   const choosePhotoFromGallery = async () => {
     if (avatarBusy) {
@@ -122,11 +163,11 @@ function EditProfileScreen() {
         type: mimeType,
       });
 
-      if (response.avatar && auth.user) {
-        await auth.updateUser({
-          ...auth.user,
-          avatar: response.avatar,
-        });
+      const currentUser = profile ?? auth.user;
+      if (response.avatar && currentUser) {
+        const nextUser = { ...currentUser, avatar: response.avatar };
+        setProfile(nextUser);
+        await auth.updateUser(nextUser);
       }
 
       toast.showToast({
@@ -140,7 +181,7 @@ function EditProfileScreen() {
       toast.showToast({
         variant: "error",
         title: "Could not update photo",
-        message: "Please try again.",
+        message: userFacingError(error, "Please try again."),
       });
     } finally {
       setAvatarBusy(false);
@@ -203,11 +244,11 @@ function EditProfileScreen() {
 
       await authService.removeProfilePicture();
 
-      if (auth.user) {
-        await auth.updateUser({
-          ...auth.user,
-          avatar: null,
-        });
+      const currentUser = profile ?? auth.user;
+      if (currentUser) {
+        const nextUser = { ...currentUser, avatar: null };
+        setProfile(nextUser);
+        await auth.updateUser(nextUser);
       }
 
       toast.showToast({
@@ -221,7 +262,7 @@ function EditProfileScreen() {
       toast.showToast({
         variant: "error",
         title: "Could not remove photo",
-        message: "Please try again.",
+        message: userFacingError(error, "Please try again."),
       });
     } finally {
       setAvatarBusy(false);
@@ -265,7 +306,7 @@ function EditProfileScreen() {
                 <Text
                   style={[styles.avatarText, { color: theme.colors.primary }]}
                 >
-                  {initials(auth.user?.name)}
+                  {initials(displayUser?.name)}
                 </Text>
               </View>
             )}
@@ -296,7 +337,7 @@ function EditProfileScreen() {
                   }}
                   size={22}
                   tintColor="#FFFFFF"
-                  fallback={<Text style={styles.cameraFallback}>+</Text>}
+                  fallback={<View />}
                 />
               )}
             </Pressable>
@@ -313,7 +354,7 @@ function EditProfileScreen() {
                 {name}
               </Text>
 
-              {auth.user?.email ? (
+              {displayUser?.email ? (
                 <Text
                   numberOfLines={1}
                   style={[
@@ -322,7 +363,7 @@ function EditProfileScreen() {
                       : theme.styles.muted,
                   ]}
                 >
-                  {auth.user.email}
+                  {displayUser.email}
                 </Text>
               ) : null}
             </View>
@@ -330,31 +371,40 @@ function EditProfileScreen() {
           <Text style={[styles.sectionTitle, { color: theme.colors.muted }]}>
             Personal Info
           </Text>
-          <View
-            style={[
-              styles.group,
-              {
-                backgroundColor: theme.colors.panel,
-                borderColor: theme.colors.line,
-              },
-            ]}
-          >
-            <InfoRow
-              label="Name"
-              value={auth.user?.name ?? ""}
-              icon={{ ios: "person", android: "person", web: "person" }}
+          {showLoading ? (
+            <Loading />
+          ) : showError ? (
+            <Empty
+              title="Could not load your profile"
+              detail={profileError ?? undefined}
             />
-            <InfoRow
-              label="Email"
-              value={auth.user?.email ?? ""}
-              icon={{ ios: "envelope", android: "mail", web: "mail" }}
-            />
-            <InfoRow
-              label="Phone"
-              value={phone}
-              icon={{ ios: "phone", android: "phone", web: "phone" }}
-            />
-          </View>
+          ) : (
+            <View
+              style={[
+                styles.group,
+                {
+                  backgroundColor: theme.colors.panel,
+                  borderColor: theme.colors.line,
+                },
+              ]}
+            >
+              <InfoRow
+                label="Name"
+                value={displayUser?.name ?? ""}
+                icon={{ ios: "person", android: "person", web: "person" }}
+              />
+              <InfoRow
+                label="Email"
+                value={displayUser?.email ?? ""}
+                icon={{ ios: "envelope", android: "mail", web: "mail" }}
+              />
+              <InfoRow
+                label="Phone"
+                value={phone}
+                icon={{ ios: "phone", android: "phone", web: "phone" }}
+              />
+            </View>
+          )}
           <Text style={[styles.sectionTitle, { color: theme.colors.muted }]}>
             Password
           </Text>
@@ -394,14 +444,11 @@ function EditProfileScreen() {
             ]}
             onPress={(event) => event.stopPropagation()}
           >
-            <View
-              style={[
-                styles.sheetHandle,
-                {
-                  backgroundColor: theme.colors.line,
-                },
-              ]}
-            />
+            <SheetDismissHandle onDismiss={() => setPhotoModalVisible(false)} color={theme.colors.line} />
+
+            <Pressable accessibilityRole="button" accessibilityLabel="Close profile picture options" onPress={() => setPhotoModalVisible(false)} style={styles.photoSheetClose}>
+              <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={20} tintColor={theme.colors.ink} fallback={<View />} />
+            </Pressable>
 
             <Text
               style={[
@@ -461,11 +508,11 @@ function EditProfileScreen() {
         transparent
         animationType="fade"
         statusBarTranslucent
-        onRequestClose={() => setRemovePhotoVisible(false)}
+        onRequestClose={() => { if (!avatarBusy) setRemovePhotoVisible(false); }}
       >
         <Pressable
           style={styles.confirmBackdrop}
-          onPress={() => setRemovePhotoVisible(false)}
+          onPress={() => { if (!avatarBusy) setRemovePhotoVisible(false); }}
         >
           <Pressable
             onPress={(event) => event.stopPropagation()}
@@ -494,15 +541,7 @@ function EditProfileScreen() {
                 }}
                 size={27}
                 tintColor={theme.colors.danger}
-                fallback={
-                  <Text
-                    style={{
-                      color: theme.colors.danger,
-                    }}
-                  >
-                    ×
-                  </Text>
-                }
+                fallback={<View />}
               />
             </View>
 
@@ -636,7 +675,7 @@ function PhotoOption({
         }}
         size={20}
         tintColor={theme.colors.muted}
-        fallback={<Text>›</Text>}
+        fallback={<View />}
       />
     </Pressable>
   );
@@ -761,6 +800,16 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 30,
     gap: 14,
+  },
+  photoSheetClose: {
+    position: "absolute",
+    right: 14,
+    top: 20,
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
   },
   sheetHandle: {
     width: 42,

@@ -1,5 +1,6 @@
 import { AccountDeletionModal } from "@/components/AccountDeletionModal";
 import { AppHeader } from "@/components/AppHeader";
+import { AppSwitch } from "@/components/AppSwitch";
 import { Screen, useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useToast } from "@/context/ToastContext";
@@ -9,14 +10,7 @@ import type { ThemeMode } from "@/lib/themePalette";
 import { Stack } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useState } from "react";
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 const APPEARANCE: {
   value: ThemeMode;
@@ -116,15 +110,7 @@ function SettingsScreen() {
               }}
               onPress={handlePushPress}
               trailing={
-                <Switch
-                  trackColor={{
-                    false: theme.colors.muted,
-                    true: theme.colors.primary,
-                  }}
-                  thumbColor={
-                    theme.isDark ? theme.colors.ink : theme.colors.panel
-                  }
-                  ios_backgroundColor={theme.colors.muted}
+                <AppSwitch
                   value={pushGranted}
                   disabled={pushPermissionLoading}
                   accessibilityLabel="Push Notifications permission"
@@ -139,9 +125,9 @@ function SettingsScreen() {
               }
             />
 
-            <Divider />
+            {/* <Divider /> */}
 
-            <SettingRow
+            {/* <SettingRow
               title="Email Notifications"
               detail="Not available yet"
               icon={{
@@ -150,21 +136,13 @@ function SettingsScreen() {
                 web: "mail",
               }}
               trailing={
-                <Switch
-                  trackColor={{
-                    false: theme.colors.muted,
-                    true: theme.colors.primary,
-                  }}
-                  thumbColor={
-                    theme.isDark ? theme.colors.ink : theme.colors.panel
-                  }
-                  ios_backgroundColor={theme.colors.muted}
+                <AppSwitch
                   value={false}
                   disabled
                   accessibilityLabel="Email Notifications unavailable"
                 />
               }
-            />
+            /> */}
           </Section>
 
           <Section title="Preferences">
