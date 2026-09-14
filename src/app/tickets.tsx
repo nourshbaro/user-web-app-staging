@@ -1,4 +1,5 @@
 import { MainHeader } from "@/components/MainHeader";
+import { SheetDismissHandle } from "@/components/SheetDismissHandle";
 import {
   Button,
   Empty,
@@ -312,7 +313,7 @@ function TicketsScreen() {
               onPress={() => setQuery("")}
               style={ticketStyles.clearSearch}
             >
-              <Text style={{ color: theme.colors.muted, fontSize: 20 }}>×</Text>
+              <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={18} tintColor={theme.colors.muted} fallback={<View />} />
             </Pressable>
           ) : null}
         </View>
@@ -380,7 +381,7 @@ function TicketsScreen() {
                         { color: theme.colors.primary },
                       ]}
                     >
-                      View Tickets ›
+                      View Tickets
                     </Text>
                   </View>
                 </Pressable>
@@ -491,20 +492,16 @@ function TicketModal({
   return (
     <>
       <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-        <View style={styles.backdrop}>
-          <View
+        <Pressable accessibilityRole="button" accessibilityLabel="Close tickets" onPress={onClose} style={styles.backdrop}>
+          <Pressable
             accessibilityViewIsModal
+            onPress={(event) => event.stopPropagation()}
             style={[
               styles.ticketSheet,
               { backgroundColor: theme.colors.panel },
             ]}
           >
-            <View
-              style={[
-                styles.dragHandle,
-                { backgroundColor: theme.colors.muted },
-              ]}
-            />
+            <SheetDismissHandle onDismiss={onClose} color={theme.colors.muted} />
             <View style={styles.modalTop}>
               <Text style={[styles.position, { color: theme.colors.ink }]}>
                 {tickets.length
@@ -517,15 +514,7 @@ function TicketModal({
                 onPress={onClose}
                 style={styles.close}
               >
-                <Text
-                  style={{
-                    color: theme.colors.ink,
-                    fontSize: 28,
-                    lineHeight: 30,
-                  }}
-                >
-                  ×
-                </Text>
+                <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={21} tintColor={theme.colors.ink} fallback={<View />} />
               </Pressable>
             </View>
             {title || venue ? (
@@ -620,8 +609,8 @@ function TicketModal({
                 />
               </View>
             </View>
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
       <Modal
         visible={actions}
@@ -643,6 +632,7 @@ function TicketModal({
               { backgroundColor: theme.colors.panel },
             ]}
           >
+            <SheetDismissHandle onDismiss={() => setActions(false)} color={theme.colors.muted} />
             <View style={ticketStyles.actionSheetHeader}>
               <Text
                 style={[
@@ -658,7 +648,7 @@ function TicketModal({
                 onPress={() => setActions(false)}
                 style={styles.close}
               >
-                <Text style={{ color: theme.colors.ink, fontSize: 26 }}>×</Text>
+                <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={20} tintColor={theme.colors.ink} fallback={<View />} />
               </Pressable>
             </View>
             <Action
@@ -702,6 +692,7 @@ function TicketModal({
               { backgroundColor: theme.colors.panel },
             ]}
           >
+            <SheetDismissHandle onDismiss={() => setPayment(false)} color={theme.colors.muted} />
             <Text style={[styles.modalTitle, { color: theme.colors.ink }]}>
               Payment Info
             </Text>
@@ -723,11 +714,9 @@ function TicketModal({
             {orderDetail && !paymentError ? (
               <PaymentInfo item={orderDetail} />
             ) : null}
-            <Button
-              title="Close"
-              variant="secondary"
-              onPress={() => setPayment(false)}
-            />
+            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => setPayment(false)} style={styles.close}>
+              <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={20} tintColor={theme.colors.ink} fallback={<View />} />
+            </Pressable>
           </Pressable>
         </Pressable>
       </Modal>

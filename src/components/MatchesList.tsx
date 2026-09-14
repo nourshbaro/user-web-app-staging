@@ -1,5 +1,6 @@
 import { AppBanner } from "@/components/AppBanner";
 import { MatchCard } from "@/components/MatchCard";
+import { SheetDismissHandle } from "@/components/SheetDismissHandle";
 import { Empty, Loading, useResponsive, useTheme } from "@/components/ui";
 import { useToast } from "@/context/ToastContext";
 import {
@@ -433,8 +434,9 @@ function CalendarModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={local.calendarOverlay}>
-        <View style={[local.calendarPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Close calendar" onPress={onClose} style={local.calendarOverlay}>
+        <Pressable onPress={(event) => event.stopPropagation()} style={[local.calendarPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+          <SheetDismissHandle onDismiss={onClose} color={theme.colors.muted} />
           <View style={local.calendarHeader}>
             <Pressable
               disabled={!canGoPrevious}
@@ -560,19 +562,13 @@ function CalendarModal({
                 { borderColor: theme.colors.line },
               ]}
               accessibilityRole="button"
+              accessibilityLabel="Close calendar"
             >
-              <Text
-                style={[
-                  local.calendarButtonText,
-                  { color: theme.colors.ink },
-                ]}
-              >
-                Close
-              </Text>
+              <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={20} tintColor={theme.colors.ink} fallback={<View />} />
             </Pressable>
           </View>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }

@@ -10,6 +10,8 @@ import {
   View,
 } from "react-native";
 import { useTheme, type ThemeColors } from "@/components/ui";
+import { SheetDismissHandle } from "@/components/SheetDismissHandle";
+import { SymbolView } from "expo-symbols";
 import {
   getTicketMatchName,
   getTicketOrderReference,
@@ -65,13 +67,15 @@ export function ProfileDetailModal({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={local.modalOverlay}>
-        <View
+      <Pressable accessibilityRole="button" accessibilityLabel="Close details" onPress={onClose} style={local.modalOverlay}>
+        <Pressable
+          onPress={(event) => event.stopPropagation()}
           style={[
             local.modalSheet,
             { backgroundColor: theme.colors.panel },
           ]}
         >
+          <SheetDismissHandle onDismiss={onClose} color={theme.colors.muted} />
           <View
             style={[
               local.modalHeader,
@@ -111,6 +115,8 @@ export function ProfileDetailModal({
 
               <Pressable
                 onPress={onClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
                 style={({ pressed }) => [
                   local.closeButton,
                   {
@@ -120,11 +126,7 @@ export function ProfileDetailModal({
                   pressed && local.pressed,
                 ]}
               >
-                <Text
-                  style={[local.closeText, { color: theme.colors.ink }]}
-                >
-                  Close
-                </Text>
+                <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={19} tintColor={theme.colors.ink} fallback={<View />} />
               </Pressable>
             </View>
           </View>
@@ -195,8 +197,8 @@ export function ProfileDetailModal({
               </View>
             ) : null}
           </ScrollView>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
