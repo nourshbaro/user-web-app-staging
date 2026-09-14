@@ -19,9 +19,10 @@ type Props = {
   captureContext: string;
   onSuccess: (token: string) => void;
   onError: (message: string) => void;
+  fullscreen?: boolean;
 };
 
-export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError }: Props) {
+export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError, fullscreen = false }: Props) {
   const theme = useTheme();
   const currentLifecycleRef = useRef<symbol | null>(null);
   const onSuccessRef = useRef(onSuccess);
@@ -80,7 +81,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
   }, [captureContext]);
 
   return (
-    <View style={local.wrap}>
+    <View style={[local.wrap, fullscreen && local.fullscreen]}>
       {status === "loading" ? <Text style={theme.styles.muted}>Loading secure payment form...</Text> : null}
       {status === "error" && error ? <Text style={[local.errorText, { color: theme.colors.danger }]}>{error}</Text> : null}
       <View nativeID="uc-payment-buttons" style={local.buttons} />
@@ -91,6 +92,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError 
 
 const local = {
   wrap: { gap: 8 },
+  fullscreen: { flex: 1 },
   buttons: { minHeight: 44 },
   form: { width: "100%" as const },
   errorText: { fontSize: 13, lineHeight: 18 },
