@@ -6,10 +6,18 @@ const profile = await readFile(new URL("../app/profile.tsx", import.meta.url), "
 const tickets = await readFile(new URL("../app/tickets.tsx", import.meta.url), "utf8");
 const settings = await readFile(new URL("../app/settings.tsx", import.meta.url), "utf8");
 const tournament = await readFile(new URL("../app/tournament.tsx", import.meta.url), "utf8");
+const appSwitch = await readFile(new URL("../components/AppSwitch.tsx", import.meta.url), "utf8");
+const about = await readFile(new URL("../app/about.tsx", import.meta.url), "utf8");
 
 test("profile is a compact account hub", () => {
   for (const label of ["Edit Profile", "Settings", "About LFA Tickets", "Contact Us", "Log Out"]) assert.match(profile, new RegExp(label));
   assert.match(profile, /await auth\.logout\(\)/);
+  assert.match(profile, /alertDialog\.showAlert\(\{/);
+  assert.match(profile, /title: "Log out\?"/);
+  assert.match(profile, /message: "Are you sure you want to log out\?"/);
+  assert.match(profile, /variant: "destructive"/);
+  assert.match(profile, /if \(!confirmed\) return;/);
+  assert.doesNotMatch(profile, /Alert\.alert/);
   assert.doesNotMatch(profile, /profileService\.(orders|tickets)/);
 });
 
@@ -63,5 +71,19 @@ test("settings exposes honest preferences and central deletion authority", () =>
 test("both notification toggle states open OS settings and use semantic contrast", () => {
   assert.match(settings, /await openSettings\(\)/);
   assert.doesNotMatch(settings, /requestPermission|pushPermissionLoading \|\| pushGranted/);
-  assert.match(settings, /false: theme\.colors\.muted,\s+true: theme\.colors\.primary/);
+  // Notification switches render through the shared AppSwitch component
+  // (see components/AppSwitch.tsx) rather than react-native's Switch
+  // directly, so both platforms get correct native colors/contrast — most
+  // notably, iOS never receives a custom thumbColor, which is what caused
+  // switches there to lose their native appearance.
+  assert.match(settings, /<AppSwitch/);
+  assert.match(appSwitch, /false: theme\.colors\.muted,\s+true: theme\.colors\.primary/);
+});
+
+test("Terms of Use mirrors the Privacy shared modal presentation", () => {
+  assert.match(about, /onPress=\{\(\) => setTermsVisible\(true\)\}/);
+  assert.doesNotMatch(about, /title="Terms of Use"[\s\S]{0,180}disabled/);
+  assert.match(about, /<BottomSheetModal[\s\S]*visible=\{termsVisible\}[\s\S]*title="Terms of Use"[\s\S]*wide/);
+  assert.match(about, /Terms of Use will be available soon\./);
+  assert.doesNotMatch(about, /router\.push\("\/terms-of-use"\)/);
 });
