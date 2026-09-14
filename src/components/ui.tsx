@@ -1,11 +1,14 @@
 import { storage } from "@/lib/storage";
-import { shouldShowBottomNavigation } from "@/lib/navigationPresentation";
+import { adjacentPrimaryTab, getPrimaryTabTransitionDirection, PRIMARY_TAB_ROUTES, setPrimaryTabTransitionDirection, shouldShowBottomNavigation, type PrimaryTabRoute } from "@/lib/navigationPresentation";
 import { darkColors, getThemeColors, lightColors, type ThemeMode } from "@/lib/themePalette";
 import { router, usePathname } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TextInputProps, useColorScheme, useWindowDimensions, View } from "react-native";
+import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, TextInput, TextInputProps, useColorScheme, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { scheduleOnRN } from "react-native-worklets";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 
 const THEME_KEY = "lfa_theme";
 
@@ -79,11 +82,56 @@ export function Screen({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const hasBottomNavigation = shouldShowBottomNavigation(pathname);
+  const reducedMotion = useReducedMotion();
+  const [entrance] = useState(() => new Animated.Value(0));
+  const navigateToTab = useCallback((destination: PrimaryTabRoute) => {
+    if (destination === pathname) return;
+    const currentIndex = PRIMARY_TAB_ROUTES.indexOf(pathname as PrimaryTabRoute);
+    const destinationIndex = PRIMARY_TAB_ROUTES.indexOf(destination);
+    setPrimaryTabTransitionDirection(destinationIndex >= currentIndex ? 1 : -1);
+    router.replace(destination);
+  }, [pathname]);
+  const navigateAdjacent = useCallback((direction: -1 | 1) => {
+    const destination = adjacentPrimaryTab(pathname, direction);
+    if (destination) navigateToTab(destination);
+  }, [navigateToTab, pathname]);
+  const swipeGesture = useMemo(
+    () => Gesture.Pan()
+      .enabled(hasBottomNavigation)
+      .activeOffsetX([-52, 52])
+      .failOffsetY([-20, 20])
+      .cancelsTouchesInView(false)
+      .onEnd((event) => {
+        if (Math.abs(event.translationX) < 72 && Math.abs(event.velocityX) < 550) return;
+        scheduleOnRN(navigateAdjacent, event.translationX < 0 ? 1 : -1);
+      }),
+    [hasBottomNavigation, navigateAdjacent],
+  );
+
+  useEffect(() => {
+    if (!hasBottomNavigation || reducedMotion) {
+      entrance.setValue(1);
+      return;
+    }
+    entrance.setValue(0);
+    Animated.timing(entrance, { toValue: 1, duration: 190, useNativeDriver: true }).start();
+  }, [entrance, hasBottomNavigation, pathname, reducedMotion]);
+
   return (
-    <View style={[theme.styles.screen, { paddingTop: Math.max(insets.top, 14), paddingBottom: hasBottomNavigation ? Math.max(insets.bottom, 12) + 74 : Math.max(insets.bottom, 12) }]}>
-      {children}
-      {hasBottomNavigation ? <BottomNavigation bottomInset={insets.bottom} /> : null}
-    </View>
+    <GestureDetector gesture={swipeGesture}>
+      <Animated.View style={[
+        theme.styles.screen,
+        {
+          paddingTop: Math.max(insets.top, 14),
+          paddingBottom: hasBottomNavigation ? Math.max(insets.bottom, 12) + 74 : Math.max(insets.bottom, 12),
+          opacity: entrance,
+          transform: [{ translateX: entrance.interpolate({ inputRange: [0, 1], outputRange: [10 * getPrimaryTabTransitionDirection(), 0] }) }],
+        },
+      ]}>
+        {children}
+        {hasBottomNavigation ? <BottomNavigation bottomInset={insets.bottom} onNavigate={navigateToTab} /> : null}
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
@@ -136,11 +184,11 @@ export function Loading() {
   return <View style={theme.styles.loading}><ActivityIndicator color={theme.colors.primary} /></View>;
 }
 
-function BottomNavigation({ bottomInset }: { bottomInset: number }) {
+function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; onNavigate: (route: PrimaryTabRoute) => void }) {
   const pathname = usePathname();
   const theme = useTheme();
 
-  const tabs = [
+  const tabs: { label: string; href: PrimaryTabRoute; icon: any }[] = [
     { label: "Home", href: "/", icon: { ios: "house", android: "home", web: "home" } },
     { label: "Tournament", href: "/tournament", icon: { ios: "trophy", android: "emoji_events", web: "emoji_events" } },
     { label: "Matches", href: "/matches", icon: { ios: "sportscourt", android: "stadium", web: "stadium" } },
@@ -158,7 +206,7 @@ function BottomNavigation({ bottomInset }: { bottomInset: number }) {
               key={tab.href}
               onPress={() => {
                 if (active) return;
-                router.replace(tab.href as any);
+                onNavigate(tab.href);
               }}
               style={[theme.styles.bottomNavItem, active && theme.styles.bottomNavItemActive]}
               accessibilityLabel={tab.label}
