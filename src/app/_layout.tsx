@@ -3,9 +3,12 @@ import { StatusBar } from "expo-status-bar";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { CartProvider } from "@/context/CartContext";
 import { CartSheetProvider } from "@/context/CartSheetContext";
+import { TicketHoldersProvider } from "@/context/TicketHoldersContext";
 import { ToastProvider } from "@/context/ToastContext";
+import { AlertDialogProvider } from "@/context/AlertDialogContext";
 import { ThemeProvider, useTheme } from "@/components/ui";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import * as Notifications from "expo-notifications";
@@ -25,13 +28,15 @@ SplashScreen.setOptions({ duration: 500, fade: true });
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+       <ThemeProvider>
         <AuthProvider>
           <AppProviders />
         </AuthProvider>
-      </ThemeProvider>
-    </SafeAreaProvider>
+       </ThemeProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -124,7 +129,9 @@ useEffect(() => {
 
   return (
     <ToastProvider>
+      <AlertDialogProvider>
       <CartProvider key={auth.isAuthenticated ? auth.userCacheKey ?? "authenticated" : "guest"}>
+        <TicketHoldersProvider>
         <CartSheetProvider>
           <StatusBar style={theme.isDark ? "light" : "dark"} />
           <MaintenanceGuard>
@@ -166,13 +173,21 @@ useEffect(() => {
             <Stack.Screen name="cart" options={{ headerShown: false }} />
             <Stack.Screen name="checkout" options={{ headerShown: false }} />
             <Stack.Screen
+              name="checkout/ticket-holders"
+              options={{ headerShown: false, presentation: "card" }}
+            />
+            <Stack.Screen name="checkout/card/payment" options={{ headerShown: false }} />
+            <Stack.Screen name="checkout/blue/payment" options={{ headerShown: false }} />
+            <Stack.Screen
               name="match/[id]"
               options={{ headerShown: false }}
             />
             </Stack>
           </MaintenanceGuard>
         </CartSheetProvider>
+        </TicketHoldersProvider>
       </CartProvider>
+      </AlertDialogProvider>
     </ToastProvider>
   );
 }
