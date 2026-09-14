@@ -45,8 +45,11 @@ test("ticket requests invalidate stale filters, closed details, and former sessi
 test("match cards keep responsive metadata rows and selected stadium context", () => {
   assert.match(tickets, /numberOfLines=\{1\}[\s\S]*ellipsizeMode="tail"/);
   assert.match(tickets, /matchMetadataRow: \{[\s\S]*flexDirection: "row"/);
-  assert.match(tickets, /matchStadium: \{ flex: 1, minWidth: 0/);
-  assert.match(tickets, /matchAction: \{ flexShrink: 0/);
+  assert.match(
+    tickets,
+    /matchStadium:\s*\{[^}]*\bflex:\s*1,[^}]*\bminWidth:\s*0/,
+  );
+  assert.match(tickets, /matchAction:\s*\{[^}]*\bflexShrink:\s*0/);
   assert.match(tickets, /stadium: match\.stadium/);
   assert.match(tickets, /order_number: ticket\.order_number \?\? ticket\.order_code/);
   assert.match(tickets, /teamData\(match\.home_team, match\.home_team_logo\)/);
