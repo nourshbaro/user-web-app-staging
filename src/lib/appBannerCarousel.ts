@@ -107,11 +107,16 @@ export function createBannerTransitionAuthority() {
   };
 }
 
-const HORIZONTAL_ACTIVATION_DISTANCE = 10;
+export const HORIZONTAL_ACTIVATION_DISTANCE = 10;
 const HORIZONTAL_DOMINANCE_RATIO = 1.35;
 const MINIMUM_SWIPE_DISTANCE = 48;
 const SWIPE_WIDTH_RATIO = 0.18;
 const MINIMUM_SWIPE_VELOCITY = 0.55;
+
+// Native Pan gesture failOffsetY equivalent of the dx/dy dominance ratio above:
+// by the time a drag crosses the horizontal activation distance, a vertical
+// component past this bound means the gesture is scroll-dominant, not a swipe.
+export const VERTICAL_GESTURE_FAIL_DISTANCE = HORIZONTAL_ACTIVATION_DISTANCE / HORIZONTAL_DOMINANCE_RATIO;
 
 export function normalizeBannerIndex(index: number, count: number) {
   if (!Number.isFinite(index) || !Number.isInteger(count) || count <= 0) return 0;

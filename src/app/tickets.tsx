@@ -313,7 +313,12 @@ function TicketsScreen() {
               onPress={() => setQuery("")}
               style={ticketStyles.clearSearch}
             >
-              <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={18} tintColor={theme.colors.muted} fallback={<View />} />
+              <SymbolView
+                name={{ ios: "xmark", android: "close", web: "close" }}
+                size={18}
+                tintColor={theme.colors.muted}
+                fallback={<View />}
+              />
             </Pressable>
           ) : null}
         </View>
@@ -492,7 +497,12 @@ function TicketModal({
   return (
     <>
       <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close tickets" onPress={onClose} style={styles.backdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close tickets"
+          onPress={onClose}
+          style={styles.backdrop}
+        >
           <Pressable
             accessibilityViewIsModal
             onPress={(event) => event.stopPropagation()}
@@ -501,7 +511,10 @@ function TicketModal({
               { backgroundColor: theme.colors.panel },
             ]}
           >
-            <SheetDismissHandle onDismiss={onClose} color={theme.colors.muted} />
+            <SheetDismissHandle
+              onDismiss={onClose}
+              color={theme.colors.muted}
+            />
             <View style={styles.modalTop}>
               <Text style={[styles.position, { color: theme.colors.ink }]}>
                 {tickets.length
@@ -514,7 +527,12 @@ function TicketModal({
                 onPress={onClose}
                 style={styles.close}
               >
-                <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={21} tintColor={theme.colors.ink} fallback={<View />} />
+                <SymbolView
+                  name={{ ios: "xmark", android: "close", web: "close" }}
+                  size={21}
+                  tintColor={theme.colors.ink}
+                  fallback={<View />}
+                />
               </Pressable>
             </View>
             {title || venue ? (
@@ -593,7 +611,7 @@ function TicketModal({
                 </ScrollView>
               </>
             )}
-            <View style={styles.actions}>
+            {/* <View style={styles.actions}>
               <View style={styles.actionButton}>
                 <Button
                   title="See Match"
@@ -608,7 +626,7 @@ function TicketModal({
                   onPress={() => setActions(true)}
                 />
               </View>
-            </View>
+            </View> */}
           </Pressable>
         </Pressable>
       </Modal>
@@ -632,7 +650,10 @@ function TicketModal({
               { backgroundColor: theme.colors.panel },
             ]}
           >
-            <SheetDismissHandle onDismiss={() => setActions(false)} color={theme.colors.muted} />
+            <SheetDismissHandle
+              onDismiss={() => setActions(false)}
+              color={theme.colors.muted}
+            />
             <View style={ticketStyles.actionSheetHeader}>
               <Text
                 style={[
@@ -648,7 +669,12 @@ function TicketModal({
                 onPress={() => setActions(false)}
                 style={styles.close}
               >
-                <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={20} tintColor={theme.colors.ink} fallback={<View />} />
+                <SymbolView
+                  name={{ ios: "xmark", android: "close", web: "close" }}
+                  size={20}
+                  tintColor={theme.colors.ink}
+                  fallback={<View />}
+                />
               </Pressable>
             </View>
             <Action
@@ -692,7 +718,10 @@ function TicketModal({
               { backgroundColor: theme.colors.panel },
             ]}
           >
-            <SheetDismissHandle onDismiss={() => setPayment(false)} color={theme.colors.muted} />
+            <SheetDismissHandle
+              onDismiss={() => setPayment(false)}
+              color={theme.colors.muted}
+            />
             <Text style={[styles.modalTitle, { color: theme.colors.ink }]}>
               Payment Info
             </Text>
@@ -714,8 +743,18 @@ function TicketModal({
             {orderDetail && !paymentError ? (
               <PaymentInfo item={orderDetail} />
             ) : null}
-            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => setPayment(false)} style={styles.close}>
-              <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={20} tintColor={theme.colors.ink} fallback={<View />} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={() => setPayment(false)}
+              style={styles.close}
+            >
+              <SymbolView
+                name={{ ios: "xmark", android: "close", web: "close" }}
+                size={20}
+                tintColor={theme.colors.ink}
+                fallback={<View />}
+              />
             </Pressable>
           </Pressable>
         </Pressable>
@@ -952,7 +991,9 @@ function TicketInfo({ ticket }: { ticket: Item }) {
                 backgroundColor:
                   status.toLowerCase() === "valid"
                     ? theme.colors.success
-                    : theme.colors.panelSoft,
+                    : status.toLowerCase() === "expired"
+                      ? theme.colors.danger
+                      : theme.colors.muted,
               },
             ]}
           >
@@ -962,10 +1003,11 @@ function TicketInfo({ ticket }: { ticket: Item }) {
               style={[
                 ticketStyles.ticketStatusText,
                 {
-                  color:
-                    status.toLowerCase() === "valid"
-                      ? "#FFFFFF"
-                      : theme.colors.muted,
+                  // color:
+                  //   status.toLowerCase() === "valid"
+                  //     ? "#FFFFFF"
+                  //     : theme.colors.panelSoft,
+                  color: "#FFFFFF",
                 },
               ]}
             >

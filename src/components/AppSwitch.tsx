@@ -18,7 +18,18 @@ export function AppSwitch(props: Omit<SwitchProps, "trackColor" | "thumbColor" |
   const theme = useTheme();
 
   if (Platform.OS === "ios") {
-    return <Switch {...props} trackColor={{ true: theme.colors.primary, false: undefined }} />;
+    // RN's iOS Switch hardcodes `alignSelf: 'flex-start'` internally, which
+    // overrides a parent row's `alignItems: 'center'` and pins the switch to
+    // the top of any row taller than its own intrinsic height. Re-asserting
+    // `alignSelf: 'center'` here (after props.style, so it wins) restores
+    // proper flexbox centering without a fixed pixel offset.
+    return (
+      <Switch
+        {...props}
+        style={[{ alignSelf: "center" }, props.style]}
+        trackColor={{ true: theme.colors.primary, false: undefined }}
+      />
+    );
   }
 
   return (

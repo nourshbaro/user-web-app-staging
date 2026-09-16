@@ -4,9 +4,10 @@ import {
   classifyBannerSwipe,
   createBannerImageInstanceKey,
   createBannerTransitionAuthority,
-  isHorizontalBannerGesture,
+  HORIZONTAL_ACTIVATION_DISTANCE,
   normalizeBannerIndex,
   shouldAutoRotateBanners,
+  VERTICAL_GESTURE_FAIL_DISTANCE,
   type BannerDisplayIdentity,
   type BannerInstanceRole,
   type BannerSwipeDirection,
@@ -28,12 +29,12 @@ import {
   Animated,
   AppState,
   Linking,
-  PanResponder,
   Pressable,
   StyleSheet,
   View,
   type LayoutChangeEvent,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
 const ROTATION_INTERVAL_MS = 10_000;
 const SLIDE_DURATION_MS = 360;
@@ -440,58 +441,55 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
     });
   }, []);
 
-  // The responder callbacks read mutable gesture/transition guards only when native
-  // events fire; they do not use those refs to calculate rendered output.
-  // eslint-disable-next-line react-hooks/refs
-  const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gesture) => (
-      availableBanners.length > 1
-      && !screenReaderEnabled
-      && !transitionInProgressRef.current
-      && isHorizontalBannerGesture(gesture.dx, gesture.dy)
-    ),
-    onMoveShouldSetPanResponderCapture: (_, gesture) => (
-      availableBanners.length > 1
-      && !screenReaderEnabled
-      && !transitionInProgressRef.current
-      && isHorizontalBannerGesture(gesture.dx, gesture.dy)
-    ),
-    onPanResponderGrant: () => {
+  // The gesture callbacks read mutable transition guards only when native events
+  // fire; they do not use those refs to calculate rendered output.
+  /* eslint-disable react-hooks/refs */
+  const bannerPanGesture = useMemo(() => Gesture.Pan()
+    .enabled(availableBanners.length > 1 && !screenReaderEnabled)
+    // Runs handlers on the JS thread (not as UI-thread worklets) so they can
+    // call the existing setState/Animated.Value APIs directly, matching the
+    // JS-thread cost profile the previous PanResponder implementation had.
+    .runOnJS(true)
+    .activeOffsetX([-HORIZONTAL_ACTIVATION_DISTANCE, HORIZONTAL_ACTIVATION_DISTANCE])
+    .failOffsetY([-VERTICAL_GESTURE_FAIL_DISTANCE, VERTICAL_GESTURE_FAIL_DISTANCE])
+    .onTouchesDown((_event, manager) => {
+      // Bail out before the gesture can claim the touch (and block the parent
+      // tab-swipe gesture) while a slide/snap-back animation is in flight.
+      if (transitionInProgressRef.current) manager.fail();
+    })
+    .onStart(() => {
       draggingRef.current = true;
       setSuppressPress(true);
-    },
-    onPanResponderMove: (_, gesture) => {
+    })
+    .onUpdate((event) => {
       if (reduceMotionEnabled) return;
-      const role = gesture.dx < 0 ? "next" : "previous";
+      const role = event.translationX < 0 ? "next" : "previous";
       const item = role === "next" ? nextBanner : previousBanner;
-      dragX.setValue(isDisplayed(role, item) ? gesture.dx : 0);
-    },
-    onPanResponderRelease: (_, gesture) => {
+      dragX.setValue(isDisplayed(role, item) ? event.translationX : 0);
+    })
+    .onEnd((event) => {
+      draggingRef.current = false;
       const direction = classifyBannerSwipe(
-        gesture.dx,
-        gesture.dy,
-        gesture.vx,
+        event.translationX,
+        event.translationY,
+        event.velocityX,
         viewportWidth,
       );
       if (direction === "next") {
-        draggingRef.current = false;
         moveToIndex(safeActiveIndex + 1, direction);
       } else if (direction === "previous") {
-        draggingRef.current = false;
         moveToIndex(safeActiveIndex - 1, direction);
       } else {
-        draggingRef.current = false;
         snapBack();
       }
       releasePressSuppression();
-    },
-    onPanResponderTerminate: () => {
+    })
+    .onFinalize((_event, success) => {
+      if (success) return;
       draggingRef.current = false;
       snapBack();
       releasePressSuppression();
-    },
-    onPanResponderTerminationRequest: () => false,
-  }), [
+    }), [
     availableBanners.length,
     dragX,
     isDisplayed,
@@ -505,6 +503,7 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
     snapBack,
     viewportWidth,
   ]);
+  /* eslint-enable react-hooks/refs */
 
   if (!banner) return null;
 
@@ -519,110 +518,111 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
 
   return (
     <View style={styles.placement}>
-      <View
-        onLayout={handleLayout}
-        style={[styles.frame, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}
-        {...(availableBanners.length > 1 ? panResponder.panHandlers : {})}
-      >
-        {viewportWidth > 0 && availableBanners.length > 1 ? (
-          <Animated.View
-            style={[
-              styles.track,
-              {
-                width: viewportWidth * 3,
-                transform: [{ translateX: Animated.add(dragX, -viewportWidth) }],
-              },
-            ]}
-          >
+      <GestureDetector gesture={bannerPanGesture}>
+        <View
+          onLayout={handleLayout}
+          style={[styles.frame, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}
+        >
+          {viewportWidth > 0 && availableBanners.length > 1 ? (
+            <Animated.View
+              style={[
+                styles.track,
+                {
+                  width: viewportWidth * 3,
+                  transform: [{ translateX: Animated.add(dragX, -viewportWidth) }],
+                },
+              ]}
+            >
+              <BannerSlide
+                key="previous"
+                banner={previousBanner}
+                width={viewportWidth}
+                active={false}
+                role="previous"
+                suppressPress={suppressPress}
+                onLoad={handleImageLoad}
+                onLoadStart={handleInstanceLoadStart}
+                onDisplay={handleInstanceDisplay}
+                onError={handleImageError}
+              />
+              <BannerSlide
+                key="current"
+                banner={banner}
+                width={viewportWidth}
+                active
+                role="current"
+                suppressPress={suppressPress}
+                onLoad={handleImageLoad}
+                onLoadStart={handleInstanceLoadStart}
+                onDisplay={handleInstanceDisplay}
+                displayOwnership={
+                  handoff?.visible && safeActiveIndex === handoff.targetIndex
+                    ? handoff.ownership
+                    : undefined
+                }
+                onError={handleImageError}
+              />
+              <BannerSlide
+                key="next"
+                banner={nextBanner}
+                width={viewportWidth}
+                active={false}
+                role="next"
+                suppressPress={suppressPress}
+                onLoad={handleImageLoad}
+                onLoadStart={handleInstanceLoadStart}
+                onDisplay={handleInstanceDisplay}
+                onError={handleImageError}
+              />
+            </Animated.View>
+          ) : (
             <BannerSlide
-              key="previous"
-              banner={previousBanner}
-              width={viewportWidth}
-              active={false}
-              role="previous"
-              suppressPress={suppressPress}
-              onLoad={handleImageLoad}
-              onLoadStart={handleInstanceLoadStart}
-              onDisplay={handleInstanceDisplay}
-              onError={handleImageError}
-            />
-            <BannerSlide
-              key="current"
               banner={banner}
-              width={viewportWidth}
               active
               role="current"
               suppressPress={suppressPress}
               onLoad={handleImageLoad}
               onLoadStart={handleInstanceLoadStart}
               onDisplay={handleInstanceDisplay}
-              displayOwnership={
-                handoff?.visible && safeActiveIndex === handoff.targetIndex
-                  ? handoff.ownership
-                  : undefined
-              }
               onError={handleImageError}
             />
-            <BannerSlide
-              key="next"
-              banner={nextBanner}
-              width={viewportWidth}
-              active={false}
-              role="next"
-              suppressPress={suppressPress}
-              onLoad={handleImageLoad}
-              onLoadStart={handleInstanceLoadStart}
-              onDisplay={handleInstanceDisplay}
-              onError={handleImageError}
-            />
-          </Animated.View>
-        ) : (
-          <BannerSlide
-            banner={banner}
-            active
-            role="current"
-            suppressPress={suppressPress}
-            onLoad={handleImageLoad}
-            onLoadStart={handleInstanceLoadStart}
-            onDisplay={handleInstanceDisplay}
-            onError={handleImageError}
-          />
-        )}
-        {handoff ? (
-          <View
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            pointerEvents="none"
-            // Preparation must not cover the displayed adjacent destination.
-            // Only this exact handoff Image's onDisplay promotes the overlay.
-            style={[styles.handoff, !handoff.visible && styles.hiddenHandoff]}
-          >
-            <Image
-              key={createBannerImageInstanceKey(
-                "handoff",
-                handoff.banner.id,
-                handoff.banner.imageUrl,
-                handoff.ownership.generation,
-              )}
-              recyclingKey={createBannerImageInstanceKey(
-                "handoff",
-                handoff.banner.id,
-                handoff.banner.imageUrl,
-                handoff.ownership.generation,
-              )}
-              source={{ uri: handoff.banner.imageUrl }}
-              style={[styles.image, { backgroundColor: theme.colors.panelSoft }]}
-              contentFit="cover"
-              onDisplay={() => handleInstanceDisplay(
-                "handoff",
-                handoff.banner,
-                handoff.ownership,
-              )}
-              onError={() => handleImageError(handoff.banner.id)}
-            />
-          </View>
-        ) : null}
-      </View>
+          )}
+          {handoff ? (
+            <View
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              pointerEvents="none"
+              // Preparation must not cover the displayed adjacent destination.
+              // Only this exact handoff Image's onDisplay promotes the overlay.
+              style={[styles.handoff, !handoff.visible && styles.hiddenHandoff]}
+            >
+              <Image
+                key={createBannerImageInstanceKey(
+                  "handoff",
+                  handoff.banner.id,
+                  handoff.banner.imageUrl,
+                  handoff.ownership.generation,
+                )}
+                recyclingKey={createBannerImageInstanceKey(
+                  "handoff",
+                  handoff.banner.id,
+                  handoff.banner.imageUrl,
+                  handoff.ownership.generation,
+                )}
+                source={{ uri: handoff.banner.imageUrl }}
+                style={[styles.image, { backgroundColor: theme.colors.panelSoft }]}
+                contentFit="cover"
+                onDisplay={() => handleInstanceDisplay(
+                  "handoff",
+                  handoff.banner,
+                  handoff.ownership,
+                )}
+                onError={() => handleImageError(handoff.banner.id)}
+              />
+            </View>
+          ) : null}
+        </View>
+      </GestureDetector>
     </View>
   );
 }
