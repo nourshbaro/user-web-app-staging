@@ -17,6 +17,11 @@ async function harness(changePassword = async () => {}) {
     toast: { showToast(message) { state.toastMessages.push(message); } },
   };
   globalThis[key] = state;
+  // ChangePassword.tsx now schedules autofocus via requestAnimationFrame,
+  // which isn't a Node global — shim it deterministically (synchronous) for
+  // the duration of this harness instance.
+  const previousRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (cb) => { cb(); return 0; };
   const mocks = moduleUrl(`
     const state = globalThis[${JSON.stringify(key)}];
     export const useState = (initial) => {
@@ -25,9 +30,11 @@ async function harness(changePassword = async () => {}) {
       return [state.values[i], value => { state.values[i] = typeof value === "function" ? value(state.values[i]) : value; }];
     };
     export const useRef = value => { const [ref] = useState({ current: value }); return ref; };
+    export const useCallback = fn => fn;
+    export const forwardRef = render => render;
     export const useAuth = () => state.auth;
     export const useToast = () => state.toast;
-    export const useTheme = () => ({ styles: { muted: {} }, colors: { danger: "red", line: "gray", panelSoft: "white", primary: "red", ink: "black", muted: "gray" } });
+    export const useTheme = () => ({ styles: { muted: {}, label: {} }, colors: { danger: "red", line: "gray", panelSoft: "white", primary: "red", ink: "black", muted: "gray" } });
     export class ApiError extends Error {}
     export const Text = "Text", View = "View", Button = "Button", TextInput = "TextInput", Pressable = "Pressable", SymbolView = "SymbolView", ScrollView = "ScrollView", KeyboardAvoidingView = "KeyboardAvoidingView", BottomSheetModal = "BottomSheetModal";
     export const Platform = { OS: "ios" };
@@ -52,7 +59,24 @@ async function harness(changePassword = async () => {}) {
     control.props.onPress();
   };
   const enter = (label, value) => nodes(render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === label).props.onChangeText(value);
-  return { render, find, press, enter, nodes, state, cleanup: () => delete globalThis[key] };
+  // The mocked `forwardRef` is the identity function, and the mocked `jsx()`
+  // doesn't strip `ref` out of props the way real React does — so the ref
+  // object passed as `ref={someRef}` on a PasswordInput/TextInput node
+  // survives at `node.props.ref`, the same object identity as the `useRef()`
+  // the component holds. Poking `.current` there genuinely simulates React
+  // committing a ref to a native input, letting focus-progression be tested
+  // for real rather than just asserted structurally.
+  const attachFocusSpy = (label) => {
+    const calls = [];
+    const input = nodes(render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === label);
+    assert.ok(input, label);
+    input.props.ref.current = { focus: () => calls.push(label) };
+    return calls;
+  };
+  return {
+    render, find, press, enter, nodes, state, attachFocusSpy,
+    cleanup: () => { delete globalThis[key]; globalThis.requestAnimationFrame = previousRaf; },
+  };
 }
 
 test("password modal uses the shared sheet, requires each field, and rejects mismatched confirmation", async () => {
@@ -103,5 +127,70 @@ test("keyboard and button submission share a synchronous guard and send exact pa
       message: "Password changed. Please log in again.",
     });
     assert.equal(h.find("BottomSheetModal").props.visible, false);
+  } finally { h.cleanup(); }
+});
+
+test("the shared sheet owns keyboard-aware scrolling instead of a nested ScrollView/KeyboardAvoidingView", async () => {
+  const h = await harness();
+  try {
+    h.press("Change Password");
+    const modal = h.find("BottomSheetModal");
+    assert.equal(modal.props.scrollable, true);
+    assert.equal(modal.props.keyboardAware, true);
+    assert.equal(h.nodes(h.render()).some(node => node.type === "ScrollView"), false);
+    assert.equal(h.nodes(h.render()).some(node => node.type === "KeyboardAvoidingView"), false);
+  } finally { h.cleanup(); }
+});
+
+test("Current Password autofocuses only after the sheet reports it has presented", async () => {
+  const h = await harness();
+  try {
+    h.press("Change Password");
+    const currentCalls = h.attachFocusSpy("Current Password");
+    assert.equal(currentCalls.length, 0);
+    h.find("BottomSheetModal").props.onPresented();
+    assert.deepEqual(currentCalls, ["Current Password"]);
+  } finally { h.cleanup(); }
+});
+
+test("focusing a field reveals its own label+input group via the shared sheet's scrollFieldIntoView", async () => {
+  const h = await harness();
+  try {
+    h.press("Change Password");
+    const modal = h.find("BottomSheetModal");
+    const scrollCalls = [];
+    modal.props.ref.current = { scrollFieldIntoView: (fieldRef) => scrollCalls.push(fieldRef) };
+
+    const current = h.nodes(h.render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === "Current Password");
+    current.props.onFocus();
+    const newPassword = h.nodes(h.render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === "New Password");
+    newPassword.props.onFocus();
+
+    assert.equal(scrollCalls.length, 2);
+    assert.notEqual(scrollCalls[0], scrollCalls[1], "each field reveals its own wrapper, not a shared one");
+  } finally { h.cleanup(); }
+});
+
+test("return key progresses focus Current -> New -> Confirm", async () => {
+  const h = await harness();
+  try {
+    h.press("Change Password");
+    const currentCalls = h.attachFocusSpy("Current Password");
+    const newCalls = h.attachFocusSpy("New Password");
+    const confirmCalls = h.attachFocusSpy("Confirm New Password");
+
+    const current = h.nodes(h.render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === "Current Password");
+    assert.equal(current.props.returnKeyType, "next");
+    current.props.onSubmitEditing();
+    assert.deepEqual(newCalls, ["New Password"]);
+    assert.deepEqual(currentCalls, []);
+
+    const next = h.nodes(h.render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === "New Password");
+    assert.equal(next.props.returnKeyType, "next");
+    next.props.onSubmitEditing();
+    assert.deepEqual(confirmCalls, ["Confirm New Password"]);
+
+    const confirm = h.nodes(h.render()).find(node => node.type === "TextInput" && node.props.accessibilityLabel === "Confirm New Password");
+    assert.equal(confirm.props.returnKeyType, "done");
   } finally { h.cleanup(); }
 });

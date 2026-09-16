@@ -10,17 +10,14 @@ import { useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 
-function AboutScreen() {
-  const theme = useTheme();
-  const responsive = useResponsive();
+/** Shared loading/error/content orchestration for a lazily-fetched legal document sheet — used by both Privacy Policy and Terms of Use. */
+function useLegalDocument(fetchDocument: () => Promise<string>, unavailableMessage: string) {
   const [visible, setVisible] = useState(false);
-  const [termsVisible, setTermsVisible] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,18 +27,27 @@ function AboutScreen() {
     setLoading(true);
     setError(null);
     try {
-      setContent(await legalService.privacyPolicy());
+      setContent(await fetchDocument());
     } catch (err) {
-      setError(
-        userFacingError(
-          err,
-          "Could not load the privacy policy. Please try again.",
-        ),
-      );
+      setError(userFacingError(err, unavailableMessage));
     } finally {
       setLoading(false);
     }
   };
+  return { visible, content, error, loading, open, close: () => setVisible(false) };
+}
+
+function AboutScreen() {
+  const theme = useTheme();
+  const responsive = useResponsive();
+  const privacy = useLegalDocument(
+    () => legalService.privacyPolicy(),
+    "Could not load the privacy policy. Please try again.",
+  );
+  const terms = useLegalDocument(
+    () => legalService.termsOfUse(),
+    "Could not load the terms of use. Please try again.",
+  );
   return (
     <Screen>
       <Stack.Screen options={{ title: "About LFA Tickets" }} />
@@ -63,7 +69,7 @@ function AboutScreen() {
               android: "privacy_tip",
               web: "privacy_tip",
             }}
-            onPress={() => void open()}
+            onPress={() => void privacy.open()}
           />
           <Row
             title="Terms of Use"
@@ -72,7 +78,7 @@ function AboutScreen() {
               android: "description",
               web: "description",
             }}
-            onPress={() => setTermsVisible(true)}
+            onPress={() => void terms.open()}
           />
           {/* <Row
             title="FAQ"
@@ -81,35 +87,51 @@ function AboutScreen() {
           /> */}
         </View>
       </View>
-      <BottomSheetModal visible={visible} onClose={() => setVisible(false)} title="Privacy Policy" wide>
-            <ScrollView contentContainerStyle={styles.policy}>
-              {loading ? (
-                <ActivityIndicator color={theme.colors.primary} />
-              ) : null}
-              {error ? (
-                <Text style={{ color: theme.colors.danger }}>{error}</Text>
-              ) : null}
-              {content ? (
-                <Text
-                  selectable
-                  style={[styles.body, { color: theme.colors.secondary }]}
-                >
-                  {content}
-                </Text>
-              ) : null}
-            </ScrollView>
+      <BottomSheetModal
+        visible={privacy.visible}
+        onClose={privacy.close}
+        title="Privacy Policy"
+        wide
+        scrollable
+        contentContainerStyle={styles.policy}
+      >
+        {privacy.loading ? (
+          <ActivityIndicator color={theme.colors.primary} />
+        ) : null}
+        {privacy.error ? (
+          <Text style={{ color: theme.colors.danger }}>{privacy.error}</Text>
+        ) : null}
+        {privacy.content ? (
+          <Text
+            selectable
+            style={[styles.body, { color: theme.colors.secondary }]}
+          >
+            {privacy.content}
+          </Text>
+        ) : null}
       </BottomSheetModal>
       <BottomSheetModal
-        visible={termsVisible}
-        onClose={() => setTermsVisible(false)}
+        visible={terms.visible}
+        onClose={terms.close}
         title="Terms of Use"
         wide
+        scrollable
+        contentContainerStyle={styles.policy}
       >
-        <ScrollView contentContainerStyle={styles.policy}>
-          <Text style={[styles.body, { color: theme.colors.secondary }]}>
-            Terms of Use will be available soon.
+        {terms.loading ? (
+          <ActivityIndicator color={theme.colors.primary} />
+        ) : null}
+        {terms.error ? (
+          <Text style={{ color: theme.colors.danger }}>{terms.error}</Text>
+        ) : null}
+        {terms.content ? (
+          <Text
+            selectable
+            style={[styles.body, { color: theme.colors.secondary }]}
+          >
+            {terms.content}
           </Text>
-        </ScrollView>
+        ) : null}
       </BottomSheetModal>
     </Screen>
   );

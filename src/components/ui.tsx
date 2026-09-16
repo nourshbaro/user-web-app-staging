@@ -3,7 +3,8 @@ import { adjacentPrimaryTab, getPrimaryTabTransitionDirection, PRIMARY_TAB_ROUTE
 import { darkColors, getThemeColors, lightColors, type ThemeMode } from "@/lib/themePalette";
 import { router, usePathname } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, forwardRef, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import type { RefObject } from "react";
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, TextInput, TextInputProps, useColorScheme, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -159,15 +160,21 @@ export function Button({ title, onPress, variant = "primary", disabled }: { titl
   );
 }
 
-export function Input(props: TextInputProps & { label: string }) {
-  const theme = useTheme();
-  return (
-    <View style={theme.styles.inputWrap}>
-      <Text style={theme.styles.label}>{props.label}</Text>
-      <TextInput {...props} placeholderTextColor={theme.colors.muted} style={[theme.styles.input, props.style]} />
-    </View>
-  );
-}
+export const Input = forwardRef<TextInput, TextInputProps & {
+  label: string;
+  /** Ref to the outer label+input wrapper — e.g. for BottomSheetModal's `scrollFieldIntoView`, which needs the whole field group's position, not just the input's. */
+  containerRef?: RefObject<View | null>;
+}>(
+  function Input({ label, containerRef, ...props }, ref) {
+    const theme = useTheme();
+    return (
+      <View ref={containerRef} style={theme.styles.inputWrap}>
+        <Text style={theme.styles.label}>{label}</Text>
+        <TextInput ref={ref} {...props} placeholderTextColor={theme.colors.muted} style={[theme.styles.input, props.style]} />
+      </View>
+    );
+  },
+);
 
 export function Empty({ title, detail }: { title: string; detail?: string }) {
   const theme = useTheme();

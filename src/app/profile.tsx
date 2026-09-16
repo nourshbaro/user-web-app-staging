@@ -1,7 +1,7 @@
 import { AuthRequired } from "@/components/AuthRequired";
+import { BottomSheetModal } from "@/components/BottomSheetModal";
 import { ContactBrandIcon } from "@/components/ContactBrandIcon";
 import { MainHeader } from "@/components/MainHeader";
-import { SheetDismissHandle } from "@/components/SheetDismissHandle";
 import { Loading, Screen, useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAlertDialog } from "@/context/AlertDialogContext";
@@ -15,7 +15,6 @@ import { useState } from "react";
 import {
   Image,
   Linking,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -197,62 +196,23 @@ function ProfileScreen() {
           </View>
         </ScrollView>
       </View>
-      <Modal
+      <BottomSheetModal
         visible={contactVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setContactVisible(false)}
+        onClose={() => setContactVisible(false)}
+        title="Contact Us"
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close contact options"
-          onPress={() => setContactVisible(false)}
-          style={styles.backdrop}
+        <View
+          style={[styles.contactGroup, { borderColor: theme.colors.line }]}
         >
-          <Pressable
-            accessibilityViewIsModal
-            onPress={(event) => event.stopPropagation()}
-            style={[
-              styles.contactSheet,
-              { backgroundColor: theme.colors.panel },
-            ]}
-          >
-            <SheetDismissHandle
-              onDismiss={() => setContactVisible(false)}
-              color={theme.colors.muted}
+          {OFFICIAL_CONTACTS.map((contact) => (
+            <ContactRow
+              key={contact.label}
+              contact={contact}
+              onPress={() => void openContact(contact)}
             />
-            <View style={styles.sheetHeader}>
-              <Text style={[styles.sheetTitle, { color: theme.colors.ink }]}>
-                Contact Us
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close contact options"
-                onPress={() => setContactVisible(false)}
-                style={styles.sheetClose}
-              >
-                <SymbolView
-                  name={{ ios: "xmark", android: "close", web: "close" }}
-                  size={20}
-                  tintColor={theme.colors.ink}
-                  fallback={<View />}
-                />
-              </Pressable>
-            </View>
-            <View
-              style={[styles.contactGroup, { borderColor: theme.colors.line }]}
-            >
-              {OFFICIAL_CONTACTS.map((contact) => (
-                <ContactRow
-                  key={contact.label}
-                  contact={contact}
-                  onPress={() => void openContact(contact)}
-                />
-              ))}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+          ))}
+        </View>
+      </BottomSheetModal>
     </Screen>
   );
 }
@@ -441,37 +401,12 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, fontSize: 15, fontWeight: "800" },
   divider: { height: StyleSheet.hairlineWidth, marginLeft: 64 },
   pressed: { opacity: 0.68 },
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.58)",
-    justifyContent: "flex-end",
+  contactGroup: {
+    borderWidth: 1,
+    borderRadius: 12,
+    overflow: "hidden",
+    marginVertical: 12,
   },
-  contactSheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    gap: 14,
-  },
-  sheetHandle: {
-    width: 48,
-    height: 5,
-    borderRadius: 999,
-    opacity: 0.4,
-    alignSelf: "center",
-  },
-  sheetHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  sheetClose: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sheetTitle: { fontSize: 22, fontWeight: "900" },
-  contactGroup: { borderWidth: 1, borderRadius: 12, overflow: "hidden" },
   contactRow: {
     minHeight: 60,
     paddingHorizontal: 12,

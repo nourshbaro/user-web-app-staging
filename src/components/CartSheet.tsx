@@ -6,7 +6,7 @@ import { groupCartItems } from "@/lib/cartDisplay";
 import { formatMoney } from "@/lib/format";
 import { userFacingError } from "@/lib/userFacingError";
 import { router } from "expo-router";
-import { ScrollView, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
 type CartSheetProps = {
   visible: boolean;
@@ -61,12 +61,10 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
           ? `${groupedItems.length} item${groupedItems.length > 1 ? "s" : ""} reserved`
           : "No active reservation"
       }
+      scrollable
+      contentContainerStyle={local.content}
     >
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={local.content}
-      >
-        {groupedItems.length ? (
+      {groupedItems.length ? (
           <View style={[local.cartLayout, isWide && local.cartLayoutWide]}>
             <View style={[local.itemsColumn, isWide && local.itemsColumnWide]}>
               {/* <Card>
@@ -197,7 +195,6 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
             detail="Pick a match and reserve tickets to start checkout."
           />
         )}
-      </ScrollView>
     </BottomSheetModal>
   );
 }

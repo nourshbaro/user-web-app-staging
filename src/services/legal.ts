@@ -2,16 +2,27 @@ import { apiRequest, unwrapData } from "@/services/api";
 
 type LegalDocumentPayload = string | Record<string, unknown>;
 
-const CONTENT_KEYS = ["content", "body", "text", "privacy_policy", "privacyPolicy"] as const;
+const CONTENT_KEYS = [
+  "content", "body", "text",
+  "privacy_policy", "privacyPolicy",
+  "terms_of_use", "termsOfUse", "terms",
+] as const;
 
 export const legalService = {
   async privacyPolicy() {
-    const payload = unwrapData(await apiRequest<LegalDocumentPayload | { data: LegalDocumentPayload }>("/legal/privacy-policy"));
-    return readLegalContent(payload);
+    return fetchLegalDocument("/legal/privacy-policy", "The privacy policy is currently unavailable.");
+  },
+  async termsOfUse() {
+    return fetchLegalDocument("/legal/terms-of-use", "The terms of use are currently unavailable.");
   },
 };
 
-function readLegalContent(payload: LegalDocumentPayload): string {
+async function fetchLegalDocument(path: string, unavailableMessage: string) {
+  const payload = unwrapData(await apiRequest<LegalDocumentPayload | { data: LegalDocumentPayload }>(path));
+  return readLegalContent(payload, unavailableMessage);
+}
+
+function readLegalContent(payload: LegalDocumentPayload, unavailableMessage: string): string {
   if (typeof payload === "string") return normalizeLegalText(payload);
 
   for (const key of CONTENT_KEYS) {
@@ -19,7 +30,7 @@ function readLegalContent(payload: LegalDocumentPayload): string {
     if (typeof value === "string" && value.trim()) return normalizeLegalText(value);
   }
 
-  throw new Error("The privacy policy is currently unavailable.");
+  throw new Error(unavailableMessage);
 }
 
 function normalizeLegalText(value: string) {

@@ -83,10 +83,12 @@ test("both notification toggle states open OS settings and use semantic contrast
   assert.match(appSwitch, /false: theme\.colors\.muted,\s+true: theme\.colors\.primary/);
 });
 
-test("Terms of Use mirrors the Privacy shared modal presentation", () => {
-  assert.match(about, /onPress=\{\(\) => setTermsVisible\(true\)\}/);
+test("Terms of Use mirrors the Privacy shared modal presentation, both backed by the real legal API", () => {
+  assert.match(about, /onPress=\{\(\) => void terms\.open\(\)\}/);
   assert.doesNotMatch(about, /title="Terms of Use"[\s\S]{0,180}disabled/);
-  assert.match(about, /<BottomSheetModal[\s\S]*visible=\{termsVisible\}[\s\S]*title="Terms of Use"[\s\S]*wide/);
-  assert.match(about, /Terms of Use will be available soon\./);
+  assert.match(about, /<BottomSheetModal[\s\S]*visible=\{terms\.visible\}[\s\S]*title="Terms of Use"[\s\S]*wide[\s\S]*scrollable/);
+  assert.match(about, /legalService\.termsOfUse\(\)/);
+  assert.match(about, /legalService\.privacyPolicy\(\)/);
+  assert.doesNotMatch(about, /Terms of Use will be available soon\./);
   assert.doesNotMatch(about, /router\.push\("\/terms-of-use"\)/);
 });
