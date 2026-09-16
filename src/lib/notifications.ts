@@ -2,6 +2,20 @@ import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import {
+  getMessaging,
+  getToken as getFcmRegistrationToken,
+  onTokenRefresh,
+} from "@react-native-firebase/messaging";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 export type NotificationPermissionState =
   | "granted"
@@ -70,6 +84,26 @@ export async function getDevicePushToken(): Promise<string | null> {
   return typeof token.data === "string"
     ? token.data
     : JSON.stringify(token.data);
+}
+
+export async function getFcmDeviceToken(): Promise<string | null> {
+  if (!Device.isDevice) {
+    return null;
+  }
+
+  const permission = await getNotificationPermissionStatus();
+
+  if (permission !== "granted") {
+    return null;
+  }
+
+  return getFcmRegistrationToken(getMessaging());
+}
+
+export function subscribeToFcmTokenRefresh(
+  onRefresh: (token: string) => void,
+): () => void {
+  return onTokenRefresh(getMessaging(), onRefresh);
 }
 
 export async function getExpoPushToken(): Promise<string | null> {

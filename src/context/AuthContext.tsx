@@ -121,6 +121,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       return;
     }
 
+    // Re-sends the current token authenticated so the backend can associate
+    // a device that may already be registered anonymously with this user.
     void registerPushDevice().catch((error) => {
       console.error("Authenticated device registration failed:", error);
     });

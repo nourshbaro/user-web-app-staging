@@ -5,7 +5,17 @@ import { authTokenStorage } from "@/lib/authTokenStorage";
 
 type UnauthenticatedListener = () => void;
 type MaintenanceListener = () => void;
-type ApiRequestInit = RequestInit & { skipUnauthenticatedNotify?: boolean };
+type ApiRequestInit = RequestInit & {
+  skipUnauthenticatedNotify?: boolean;
+  /**
+   * Explicitly pins the Authorization header instead of deriving it from
+   * the live session at fetch time: `null` forces an anonymous request
+   * (no header, even if a session exists), a string sends that exact
+   * bearer token. Omit to keep the default behavior of using whatever
+   * session is current when the request fires.
+   */
+  overrideAuthorizationToken?: string | null;
+};
 export type PersistedAuthenticationValue<T> =
   | { status: "missing" }
   | { status: "valid"; value: T }
@@ -302,7 +312,9 @@ export function subscribeMaintenance(listener: MaintenanceListener) {
 
 export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const authentication = await captureAuthenticationSnapshot();
-  const token = authentication.token;
+  const hasAuthorizationOverride = "overrideAuthorizationToken" in init;
+  const { skipUnauthenticatedNotify, overrideAuthorizationToken, ...requestInit } = init;
+  const token = hasAuthorizationOverride ? overrideAuthorizationToken : authentication.token;
   const controller = new AbortController();
   let didTimeout = false;
   const timeout = setTimeout(() => {
@@ -310,7 +322,6 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
     controller.abort();
   }, Number.isFinite(config.timeoutMs) ? config.timeoutMs : 15000);
   const url = Platform.OS === "web" ? `/api${path}` : `${config.apiBaseUrl}${path}`;
-  const { skipUnauthenticatedNotify, ...requestInit } = init;
 
   const isFormData =
     typeof FormData !== "undefined" &&

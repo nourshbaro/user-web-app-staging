@@ -479,14 +479,33 @@ export const authService = {
   },
 };
 
-export async function registerDevice(
-  token: string,
+export async function registerAnonymousDevice(
+  fcmToken: string,
   platform: "android" | "ios",
 ) {
   return apiRequest("/devices", {
     method: "POST",
     body: JSON.stringify({
-      token,
+      token: fcmToken,
+      platform,
+    }),
+    overrideAuthorizationToken: null,
+    skipUnauthenticatedNotify: true,
+  });
+}
+
+export async function registerAuthenticatedDevice(
+  fcmToken: string,
+  platform: "android" | "ios",
+) {
+  // No overrideAuthorizationToken here: apiRequest resolves the live
+  // session immediately before it builds headers, so this always sends
+  // whichever bearer token (if any) is current at fetch time rather than
+  // one pinned earlier in the call chain.
+  return apiRequest("/devices", {
+    method: "POST",
+    body: JSON.stringify({
+      token: fcmToken,
       platform,
     }),
   });

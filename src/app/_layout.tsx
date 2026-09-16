@@ -17,10 +17,11 @@ import {
   configureNotificationChannel,
   getNotificationPermissionStatus,
   requestNotificationPermission,
+  subscribeToFcmTokenRefresh,
 } from "@/lib/notifications";
 
 import { handleNotificationNavigation } from "@/lib/notificationNavigation";
-import { registerPushDevice } from "@/lib/registerPushDevice";
+import { registerPushDevice, registerRefreshedPushDevice } from "@/lib/registerPushDevice";
 import { MaintenanceGuard } from "@/components/maintenance/MaintenanceGuard";
 
 SplashScreen.preventAutoHideAsync();
@@ -53,23 +54,22 @@ function AppProviders() {
 useEffect(() => {
   const setupNotifications = async () => {
     try {
-
       await configureNotificationChannel();
 
       const currentPermission =
         await getNotificationPermissionStatus();
 
-      if (currentPermission === "granted") {
+      const resolvedPermission =
+        currentPermission === "undetermined"
+          ? await requestNotificationPermission()
+          : currentPermission;
 
-        await registerPushDevice();
-
-        return;
-      }
-
-      const nextPermission =
-        await requestNotificationPermission();
-
-      if (nextPermission === "granted") {
+      if (resolvedPermission === "granted") {
+        // Registers with whatever session is current right now — anonymous
+        // while logged out, authenticated once a session exists. Covers
+        // both a permission already granted from a previous launch and one
+        // just granted through the dialog above; registerPushDevice() is
+        // safe to call again from AuthContext for the same token.
         await registerPushDevice();
       }
     } catch (error) {
@@ -77,8 +77,22 @@ useEffect(() => {
     }
   };
 
-  if (auth.isReady && auth.isAuthenticated) void setupNotifications();
-}, [auth.isReady, auth.isAuthenticated]);
+  void setupNotifications();
+}, []);
+
+useEffect(() => {
+  // One subscription for the app's lifetime, independent of login/logout,
+  // since a refreshed token must still be registered anonymously while
+  // logged out — sendDeviceToken() inside registerRefreshedPushDevice picks
+  // anonymous vs authenticated from whatever session is current per refresh.
+  const unsubscribe = subscribeToFcmTokenRefresh((nextToken) => {
+    void registerRefreshedPushDevice(nextToken).catch((error) => {
+      console.error("Refreshed device registration failed:", error);
+    });
+  });
+
+  return unsubscribe;
+}, []);
 
 useEffect(() => {
   const handleInitialNotification = async () => {
