@@ -1,6 +1,5 @@
-import { ChangePassword } from "@/components/ChangePassword";
-import { withAuthRequired } from "@/components/withAuthRequired";
 import { AppHeader } from "@/components/AppHeader";
+import { ChangePassword } from "@/components/ChangePassword";
 import { SheetDismissHandle } from "@/components/SheetDismissHandle";
 import {
   Empty,
@@ -9,6 +8,8 @@ import {
   useResponsive,
   useTheme,
 } from "@/components/ui";
+import { withAuthRequired } from "@/components/withAuthRequired";
+import { useAlertDialog } from "@/context/AlertDialogContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { storageUrl } from "@/lib/config";
@@ -18,13 +19,14 @@ import type { User } from "@/types";
 import * as ImagePicker from "expo-image-picker";
 import { Stack } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   ImageBackground,
+  KeyboardAvoidingView,
+  Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -32,7 +34,6 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-
 
 function EditProfileScreen() {
   const { width: windowWidth } = useWindowDimensions();
@@ -43,12 +44,14 @@ function EditProfileScreen() {
   const toast = useToast();
   const theme = useTheme();
   const responsive = useResponsive();
+  const alertDialog = useAlertDialog();
 
   const [profile, setProfile] = useState<User | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
+  const pendingPhotoAction = useRef<(() => Promise<void>) | null>(null);
 
   const [removePhotoVisible, setRemovePhotoVisible] = useState(false);
 
@@ -68,9 +71,7 @@ function EditProfileScreen() {
       })
       .catch((error) => {
         if (cancelled) return;
-        setProfileError(
-          userFacingError(error, "Unable to load your profile."),
-        );
+        setProfileError(userFacingError(error, "Unable to load your profile."));
       })
       .finally(() => {
         if (!cancelled) setProfileLoading(false);
@@ -109,8 +110,51 @@ function EditProfileScreen() {
     setPhotoModalVisible(false);
 
     try {
+      let permission = await ImagePicker.getMediaLibraryPermissionsAsync();
+
+      if (!permission.granted && permission.canAskAgain) {
+        permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      }
+
+      if (!permission.granted) {
+        if (permission.canAskAgain) {
+          toast.showToast({
+            variant: "error",
+            title: "Photo access required",
+            message:
+              "Allow photo access to choose a profile picture. Tap Gallery to try again.",
+          });
+        } else {
+          const openSettings = await alertDialog.showAlert({
+            title: "Photo access required",
+            message:
+              "Allow Photos access for LFA Tickets in Settings to choose a profile picture.",
+            variant: "confirm",
+            cancelLabel: "Cancel",
+            confirmLabel: "Open Settings",
+            dismissible: true,
+          });
+
+          if (openSettings) {
+            try {
+              await Linking.openSettings();
+            } catch (error) {
+              console.error("[avatar] open settings failed:", error);
+              toast.showToast({
+                variant: "error",
+                title: "Could not open settings",
+                message:
+                  "Open iOS Settings, select LFA Tickets, and allow Photos access.",
+              });
+            }
+          }
+        }
+        return;
+      }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
+        allowsMultipleSelection: false,
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -196,14 +240,45 @@ function EditProfileScreen() {
     setPhotoModalVisible(false);
 
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      let permission = await ImagePicker.getCameraPermissionsAsync();
+
+      if (!permission.granted && permission.canAskAgain) {
+        permission = await ImagePicker.requestCameraPermissionsAsync();
+      }
 
       if (!permission.granted) {
-        toast.showToast({
-          variant: "error",
-          title: "Camera access required",
-          message: "Please allow camera access to take a profile picture.",
-        });
+        if (permission.canAskAgain) {
+          toast.showToast({
+            variant: "error",
+            title: "Camera access required",
+            message:
+              "Allow camera access to take a profile picture. Tap Camera to try again.",
+          });
+        } else {
+          const openSettings = await alertDialog.showAlert({
+            title: "Camera access required",
+            message:
+              "Allow Camera access for LFA Tickets in Settings to take a profile picture.",
+            variant: "confirm",
+            cancelLabel: "Cancel",
+            confirmLabel: "Open Settings",
+            dismissible: true,
+          });
+
+          if (openSettings) {
+            try {
+              await Linking.openSettings();
+            } catch (error) {
+              console.error("[avatar] open settings failed:", error);
+              toast.showToast({
+                variant: "error",
+                title: "Could not open settings",
+                message:
+                  "Open iOS Settings, select LFA Tickets, and allow Camera access.",
+              });
+            }
+          }
+        }
         return;
       }
 
@@ -274,146 +349,147 @@ function EditProfileScreen() {
       <Stack.Screen options={{ title: "Edit Profile" }} />
       <View style={[styles.shell, { width: responsive.contentWidth }]}>
         <AppHeader title="Edit Profile" />
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
         >
-          <ImageBackground
-            source={avatar ? { uri: avatar } : undefined}
-            resizeMode="cover"
-            style={[
-              styles.identity,
-              {
-                backgroundColor: theme.colors.panel,
-                borderColor: theme.colors.line,
-              },
-            ]}
-            imageStyle={styles.identityBackgroundImage}
+          <ScrollView
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
-            {avatar ? (
-              <View style={styles.identityImageOverlay} />
-            ) : (
-              <View
-                style={[
-                  styles.emptyAvatar,
-                  {
-                    backgroundColor: theme.colors.panelSoft,
-                  },
-                ]}
-              >
-                <Text
-                  style={[styles.avatarText, { color: theme.colors.primary }]}
-                >
-                  {initials(displayUser?.name)}
-                </Text>
-              </View>
-            )}
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                avatar ? "Change profile picture" : "Add profile picture"
-              }
-              disabled={avatarBusy}
-              onPress={() => setPhotoModalVisible(true)}
-              style={({ pressed }) => [
-                styles.cameraButton,
-                {
-                  backgroundColor: theme.colors.primary,
-                },
-                (pressed || avatarBusy) && styles.pressed,
-              ]}
-            >
-              {avatarBusy ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <SymbolView
-                  name={{
-                    ios: "camera.fill",
-                    android: "photo_camera",
-                    web: "photo_camera",
-                  }}
-                  size={22}
-                  tintColor="#FFFFFF"
-                  fallback={<View />}
-                />
-              )}
-            </Pressable>
-
-            <View style={styles.identityCopy}>
-              <Text
-                style={[
-                  styles.name,
-                  {
-                    color: avatar ? "#FFFFFF" : theme.colors.ink,
-                  },
-                ]}
-              >
-                {name}
-              </Text>
-
-              {displayUser?.email ? (
-                <Text
-                  numberOfLines={1}
-                  style={[
-                    avatar
-                      ? styles.identityImageSecondaryText
-                      : theme.styles.muted,
-                  ]}
-                >
-                  {displayUser.email}
-                </Text>
-              ) : null}
-            </View>
-          </ImageBackground>
-          <Text style={[styles.sectionTitle, { color: theme.colors.muted }]}>
-            Personal Info
-          </Text>
-          {showLoading ? (
-            <Loading />
-          ) : showError ? (
-            <Empty
-              title="Could not load your profile"
-              detail={profileError ?? undefined}
-            />
-          ) : (
-            <View
+            <ImageBackground
+              source={avatar ? { uri: avatar } : undefined}
+              resizeMode="cover"
               style={[
-                styles.group,
+                styles.identity,
                 {
                   backgroundColor: theme.colors.panel,
                   borderColor: theme.colors.line,
                 },
               ]}
+              imageStyle={styles.identityBackgroundImage}
             >
-              <InfoRow
-                label="Name"
-                value={displayUser?.name ?? ""}
-                icon={{ ios: "person", android: "person", web: "person" }}
+              {avatar ? (
+                <View style={styles.identityImageOverlay} />
+              ) : (
+                <View
+                  style={[
+                    styles.emptyAvatar,
+                    {
+                      backgroundColor: theme.colors.panelSoft,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[styles.avatarText, { color: theme.colors.primary }]}
+                  >
+                    {initials(displayUser?.name)}
+                  </Text>
+                </View>
+              )}
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  avatar ? "Change profile picture" : "Add profile picture"
+                }
+                disabled={avatarBusy}
+                onPress={() => setPhotoModalVisible(true)}
+                style={({ pressed }) => [
+                  styles.cameraButton,
+                  {
+                    backgroundColor: theme.colors.primary,
+                  },
+                  (pressed || avatarBusy) && styles.pressed,
+                ]}
+              >
+                {avatarBusy ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <SymbolView
+                    name={{
+                      ios: "camera.fill",
+                      android: "photo_camera",
+                      web: "photo_camera",
+                    }}
+                    size={22}
+                    tintColor="#FFFFFF"
+                    fallback={<View />}
+                  />
+                )}
+              </Pressable>
+
+              <View style={styles.identityCopy}>
+                <Text
+                  style={[
+                    styles.name,
+                    {
+                      color: avatar ? "#FFFFFF" : theme.colors.ink,
+                    },
+                  ]}
+                >
+                  {name}
+                </Text>
+
+                {displayUser?.email ? (
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      avatar
+                        ? styles.identityImageSecondaryText
+                        : theme.styles.muted,
+                    ]}
+                  >
+                    {displayUser.email}
+                  </Text>
+                ) : null}
+              </View>
+            </ImageBackground>
+            <Text style={[styles.sectionTitle, { color: theme.colors.muted }]}>
+              Personal Info
+            </Text>
+            {showLoading ? (
+              <Loading />
+            ) : showError ? (
+              <Empty
+                title="Could not load your profile"
+                detail={profileError ?? undefined}
               />
-              <InfoRow
-                label="Email"
-                value={displayUser?.email ?? ""}
-                icon={{ ios: "envelope", android: "mail", web: "mail" }}
-              />
-              <InfoRow
-                label="Phone"
-                value={phone}
-                icon={{ ios: "phone", android: "phone", web: "phone" }}
-              />
+            ) : (
+              <View
+                style={[
+                  styles.group,
+                  {
+                    backgroundColor: theme.colors.panel,
+                    borderColor: theme.colors.line,
+                  },
+                ]}
+              >
+                <InfoRow
+                  label="Name"
+                  value={displayUser?.name ?? ""}
+                  icon={{ ios: "person", android: "person", web: "person" }}
+                />
+                <InfoRow
+                  label="Email"
+                  value={displayUser?.email ?? ""}
+                  icon={{ ios: "envelope", android: "mail", web: "mail" }}
+                />
+                <InfoRow
+                  label="Phone"
+                  value={phone}
+                  icon={{ ios: "phone", android: "phone", web: "phone" }}
+                />
+              </View>
+            )}
+            <Text style={[styles.sectionTitle, { color: theme.colors.muted }]}>
+              Password
+            </Text>
+            <View style={styles.passwordGroup}>
+              <ChangePassword />
             </View>
-          )}
-          <Text style={[styles.sectionTitle, { color: theme.colors.muted }]}>
-            Password
-          </Text>
-          <View
-            style={styles.passwordGroup}
-          >
-            <ChangePassword />
-          </View>
-        </ScrollView>
+          </ScrollView>
         </KeyboardAvoidingView>
       </View>
       <Modal
@@ -422,6 +498,14 @@ function EditProfileScreen() {
         animationType="slide"
         statusBarTranslucent
         onRequestClose={() => setPhotoModalVisible(false)}
+        onDismiss={() => {
+          const action = pendingPhotoAction.current;
+          pendingPhotoAction.current = null;
+
+          if (action) {
+            void action();
+          }
+        }}
       >
         <Pressable
           style={[
@@ -444,10 +528,23 @@ function EditProfileScreen() {
             ]}
             onPress={(event) => event.stopPropagation()}
           >
-            <SheetDismissHandle onDismiss={() => setPhotoModalVisible(false)} color={theme.colors.line} />
+            <SheetDismissHandle
+              onDismiss={() => setPhotoModalVisible(false)}
+              color={theme.colors.line}
+            />
 
-            <Pressable accessibilityRole="button" accessibilityLabel="Close profile picture options" onPress={() => setPhotoModalVisible(false)} style={styles.photoSheetClose}>
-              <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={20} tintColor={theme.colors.ink} fallback={<View />} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close profile picture options"
+              onPress={() => setPhotoModalVisible(false)}
+              style={styles.photoSheetClose}
+            >
+              <SymbolView
+                name={{ ios: "xmark", android: "close", web: "close" }}
+                size={20}
+                tintColor={theme.colors.ink}
+                fallback={<View />}
+              />
             </Pressable>
 
             <Text
@@ -470,7 +567,14 @@ function EditProfileScreen() {
                 web: "photo_library",
               }}
               onPress={() => {
-                void choosePhotoFromGallery();
+                if (avatarBusy || pendingPhotoAction.current) return;
+
+                if (Platform.OS === "ios") {
+                  pendingPhotoAction.current = choosePhotoFromGallery;
+                  setPhotoModalVisible(false);
+                } else {
+                  void choosePhotoFromGallery();
+                }
               }}
             />
 
@@ -483,7 +587,14 @@ function EditProfileScreen() {
                 web: "photo_camera",
               }}
               onPress={() => {
-                void takePhoto();
+                if (avatarBusy || pendingPhotoAction.current) return;
+
+                if (Platform.OS === "ios") {
+                  pendingPhotoAction.current = takePhoto;
+                  setPhotoModalVisible(false);
+                } else {
+                  void takePhoto();
+                }
               }}
             />
 
@@ -508,11 +619,15 @@ function EditProfileScreen() {
         transparent
         animationType="fade"
         statusBarTranslucent
-        onRequestClose={() => { if (!avatarBusy) setRemovePhotoVisible(false); }}
+        onRequestClose={() => {
+          if (!avatarBusy) setRemovePhotoVisible(false);
+        }}
       >
         <Pressable
           style={styles.confirmBackdrop}
-          onPress={() => { if (!avatarBusy) setRemovePhotoVisible(false); }}
+          onPress={() => {
+            if (!avatarBusy) setRemovePhotoVisible(false);
+          }}
         >
           <Pressable
             onPress={(event) => event.stopPropagation()}

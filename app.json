@@ -57,7 +57,13 @@
         }
       ],
       "@react-native-firebase/messaging",
-      "./plugins/withFirebaseModularHeaders.js"
+      "./plugins/withFirebaseModularHeaders.js",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow LFA Tickets to access your photos so you can choose a profile picture."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
