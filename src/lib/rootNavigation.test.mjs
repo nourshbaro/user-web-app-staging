@@ -52,9 +52,14 @@ test("bottom navigation ignores the active root and replaces a different root", 
   );
   assert.match(
     bottomNavigation,
-    /onPress=\{\(\) => \{\s*if \(active\) return;\s*router\.replace\(tab\.href as any\);\s*\}\}/,
+    /onPress=\{\(\) => \{\s*if \(active\) return;\s*onNavigate\(tab\.href\);\s*\}\}/,
   );
   assert.doesNotMatch(bottomNavigation, /router\.push\(/);
+  const navigateToTab = uiSource.match(/const navigateToTab = useCallback\([\s\S]*?\}, \[pathname\]\);/)?.[0];
+  assert.ok(navigateToTab, "navigateToTab implementation was not found.");
+  assert.match(navigateToTab, /if \(destination === pathname\) return;/);
+  assert.match(navigateToTab, /router\.replace\(destination\);/);
+  assert.doesNotMatch(navigateToTab, /router\.push\(/);
 });
 
 test("all four primary root screens disable stack animation", () => {

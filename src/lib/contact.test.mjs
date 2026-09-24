@@ -5,24 +5,22 @@ import { OFFICIAL_CONTACTS } from "./contact.ts";
 test("official contact destinations remain centralized and allowlisted", () => {
   assert.deepEqual(
     OFFICIAL_CONTACTS.map(({ label, url }) => [label, url]),
+    // Product decision: Instagram, Facebook and X are intentionally not offered.
     [
-      ["Instagram", "https://www.instagram.com/thelfadotcom/"],
-      ["Facebook", "https://www.facebook.com/thelfadotcom"],
-      ["X", "https://x.com/thelfadotcom"],
       ["WhatsApp", "https://wa.me/96170447888"],
       ["Email", "mailto:info%40lfa-ticketing.com"],
     ],
   );
 });
 
-test("social contacts use real brand glyph authorities instead of generic substitutes", () => {
+test("WhatsApp uses its real brand glyph authority and Email uses the mail symbol", () => {
   assert.deepEqual(
-    OFFICIAL_CONTACTS.slice(0, 4).map(({ label, brand }) => [label, brand]),
-    [["Instagram", "instagram"], ["Facebook", "facebook"], ["X", "x"], ["WhatsApp", "whatsapp"]],
+    OFFICIAL_CONTACTS.map(({ label, brand }) => [label, brand]),
+    [["WhatsApp", "whatsapp"], ["Email", undefined]],
   );
-  assert.equal(OFFICIAL_CONTACTS[3].appUrl, "whatsapp://send?phone=96170447888");
-  assert.equal(OFFICIAL_CONTACTS[3].accessibilityLabel, "Contact us on WhatsApp");
-  assert.deepEqual(OFFICIAL_CONTACTS[4].icon, { ios: "envelope", android: "mail", web: "mail" });
+  assert.equal(OFFICIAL_CONTACTS[0].appUrl, "whatsapp://send?phone=96170447888");
+  assert.equal(OFFICIAL_CONTACTS[0].accessibilityLabel, "Contact us on WhatsApp");
+  assert.deepEqual(OFFICIAL_CONTACTS[1].icon, { ios: "envelope", android: "mail", web: "mail" });
 });
 
 test("profile tries the WhatsApp app before the web fallback", async () => {

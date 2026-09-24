@@ -141,7 +141,8 @@ Bad: *"Copy the reference's `buy/` routes, Zustand store, and mock data."*
 ### 5.1 Approved concepts (presentation only)
 
 - football-first hierarchy; featured-match emphasis; dark match hero
-- visible bottom-navigation labels (production already has them; restyle only)
+- visible bottom-navigation labels (production items are icon-only with
+  accessibility labels; making labels visible is Phase 2 work)
 - clearer match states; Upcoming / Live / Results **only where the backend
   supports them** (discovery currently uses scheduled matches only)
 - compact date browsing; a focused filter bottom sheet (existing filters:
@@ -185,7 +186,7 @@ Production must not inherit:
 - **Preserve pre-existing changes:** do not revert, reformat, stage, or absorb them.
 - **Before a proposed commit:** show `git status`, the changed-file list, and
   the relevant diff; confirm unrelated work is excluded.
-- **Report checks** with exact results (e.g. "tests 448/457, same 9 known failures").
+- **Report checks** with exact results (e.g. "tests 458/458 pass, 48 files").
 - **Disclose** anything not runtime-verified.
 - One coherent change per commit, conventional style, for example
   `feat(app): redesign match details experience` or

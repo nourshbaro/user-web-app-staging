@@ -193,7 +193,10 @@ Run what is relevant and report exact results:
 
 - TypeScript: `npx tsc --noEmit`
 - Lint: `npx expo lint`
-- Tests: `node --test $(git ls-files '*.test.mjs')` (Node ≥ 22 type stripping; there is no `npm test` script)
+- Tests: `node --test $(git ls-files --cached --others --exclude-standard '*.test.mjs')`
+  (Node ≥ 22 type stripping; there is no `npm test` script). The `--others`
+  flag includes new, not-yet-tracked test files; plain `git ls-files` would
+  silently skip them and give a false green.
 - Expo config: `npx expo config` when config/plugins/env change
 - Runtime checks for behavior changes, on the platforms affected
 

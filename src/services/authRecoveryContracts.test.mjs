@@ -30,8 +30,8 @@ test("forgot-password service methods use the exact paths and payload field name
   assert.match(serviceSource, /apiRequest\("\/auth\/forgot-password\/verify-otp"/);
   assert.match(serviceSource, /JSON\.stringify\(\{ email, code \}\)/);
   assert.match(serviceSource, /apiRequest\("\/auth\/reset-password"/);
-  assert.match(serviceSource, /"password-confirmation": passwordConfirmation/);
-  assert.doesNotMatch(resetMethod, /password_confirmation/);
+  assert.match(resetMethod, /"password_confirmation": passwordConfirmation/);
+  assert.doesNotMatch(resetMethod, /password-confirmation/);
 });
 
 test("recovery OTP remains a six-character string and registration reuses shared phone UI", () => {

@@ -143,11 +143,16 @@ Severity is a first assessment for prioritization, not a verdict.
 
 ### 3.1 Client-visible API credential — HIGH (pre-existing, known)
 `EXPO_PUBLIC_LFA_API_PASSWORD` is committed in `eas.json` (identical across
-staging and production profiles), inlined into every native bundle, and sent as
-a `password` header on every native request. It must be treated as public.
-Whether it grants meaningful privilege is a backend question. Do not
-propagate the pattern, log the value, or move it elsewhere during redesign.
-Remediation (rotation, removal, backend gating) is separately scoped.
+staging and production profiles) and sent as a `password` header on every
+native request. Because `src/lib/config.ts` reads it at module scope, Metro
+inlines it into **both native client bundles (Android, iOS) and the web client
+bundle**, even though web requests do not send it (verified by bundle
+inspection in Phase 0). The web `/api` server function does not inline it; it
+reads the credential from the server environment at runtime. It must be
+treated as public. Whether it grants meaningful privilege is a backend
+question. Do not propagate the pattern, log the value, or move it elsewhere
+during redesign. Remediation (rotation, removal, backend gating) needs
+backend/infrastructure/security coordination and is not performed in redesign work.
 
 ### 3.2 Web proxy forwards any path with the credential — MEDIUM
 `src/app/api/[...path]+api.ts` attaches the API password server-side to any

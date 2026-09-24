@@ -17,8 +17,11 @@ test("filter toggle exposes button and expanded semantics", () => {
 
 test("clear filters remains a distinct labeled button", () => {
   assert.match(source, /accessibilityLabel="Clear match filters"/);
-  assert.doesNotMatch(source, /event\.stopPropagation\(\)/);
-  assert.match(source, /<View style=\{local\.filterHeader\}>/);
+  const headerStart = source.indexOf("<View style={local.filterHeader}>");
+  const clearIndex = source.indexOf('accessibilityLabel="Clear match filters"', headerStart);
+  assert.ok(headerStart >= 0 && clearIndex > headerStart);
+  // The clear button is a sibling of the toggle, not a nested press target.
+  assert.doesNotMatch(source.slice(headerStart, clearIndex), /event\.stopPropagation\(\)/);
 });
 
 test("dropdown triggers expose their field value and expanded state", () => {

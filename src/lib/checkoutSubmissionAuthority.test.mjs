@@ -59,7 +59,7 @@ test("checkout source retains synchronous duplicate-submit protection", async ()
 
   assert.match(
     source,
-    /if \(!cart\.sessionId \|\| !paymentMethod \|\| submitInFlightRef\.current \|\| blueHandoffStartedRef\.current\) return;/,
+    /if \(\s*!cart\.sessionId \|\|\s*!paymentMethod \|\|\s*submitInFlightRef\.current \|\|\s*blueHandoffStartedRef\.current\s*\)\s*return;/,
   );
   assert.match(source, /submitInFlightRef\.current = true;/);
 });
@@ -113,9 +113,9 @@ test("returning from BLUE releases the route-launch guard and reuses the same se
     "utf8",
   );
 
-  assert.match(source, /useFocusEffect\(useCallback\(\(\) => \{[\s\S]*blueHandoffStartedRef\.current = false;/);
-  assert.match(source, /readPendingBluePaymentAttempt\(cartSessionTicket\.sessionId as string\)/);
-  assert.match(source, /launchBluePayment\(reusableAttempt\.paymentUrl, reusableAttempt\.sessionId\)/);
+  assert.match(source, /useFocusEffect\(\s*useCallback\(\(\) => \{[\s\S]*blueHandoffStartedRef\.current = false;/);
+  assert.match(source, /readPendingBluePaymentAttempt\(\s*cartSessionTicket\.sessionId as string,?\s*\)/);
+  assert.match(source, /launchBluePayment\(\s*reusableAttempt\.paymentUrl,\s*reusableAttempt\.sessionId,?\s*\)/);
   assert.match(source, /savePendingBluePaymentAttempt\(\{/);
 });
 test("card payment is a dedicated route rather than a Checkout modal", async () => {
@@ -156,7 +156,7 @@ test("background Checkout cannot replace authoritative Card success with Cart", 
   const checkout = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
   const cardScreen = await readFile(new URL("../components/CardPaymentScreen.tsx", import.meta.url), "utf8");
 
-  assert.match(checkout, /if \(isFocused && !cart\.isLoading && !cart\.sessionId && !cart\.items\.length\) router\.replace\("\/cart"\)/);
+  assert.match(checkout, /if \(isFocused && !cart\.isLoading && !cart\.sessionId && !cart\.items\.length\)\s*router\.replace\("\/cart"\)/);
   assert.match(cardScreen, /await cart\.clearCartIfSession\(cartTicket\)/);
   assert.match(cardScreen, /resetRouter\.dismissAll\?\.\(\)/);
   assert.match(cardScreen, /pathname: "\/checkout\/success"/);

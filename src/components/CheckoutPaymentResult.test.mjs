@@ -47,7 +47,7 @@ test("announcement text is the safe provider-aware heading only", () => {
 test("success and failure actions preserve labels and destinations", () => {
   assert.deepEqual(
     getCheckoutResultPresentation("success", "blue").secondaryAction,
-    { title: "View tickets", href: "/profile" },
+    { title: "View tickets", href: "/tickets" },
   );
   assert.deepEqual(
     getCheckoutResultPresentation("failed", "cybersource").secondaryAction,

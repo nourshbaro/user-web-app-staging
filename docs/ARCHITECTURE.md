@@ -94,7 +94,9 @@ All routes are plain `Stack` screens; there is no Expo Router `Tabs` layout.
 **Primary navigation** is a custom bottom bar rendered by `Screen` in
 `src/components/ui.tsx` when the pathname is one of `PRIMARY_TAB_ROUTES`
 (`src/lib/navigationPresentation.ts`): Home, Tournament, Matches, My Tickets,
-Profile — labels are already visible. Tab switches use `router.replace`;
+Profile. Items are icon-only: each label is used as its `accessibilityLabel`
+(and fallback glyph) but is not rendered as visible text; visible labels are
+Phase 2 work. Tab switches use `router.replace`;
 horizontal swipe on a primary screen moves to the adjacent tab
 (`Gesture.Pan` in `Screen`).
 
@@ -327,10 +329,17 @@ retry, so recovery requires an app restart.
   `Screen`, headers, and payment screens.
 - Reduced motion: `useReducedMotion()` gates the tab entrance animation and
   other decorative motion.
-- Accessibility: roles/labels/states on controls, `announceForAccessibility`
-  on payment results, accessible seat and filter helpers
-  (`src/lib/seatAccessibility.ts`, `src/lib/matchFilterAccessibility.ts`),
-  enforced partly by source tests.
+- Accessibility strengths: accessible seat and filter labels/states
+  (`src/lib/seatAccessibility.ts`, `src/lib/matchFilterAccessibility.ts`,
+  `MatchesList`), `announceForAccessibility` on payment results, a live region
+  on the maintenance screen, reduced-motion gating, and responsive/safe-area
+  infrastructure — enforced partly by source tests.
+- Accessibility gaps in shared primitives (Phase 0 finding; Phase 1 work):
+  `Button` has no `accessibilityRole` and no disabled/busy `accessibilityState`;
+  `Input`'s visible label is not programmatically associated with its
+  `TextInput`; `Loading` has no accessible label/status; bottom-navigation
+  items have no role or selected state. Many screens compensate with their own
+  `Pressable` semantics, so coverage is uneven.
 
 ---
 

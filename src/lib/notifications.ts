@@ -103,6 +103,12 @@ export async function getFcmDeviceToken(): Promise<string | null> {
 export function subscribeToFcmTokenRefresh(
   onRefresh: (token: string) => void,
 ): () => void {
+  // FCM is native-only; on web no default Firebase app exists and
+  // getMessaging() throws, matching registerPushDevice's platform guard.
+  if (Platform.OS !== "android" && Platform.OS !== "ios") {
+    return () => {};
+  }
+
   return onTokenRefresh(getMessaging(), onRefresh);
 }
 
