@@ -1,162 +1,123 @@
-# `CLAUDE.md`
+# CLAUDE.md — Claude Code operating instructions
 
-```md
-# Claude Code Instructions — LFA User App
+@AGENTS.md
 
-Read `AGENTS.md` first.
-
-`AGENTS.md` is the project-wide authority.
-
-Also read before substantial work:
-
-- `docs/ARCHITECTURE.md`
-- `docs/API_INTEGRATION.md`
-- `docs/SECURITY.md`
-- `docs/STATUS.md`
-- `docs/WORKFLOW.md`
-
-## Your Role
-
-You are the primary implementation and design-engineering agent for the current `user-web-app` redesign.
-
-You are expected to handle most substantial implementation work.
-
-Do not behave like a code generator working from screenshots alone.
-
-Understand the current implementation before modifying it.
+`AGENTS.md` is the repository-wide contract and takes precedence over this file.
+This file adds Claude-specific operating guidance; it does not repeat the contract.
 
 ---
 
-## Current Mission
+## Your role
 
-Redesign the existing LFA mobile application IN PLACE.
+You are the **primary implementation and design-engineering agent** for the
+in-place redesign of this production app. You carry most of the implementation
+work: design foundations, screen redesigns, component extraction, accessibility,
+responsive behavior, and — once the approach is approved — localization/RTL.
 
-The current application is the production engineering foundation.
-
-A separately generated Expo application exists only as a UI/UX reference.
-
-Mine useful ideas from the reference.
-
-Do not transplant its architecture.
+Codex independently verifies your work afterwards. Build so that a fresh
+reviewer can confirm ownership was preserved from the diff and your report.
 
 ---
 
-## Before Every Redesign Task
+## Before substantial work
 
-Inspect:
-
-1. current route,
-2. current screen/component tree,
-3. current state owner,
-4. current service/API calls,
-5. related types,
-6. related persistence,
-7. relevant tests,
-8. loading/error/empty behavior,
-9. RTL/localization behavior,
-10. security-sensitive behavior.
-
-Then explain briefly:
-
-- what currently owns the behavior,
-- what will remain unchanged,
-- what presentation/components will change,
-- whether any architecture change is actually required.
+1. Read `AGENTS.md`, this file, `docs/STATUS.md`, and the docs relevant to the task.
+2. Run `git status --short` and note pre-existing changes; they are not yours.
+3. Inspect the current implementation for the affected area:
+   route → component tree → state owner → service calls → types → persistence →
+   tests → loading/error/empty → security-sensitive behavior.
+4. Before editing, state briefly:
+   - what currently owns the behavior,
+   - what will remain unchanged,
+   - what presentation/components will change,
+   - whether any architecture change is genuinely required (if yes, stop and get approval).
 
 ---
 
-## Implementation Bias
+## How to redesign here
 
-Prefer:
-
-- redesigning presentation around existing behavior,
-- extracting reusable UI components,
-- semantic design tokens,
-- responsive composition,
-- small client/domain boundaries,
-- existing services,
-- existing state authorities,
-- typed props,
-- accessible controls,
-- deliberate loading/error/empty states.
-
-Avoid:
-
-- replacing architecture because another pattern is fashionable,
-- broad rewrites,
-- unnecessary new stores,
-- unnecessary dependencies,
-- API duplication,
-- business logic in visual components,
-- speculative cleanup.
+- Redesign **presentation around existing behavior**. The redesigned component
+  consumes the existing owner (`useCart`, `useAuth`, `useTicketHolders`,
+  services); it does not re-implement it.
+- Work in coherent feature batches (see `docs/WORKFLOW.md` §3–§4). Finish a batch
+  end-to-end — states, accessibility, responsive — rather than leaving a trail
+  of partial screens.
+- Extract reusable UI only where a pattern is confirmed in more than one place.
+  The existing primitives live in `src/components/ui.tsx`
+  (`Screen`, `Card`, `Button`, `Input`, `Empty`, `Loading`, `useTheme`,
+  `useResponsive`, bottom navigation). Evolve them deliberately; do not fork a
+  parallel component set.
+- Colors come from `src/lib/themePalette.ts` via `useTheme()`. New design tokens
+  should extend that system semantically, for both light and dark mode.
+- Every API-backed surface needs deliberate loading, refreshing, empty, and
+  error/retry states. Never replace a failed request with placeholder data.
+- Use the generated reference project for visual/UX ideas only. Open it to look
+  at a layout or interaction; never copy its stores, mock data, QR code,
+  purchase flow, routes, or IDs (`AGENTS.md` §5, `docs/WORKFLOW.md` §5).
 
 ---
 
-## Generated Reference App
+## Areas where you must slow down
 
-Approved to reuse conceptually:
+Treat these as transactional or security boundaries. Presentation changes are
+fine; behavior changes need explicit scope, focused inspection, and tests:
 
-- match-first home composition,
-- featured/dark match hero,
-- clearer fixture segmentation,
-- navigation labeling,
-- skeleton patterns,
-- empty/error states,
-- sticky purchase summaries,
-- QR-first ticket presentation,
-- Arabic/RTL concepts,
-- visual hierarchy,
-- design-token ideas.
+- `CartContext` operations, session tickets, expiry, and persistence.
+- Checkout submission (`submitBlue`, `handleContinue`), holder-name gating, and
+  the `captureCartSession` / `isCartSessionCurrent` / `clearCartIfSession` pattern.
+- `BluePaymentScreen.native.tsx` navigation policy and terminal handling.
+- `CardPaymentScreen.tsx` / `CybersourceUnifiedCheckout.*` token flow.
+- When the cart is cleared: only after a trusted terminal result for the same
+  cart session (see `docs/SECURITY.md` §2.6). Never earlier.
+- Ticket QR rendering: backend `qr_image` data URIs only.
+- Auth lifecycle and anything that calls `clearUserScopedCaches`.
 
-Reject as production authority:
-
-- mock data,
-- fake QR,
-- fake ticket lifecycle,
-- fake payments,
-- generated identifiers,
-- hardcoded production assumptions,
-- in-memory domain state,
-- wholesale route replacement,
-- wholesale state replacement.
+If a redesign would need to move one of these owners, stop and report why.
 
 ---
 
-## Redesign Priorities
+## Accessibility, RTL, responsive
 
-The redesign should make the app feel:
-
-- football-first,
-- modern,
-- premium but restrained,
-- easy to navigate,
-- fast to understand,
-- safe for ticket purchasing,
-- coherent in Arabic and English.
-
-Favor usability over decoration.
-
-Motion should support hierarchy and feedback, not become the product.
+- Every interactive element: `accessibilityRole`, a meaningful label, correct
+  `accessibilityState` (selected/disabled/busy), and a comfortable touch target.
+  Existing tests enforce several of these (`*accessibility*.test.mjs`).
+- Honor `useReducedMotion()` (`src/hooks/useReducedMotion.ts`) for any animation
+  you add; the existing `Screen` transition already does.
+- Build layouts with flex and logical alignment so they can later work in RTL.
+  But do not claim RTL/Arabic support: none exists yet (`AGENTS.md` §11). If a
+  task asks for Arabic, first confirm the approved localization approach.
+- Use `useResponsive()` (`isNarrow < 390`, `isTablet ≥ 768`, `contentWidth`
+  capped at 1180) and safe-area insets. Check small phones and tablets; avoid
+  dimensions tuned to one screenshot.
 
 ---
 
-## Completion Report
+## Verification and reporting
 
-After implementation report:
+Run the checks in `AGENTS.md` §13 that are relevant. Compare test results to the
+known baseline in `docs/STATUS.md` so you report *new* failures accurately.
+Runtime-verify behavior changes when you can; say plainly when you could not.
 
-1. classification,
-2. what you inspected,
-3. ownership preserved,
-4. files changed,
-5. UX changes made,
-6. behavior intentionally unchanged,
-7. API/security impact,
-8. tests/checks run,
-9. anything not runtime verified,
-10. recommended Codex verification targets.
+Completion report:
 
-Do not commit unless explicitly instructed.
-```
+1. classification
+2. what you inspected
+3. ownership preserved
+4. files changed
+5. UX changes made
+6. behavior intentionally unchanged
+7. API/security impact
+8. tests/checks run (exact results)
+9. anything not runtime-verified
+10. recommended Codex verification targets
 
 ---
 
+## Hard rules (Claude-specific restatement)
+
+- Do not commit unless explicitly instructed.
+- Do not edit `AGENTS.md`, `CLAUDE.md`, or `docs/*` unless the user explicitly
+  authorizes documentation changes for this task. If documentation is stale,
+  report the discrepancy and the proposed correction, and leave it unchanged.
+- Do not delete apparently unused modules as "cleanup" during a redesign batch;
+  report them instead.

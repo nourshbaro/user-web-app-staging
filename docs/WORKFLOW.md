@@ -1,350 +1,208 @@
-# `docs/WORKFLOW.md`
+# Workflow — LFA User App
 
-```md
-# Development Workflow — LFA User Mobile App
-
-## Objective
-
-Move quickly without sacrificing production behavior.
-
-The redesign should not repeat the slow pattern of splitting trivial work into excessive microtasks.
-
-Work in coherent screen/feature batches.
+How work is scoped, implemented, verified, and committed in this repository.
+Governing rules are in `AGENTS.md`; this document describes the process.
 
 ---
 
-## Default Redesign Workflow
+## 1. Roles
 
-### 1. Scope
+| Role | Responsibility |
+| ---- | -------------- |
+| **User** | Requirements owner and final authority: scope, design direction, acceptance, documentation changes, commits. |
+| **ChatGPT** (with the user) | Coordination: turns requirements into scoped tasks, routes work to agents, reconciles findings. |
+| **Claude Code** | Primary implementation and design-engineering agent. Does most of the implementation. |
+| **Codex** | Independent verifier and targeted inspector: diff review, drift detection, checks, focused investigations, and mechanical fixes when explicitly assigned. |
 
-User + ChatGPT define a coherent redesign target.
+Claude should be used substantially more than Codex for implementation.
+Codex does not re-implement reviewed work to suit its own preference.
 
-Examples:
+---
 
-- Home + Match Card system
-- Match Details
-- Ticket Selection
-- Cart
-- Checkout
+## 2. Default workflow for a substantial feature
+
+1. **Scope** — User + ChatGPT define one coherent batch and its acceptance criteria.
+2. **Read** — Claude reads `AGENTS.md`, `CLAUDE.md`, `docs/STATUS.md`, and the relevant docs.
+3. **Inspect** — Claude inspects the implementation (route, components, state
+   owner, services, types, persistence, tests, states, security) and states
+   ownership and intended scope before editing.
+4. **Implement** — Claude implements the whole batch coherently.
+5. **Verify and report** — Claude runs the relevant checks and reports with
+   the `CLAUDE.md` completion format, including what was not runtime-verified.
+6. **Independent review** — Codex performs **one** fresh-context review of the result.
+7. **Fix** — Confirmed findings go back to Claude, who verifies each finding,
+   applies the narrowest correct fix, and re-runs the affected checks.
+8. **Final verification** — Targeted re-check of the fixes (Codex or checks).
+   Outcome: `PASS` or `PASS WITH NOTES`. A note must not hide a blocker.
+9. **Runtime review** — The user exercises the real app: appearance,
+   interaction, phone and tablet sizes, keyboard, loading/error states, real
+   backend data, the transaction flow, and dark mode.
+10. **Commit** — Only after the user approves.
+
+### Review findings
+
+Codex classifies findings as BLOCKER / HIGH / MEDIUM / LOW / NOTE with file and
+line evidence and a concrete failure scenario. Only confirmed or strongly
+evidenced issues block progress. Style preferences are not findings.
+
+### Avoid
+
+- Endless Claude ↔ Codex loops. The default is implement → one review → fix → final check → stop.
+- Micro-phases (`MD-01A`, `MD-01B`, …) created for ceremony.
+- Unrelated refactors or "while I'm here" cleanup.
+- Splitting an implementation only to make the process look careful.
+
+---
+
+## 3. Task sizing
+
+Prefer coherent batches, for example:
+
+- Design Foundations
+- Navigation + Home + Match Discovery
+- Match Details + Ticket Selection
+- Cart + Checkout
 - My Tickets
-- Ticket Detail
-- Profile
+- Profile (+ settings, edit profile, about)
+- Localization / RTL / Accessibility / Responsive polish
 
-Avoid creating separate tasks for every tiny visual detail unless risk requires it.
+Split only at a genuine boundary:
 
----
+- **architecture** — a change to an owner, provider tree, or routing semantics,
+- **security** — auth, token, WebView, deep link, config, or credential behavior,
+- **transaction** — checkout submission, payment completion, or cart clearing,
+- **ownership** — the work crosses independently owned domains,
+- **verification risk** — too large to review or runtime-test reliably at once.
 
-### 2. Claude Inspection
-
-Claude reads project instructions and inspects the complete relevant feature.
-
-Claude identifies:
-
-- route ownership,
-- components,
-- state,
-- API calls,
-- navigation,
-- persistence,
-- tests,
-- security-sensitive behavior.
-
-Claude should not edit until it understands the active implementation.
+Example: "Cart + Checkout" is one presentation batch. A change to *when* the
+cart is cleared after payment is a separate transaction-boundary task.
 
 ---
 
-### 3. Claude Implementation
+## 4. Redesign roadmap
 
-Claude performs the coherent redesign batch.
+The redesign happens in place, phase by phase. Each phase is a batch (or a few
+batches) run through §2.
 
-Claude may:
+### Phase 0 — Baseline / redesign readiness ← **NEXT**
+Before significant visual change:
+- confirm Git state and isolate pre-existing work,
+- reconcile the known failing tests (`docs/STATUS.md`) — fix, update with
+  justification, or document as accepted,
+- TypeScript, lint, and Expo config baselines,
+- web / Metro compatibility,
+- review the open security concerns (`docs/SECURITY.md` §3) and decide which
+  block the redesign,
+- identify regression-critical flows and how each will be verified
+  (auth, add-to-cart GA and seated, expiry, BLUE, card, tickets/QR, PDF, push),
+- decide the localization/RTL approach (see note below).
+No unrelated refactors. Exit criterion: a credible `PASS — READY FOR REDESIGN`.
 
-- restructure presentation components,
-- create reusable UI primitives,
-- update styles,
-- improve accessibility,
-- add proper UI states,
-- improve RTL/responsiveness.
+### Phase 1 — Design foundations
+Semantic tokens (extending `src/lib/themePalette.ts`), typography, surfaces,
+spacing, radii, status badges, section headers, skeletons, state panels
+(loading/empty/error), a sticky transaction bar, the ticket-card foundation, an
+accessibility baseline, and RTL-safe layout conventions.
 
-Claude should avoid unrelated architecture changes.
+### Phase 2 — Navigation + Home + Match Discovery
+### Phase 3 — Matches + Match Detail + Ticket Selection
+### Phase 4 — Cart + Checkout
+### Phase 5 — Tickets
+### Phase 6 — Profile + supporting screens
+### Phase 7 — Localization / RTL / Accessibility / Responsive / Performance / regression polish
 
----
-
-### 4. Claude Verification
-
-Before handoff Claude runs relevant checks.
-
-Expected where applicable:
-
-- TypeScript,
-- lint,
-- tests,
-- Expo config validation,
-- platform-specific checks,
-- focused runtime scenarios.
-
-Claude reports exact results.
-
----
-
-### 5. Codex Independent Review
-
-Codex receives the implementation AFTER Claude completes it.
-
-Codex should review with fresh context.
-
-Codex checks:
-
-- unintended behavior changes,
-- duplicated state,
-- broken API ownership,
-- payment/cart regressions,
-- route problems,
-- missing error states,
-- accessibility problems,
-- RTL/responsive problems,
-- stale/dead implementation,
-- test coverage,
-- suspicious security changes.
-
-Codex should NOT:
-
-- rewrite the screen based on personal preference,
-- create unnecessary refactors,
-- replace valid architecture,
-- expand scope.
-
-Findings must be concrete.
+**Roadmap boundary note (pending user decision).** Inspection found no
+localization or RTL infrastructure (`docs/ARCHITECTURE.md` §15). If Arabic is a
+launch requirement, placing all localization in Phase 7 means extracting every
+hardcoded string after Phases 2–6 have rewritten those screens. The suggested
+alternative is to decide the i18n/RTL mechanism in Phase 0 and introduce it in
+Phase 1, so Phases 2–6 build localized, RTL-safe screens, and Phase 7 becomes
+verification and polish. This is a recommendation only; the roadmap above stays
+as written until the user decides.
 
 ---
 
-### 6. Finding Classification
+## 5. Using the generated reference project
 
-Codex findings should be classified:
+Location: `C:\Users\noorsh\Documents\BLUE\claude gen AI lfa ui` (outside this repo, not under Git).
 
-- BLOCKER
-- HIGH
-- MEDIUM
-- LOW
-- NOTE
+For each idea you adopt:
 
-Only confirmed or strongly evidenced issues should block progression.
+1. name the UX idea and why it helps,
+2. inspect how production handles that feature today,
+3. adapt the idea to the existing route, owner, and service,
+4. back it with real API data and real state,
+5. verify with the real backend.
 
-Do not create review loops over subjective stylistic preference.
+Good: *"Adopt the reference's dark match hero on `/match/[id]`, fed by
+`matchesService.details`."*
+Bad: *"Copy the reference's `buy/` routes, Zustand store, and mock data."*
 
----
+### 5.1 Approved concepts (presentation only)
 
-### 7. Claude Correction
+- football-first hierarchy; featured-match emphasis; dark match hero
+- visible bottom-navigation labels (production already has them; restyle only)
+- clearer match states; Upcoming / Live / Results **only where the backend
+  supports them** (discovery currently uses scheduled matches only)
+- compact date browsing; a focused filter bottom sheet (existing filters:
+  team, stadium, date)
+- stronger skeleton/loading, empty, and error states
+- persistent transaction total/action areas
+- stronger payment-option presentation for the **real** methods (Card via
+  CyberSource, BLUE Wallet)
+- Upcoming / Used / Expired tickets **where supported** (portal filter is
+  `all | upcoming | past`; ticket `status` and `checked_in_at` are the real signals)
+- QR-first ticket detail using the backend `qr_image`
+- stronger profile grouping
+- Arabic/RTL-aware design (after the localization decision)
+- improved typography; semantic design tokens
 
-Valid findings return to Claude.
+### 5.2 Rejected implementation patterns
 
-Claude:
+Production must not inherit:
 
-- verifies the finding,
-- applies the narrowest correct fix,
-- reruns affected verification,
-- reports the correction.
-
-Do not restart the entire redesign.
-
----
-
-### 8. Final Verification
-
-Codex or targeted checks verify the corrected result.
-
-Expected final state:
-
-`PASS`
-
-or:
-
-`PASS WITH NOTES`
-
-A NOTE must not secretly contain a blocking defect.
-
----
-
-### 9. Runtime Review
-
-The user reviews the actual app.
-
-Source-level correctness does not prove UI quality.
-
-Runtime review should consider:
-
-- appearance,
-- interaction,
-- phone sizing,
-- tablet sizing if relevant,
-- keyboard,
-- loading,
-- errors,
-- RTL,
-- real backend data,
-- transaction flow.
+- fake authentication; fake payment processing; fake card entry
+- fake or generated production QR codes (the reference's hash-seeded `qrCells`)
+- random order/ticket IDs (the reference uses `Math.random`)
+- mock production data (`src/data/mock.ts`)
+- synthetic stadium ownership (N/W/E/S stands) replacing backend zones and maps
+- an in-memory purchase store replacing `CartContext` / server state
+- fake notifications or push simulations
+- artificial network delays (timed "processing" screens)
+- demo toggles or demo/states routes
+- payment methods the backend does not support
+- uncontrolled decorative animation; any animation without reduced-motion handling
+- wholesale replacement of routes (`(tabs)`, `buy/*`), stores, or component architecture
+- new dependencies added only to reproduce reference visuals (e.g. a state
+  library or font packages) without a separate justification
 
 ---
 
-### 10. Commit
+## 6. Git workflow
 
-Commit only after approval.
-
-Keep commits coherent.
-
-Examples:
-
-- `feat(app): redesign home and match discovery`
-- `feat(app): redesign match details experience`
-- `feat(app): redesign ticket purchase flow`
-- `feat(app): redesign user tickets`
-- `fix(app): address checkout redesign regressions`
-
-Avoid mixing unrelated work into one commit.
+- **No automatic commits.** Commit, push, amend, or rebase only when the user instructs it.
+- **Before work:** run `git status --short`; record pre-existing changes.
+- **Preserve pre-existing changes:** do not revert, reformat, stage, or absorb them.
+- **Before a proposed commit:** show `git status`, the changed-file list, and
+  the relevant diff; confirm unrelated work is excluded.
+- **Report checks** with exact results (e.g. "tests 448/457, same 9 known failures").
+- **Disclose** anything not runtime-verified.
+- One coherent change per commit, conventional style, for example
+  `feat(app): redesign match details experience` or
+  `fix(app): address checkout redesign regressions`.
 
 ---
 
-# Responsibility Matrix
+## 7. Evidence standard
 
-## User
-
-Owns:
-- requirements,
-- design preference,
-- feature intent,
-- acceptance,
-- commit approval.
-
-## ChatGPT
-
-Owns:
-- coordination,
-- translating requirements into implementation scope,
-- maintaining project continuity,
-- deciding which agent should handle a task,
-- reconciling Claude/Codex findings,
-- maintaining documentation direction.
-
-## Claude
-
-Owns most:
-- implementation,
-- design engineering,
-- architecture-aware frontend work,
-- complex changes,
-- significant refactors,
-- fixes resulting from valid review findings.
-
-## Codex
-
-Owns primarily:
-- inspection,
-- independent verification,
-- repository checks,
-- diffs,
-- mechanical fixes when explicitly assigned,
-- tests/typecheck/lint/config validation.
-
-Claude should be used substantially more than Codex during the redesign.
+Reports cite files and lines, commands and outputs, or runtime observations.
+Use CONFIRMED / HIGH-CONFIDENCE / POSSIBLE / NOT VERIFIED where certainty
+matters. "Everything looks good" is not a report.
 
 ---
 
-# No Endless Agent Loop
+## 8. Documentation changes
 
-Default:
-
-Claude implementation
-→ Codex review
-→ Claude correction
-→ final verification
-
-Stop.
-
-Do not repeatedly bounce implementation between agents unless a real unresolved defect remains.
-
----
-
-# Design Reference Workflow
-
-When using the generated reference application:
-
-1. identify the UX idea,
-2. determine why it is useful,
-3. inspect how the production app currently handles the feature,
-4. adapt the idea to production architecture,
-5. do NOT copy architecture blindly,
-6. verify with real APIs/state.
-
-Examples:
-
-Good:
-> The prototype has a clearer upcoming/live match hierarchy. Reproduce that hierarchy using the existing match services and routes.
-
-Bad:
-> Copy the prototype home route, mock store and generated data into production.
-
----
-
-# Scope Rule
-
-Prefer one coherent batch over many artificial subtasks.
-
-Good:
-
-`Redesign Match Details`
-
-with:
-- hero,
-- information hierarchy,
-- states,
-- responsive behavior,
-- ticket CTA.
-
-Not automatically:
-
-- MD-01
-- MD-01A
-- MD-01B
-- MD-01C
-- MD-02A
-- MD-02B
-
-Split only when:
-
-- security risk differs,
-- transaction behavior differs,
-- implementation ownership differs,
-- a change is too large to verify safely.
-
----
-
-# Evidence Standard
-
-Reports should contain evidence.
-
-Good:
-
-> `AuthContext.tsx` remains the sole owner of authenticated user restoration. No new auth state was introduced.
-
-Better when needed:
-
-> TypeScript: PASS  
-> Tests: 284/284 PASS  
-> Expo config: PASS
-
-Avoid:
-
-> Everything looks good.
-
----
-
-# Documentation Update Rule
-
-At the end of each major redesign batch:
-
-Update `docs/STATUS.md`.
-
-Update other docs only when their durable information changed.
-
-Do not rewrite all docs after every cosmetic task.
-```
+Documentation is read-only by default (`AGENTS.md` §4). At the end of a phase,
+Claude or Codex may **propose** STATUS or doc updates in their report. The
+user decides whether to authorize them. Only then are the files edited.

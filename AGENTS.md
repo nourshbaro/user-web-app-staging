@@ -1,552 +1,228 @@
-# `AGENTS.md`
+# AGENTS.md — LFA User App (`user-web-app`)
 
-```md
-# LFA User Mobile App — Agent Instructions
-
-## 1. Project Identity
-
-This repository is the production LFA consumer mobile application.
-
-Technology:
-- React Native
-- Expo
-- TypeScript
-- Expo Router
-
-This application is part of the wider LFA Ticketing System.
-
-Related products exist, including:
-- User Web
-- Admin
-- POS
-- Check-in
-- Backend services
-
-Do not assume behavior from another LFA application applies here unless verified against this repository and its API contract.
+Repository-wide contract for every coding agent (Claude Code, Codex, or other).
+Read this file before every task. It is intentionally short; details live in `docs/`.
 
 ---
 
-## 2. Current Objective
+## 1. What this repository is
 
-The current major initiative is a UI/UX redesign of `user-web-app`.
+The **production** LFA Tickets consumer app: Expo SDK 57 / React Native 0.86 /
+React 19 / TypeScript (strict) / Expo Router (file-based, `src/app`). It ships
+to iOS and Android (`com.lfaticketing.app`) and to web (Expo Router server
+output with an `/api` proxy route).
 
-IMPORTANT:
+It is the engineering source of truth. The current initiative is a UI/UX
+redesign **in place** — not a rewrite, migration, or replacement.
 
-This is a redesign of the EXISTING production application.
-
-It is NOT:
-- a rewrite,
-- a replacement application,
-- a migration to the generated prototype,
-- an excuse to replace established architecture,
-- an opportunity to redesign backend contracts.
-
-The existing repository remains the engineering foundation.
-
-A separately generated Expo application was reviewed as a DESIGN REFERENCE ONLY.
-
-Its architecture, mock services, state model, fake payment flows, fake QR data, fake tickets, generated IDs, and route structure are NOT authoritative.
-
-Use that reference to identify useful UX patterns, not implementation architecture.
+Expo changes between SDKs. Before writing Expo-specific code, consult the
+documentation for the SDK version actually installed (`package.json` → `expo`),
+not memory of older SDKs.
 
 ---
 
-## 3. Redesign Principle
+## 2. Instruction precedence
 
-Use:
+1. The user's explicit instructions for the current task.
+2. `AGENTS.md` (this file).
+3. Agent-specific files (`CLAUDE.md`, etc.) — they complement, never override, this file.
+4. `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`, `docs/SECURITY.md`, `docs/WORKFLOW.md`.
+5. `docs/STATUS.md` (volatile; may be stale).
 
-    EXISTING PRODUCTION ENGINEERING
-                +
-      SELECTED NEW UX PATTERNS
-                =
-        REDESIGNED APPLICATION
-
-Never:
-
-    GENERATED PROTOTYPE
-          ↓
-    REPLACE REAL APP
-
-Preserve working production behavior unless the task explicitly requires changing it.
+Source code is the evidence of what currently exists. If docs and code disagree,
+do not silently "fix" either one — report the discrepancy (see §4).
 
 ---
 
-## 4. Patterns Approved for Selective Reuse
+## 3. Required reading
 
-The redesign may reuse or adapt concepts such as:
-
-- match-first information hierarchy,
-- stronger featured-match presentation,
-- dark match hero sections,
-- clearer upcoming/live/past status segmentation,
-- improved fixture and match cards,
-- skeleton loading states,
-- purposeful empty states,
-- clear error/retry states,
-- sticky purchase summaries or CTAs where appropriate,
-- QR-first ticket presentation,
-- improved ticket lifecycle/status presentation,
-- better visual hierarchy,
-- consistent spacing and semantic design tokens,
-- clearer navigation labels,
-- Arabic/RTL-aware layout patterns,
-- restrained transitions and animation,
-- improved accessibility,
-- responsive layouts for phones and tablets.
-
-These are concepts.
-
-Do not copy generated architecture blindly.
+| Task touches…                         | Read first                                 |
+| ------------------------------------- | ------------------------------------------ |
+| anything                              | `AGENTS.md`, `docs/STATUS.md`              |
+| screens, state, navigation            | `docs/ARCHITECTURE.md`                     |
+| any request, service, response shape  | `docs/API_INTEGRATION.md`                  |
+| auth, cart, checkout, payment, tickets, push, WebViews, config | `docs/SECURITY.md` |
+| planning, review, handoff, commits    | `docs/WORKFLOW.md`                         |
 
 ---
 
-## 5. Explicitly Rejected Patterns
+## 4. Documentation is read-only by default
 
-Do NOT introduce:
+`AGENTS.md`, `CLAUDE.md`, and everything in `docs/` are persistent project
+instructions. During normal implementation or review work agents **must read
+them and must not modify them** unless the user explicitly authorizes a
+documentation change for that task.
 
-- fake tickets,
-- fake QR codes,
-- fake payment completion,
-- fake authentication,
-- random IDs standing in for backend IDs,
-- hardcoded mock production data,
-- in-memory-only production state,
-- duplicate sources of truth,
-- replacement routing architecture without necessity,
-- a monolithic global store merely because the prototype uses one,
-- new API contracts invented by the frontend,
-- unnecessary wrappers or abstractions,
-- nested pressable controls with conflicting interaction behavior,
-- fixed layouts that fail on smaller phones,
-- fixed grids that fail on tablets or RTL,
-- excessive animation,
-- decorative UI that interferes with ticket purchasing,
-- unnecessary dependencies simply to reproduce prototype visuals.
+This includes `docs/STATUS.md`. It holds volatile state, but it is still only
+edited with explicit authorization.
+
+When work reveals stale or wrong documentation:
+
+1. report the discrepancy (file, statement, contrary evidence),
+2. state the proposed correction,
+3. leave the documentation unchanged,
+4. wait for explicit user approval.
 
 ---
 
-## 6. Architecture Preservation Rules
+## 5. Production-first rule and the generated reference
 
-Before modifying a feature, identify its current owner.
+A separately generated Expo project (`claude gen AI lfa ui`, outside this repo)
+is a **design / UX / product-direction reference only**. It has no architectural
+relationship with this repository.
 
-Examples of ownership that must be preserved unless explicitly changed:
+It may inspire presentation: hierarchy, layout, states, tokens, typography,
+navigation labeling, QR-first ticket layout, Arabic/RTL-aware design.
 
-- authentication state,
-- authenticated API token handling,
-- profile/user state,
-- cart state,
-- checkout state,
-- order state,
-- BLUE payment lifecycle,
-- payment redirects,
-- ticket retrieval,
-- QR/ticket presentation,
-- push notification registration,
-- deep-link / navigation behavior,
-- localization,
-- theme,
-- persisted state.
+It is **never** authoritative for: architecture, routing, auth, API integration,
+state ownership, cart/reservation logic, checkout, CyberSource, BLUE, tickets,
+QR generation, backend contracts, or security behavior. It is built on a
+Zustand store over mock data, a hash-seeded placeholder QR, `Math.random`
+order numbers, timed fake "processing", and a demo route — none of which may
+enter production.
 
-Do not create a second owner for existing state.
-
-Do not duplicate API calls in presentation components.
-
-Do not move business logic into UI components merely because the redesigned UI needs different presentation.
-
-Prefer:
-
-    existing domain/state/service
-            ↓
-      redesigned component
-
-rather than:
-
-    redesigned component
-            ↓
-    new duplicated logic
+Every adopted idea must be wired to real production data and existing owners.
+Full approved/rejected lists: `docs/WORKFLOW.md` §5.
 
 ---
 
-## 7. API Rules
+## 6. Inspect before changing
 
-Treat existing backend APIs as external contracts.
+Before modifying a feature, identify from source (not filenames):
 
-Before changing an API interaction:
+- the route and component tree,
+- the state owner (context / lib authority / local state),
+- the service calls and their call sites,
+- related types, persistence, and tests,
+- loading / error / empty behavior,
+- security-sensitive behavior.
 
-1. Inspect the existing service implementation.
-2. Inspect all call sites.
-3. Inspect related types.
-4. Inspect tests.
-5. Determine request authentication requirements.
-6. Determine request/response ownership.
-7. Determine failure behavior.
-8. Determine whether retry/idempotency matters.
-
-Do NOT:
-- invent missing endpoints,
-- silently change payloads,
-- expose secrets,
-- move privileged credentials into client code,
-- treat UI assumptions as backend guarantees.
-
-See:
-
-`docs/API_INTEGRATION.md`
+Filenames mislead in this repo: e.g. `src/context/CardPaymentPreparationContext.tsx`
+and `src/components/ProfileDetailModal.tsx` exist but are not used by any route.
+Trace imports.
 
 ---
 
-## 8. Security Rules
+## 7. Preserve existing ownership
 
-Security behavior is not redesignable decoration.
+Do not create a second owner for state that already has one. Current owners
+(details in `docs/ARCHITECTURE.md`):
 
-Preserve security-sensitive flows.
+- Session / token: `src/services/api.ts` (authentication generations) + `src/context/AuthContext.tsx`.
+- Cart / reservation: `src/context/CartContext.tsx` + `src/lib/cartSession*.ts`; backend is authoritative.
+- Ticket-holder names: `src/context/TicketHoldersContext.tsx`.
+- Checkout submission and capture context: `src/app/checkout.tsx` with `src/lib/checkoutSubmissionAuthority.ts` and `src/lib/requestAuthority.ts`.
+- Payment handoffs: `src/lib/bluePaymentHandoff.ts`, `src/lib/cardPaymentHandoff.ts`.
+- Maintenance: `src/services/api.ts` (503 → `MaintenanceGuard`).
+- Theme: `ThemeProvider` in `src/components/ui.tsx`.
 
-Special attention is required around:
+Backend JSON/API calls go through the service layer (`src/services/*`) and
+`apiRequest`, which owns auth headers, 401/403 invalidation, 503 maintenance,
+timeouts, and error types. Do not add ad-hoc backend calls in screens or
+components; first check which service already owns the data.
 
-- bearer/auth token handling,
-- credentials,
-- checkout,
-- order creation,
-- BLUE payment,
-- payment completion,
-- payment retries,
-- QR/ticket authenticity,
-- device registration,
-- notification handling,
-- user identity,
-- persisted sensitive information.
+Existing specialized transports are intentional exceptions: binary PDF
+retrieval (`profileService.orderPdf`), the SVG map-metadata fetch in
+`src/app/match/[id].tsx`, and the web `/api` proxy. They are not permission to
+bypass auth, stale-request protection, or error handling for normal backend
+calls. If you find a direct network path with unclear ownership, inspect and
+report it; do not refactor it automatically.
 
-Never infer successful payment merely from presentation state.
-
-Never generate a client-side fake success.
-
-Never expose secrets in the app bundle.
-
-Never weaken native/platform security to make a flow appear functional.
-
-See:
-
-`docs/SECURITY.md`
+No new global store for redesign convenience.
 
 ---
 
-## 9. BLUE Payment Invariants
+## 8. Backend authority
 
-Payment behavior must be treated as transactional functionality.
-
-A redesign may alter presentation but must not casually alter:
-
-- order creation,
-- pending-order handling,
-- payment URL ownership,
-- WebView/payment handoff,
-- callback handling,
-- success/failure/cancellation behavior,
-- retry semantics,
-- cart cleanup timing,
-- completed order identification.
-
-Do not clear checkout/cart state before success is authoritative.
-
-Do not create duplicate orders merely because a user retries a payment.
-
-Any payment behavior change requires focused inspection and verification.
+The backend is authoritative for identity, cart contents, reservation expiry,
+seat availability, orders, payment outcome, tickets, ticket status, and QR images.
+Do not invent endpoints, fields, or payloads. If a design needs data the API
+does not provide, report it (see `docs/API_INTEGRATION.md` §15).
 
 ---
 
-## 10. Ticket / QR Rules
+## 9. Security-sensitive areas
 
-Real ticket and QR behavior must remain connected to authoritative backend data.
+Changes to any of the following require focused inspection, explicit mention
+in the report, and verification — never incidental edits during a visual task:
 
-Do not:
+token storage and session generations · 401/403 invalidation · logout / account
+deletion / password change · user-scoped caches · cart session persistence and
+expiry · checkout submission guards · CyberSource capture context and WebView ·
+BLUE URL validation, WebView navigation policy, terminal-result handling · cart
+clearing after payment · QR / ticket / order / PDF handling · push device
+registration · deep links and auth return routes · `app.config.js` ATS logic ·
+`eas.json` / env configuration · the web `/api` proxy.
 
-- fabricate QR values,
-- use decorative QR codes as functional tickets,
-- generate fake ticket IDs,
-- replace backend lifecycle/status information with UI-only assumptions.
-
-The redesign may substantially improve ticket presentation.
-
-Recommended direction:
-
-- ticket-first / QR-first presentation,
-- clear match identity,
-- clear ticket status,
-- clear seat/zone information,
-- clear lifecycle states,
-- accessible brightness/display behavior where applicable.
+See `docs/SECURITY.md`, including open concerns that must not be spread further.
 
 ---
 
-## 11. Localization and RTL
+## 10. No fake production behavior
 
-Arabic is a first-class UI target.
-
-Any redesigned screen must be evaluated for:
-
-- Arabic content,
-- RTL direction,
-- text expansion,
-- alignment,
-- icons whose direction has semantic meaning,
-- mixed Arabic/Latin text,
-- numerals,
-- truncation,
-- small devices,
-- tablets.
-
-Do not treat RTL as a final cleanup task.
+Never introduce: fake authentication, fake payment processing or card entry,
+client-generated or decorative "functional" QR codes, random or synthetic
+order/ticket IDs, mock or hardcoded production data, artificial network delays,
+demo toggles, fake notifications, client-side payment success, or UI-only
+ticket lifecycle states that contradict backend data.
 
 ---
 
-## 12. Accessibility
+## 11. Localization and RTL — current reality
 
-Redesigned interfaces must preserve or improve accessibility.
-
-Check:
-
-- meaningful accessibility labels,
-- roles,
-- readable contrast,
-- focus/interaction behavior,
-- touch-target sizes,
-- dynamic content feedback,
-- loading semantics,
-- reduced-motion behavior where applicable,
-- screen-reader understanding,
-- disabled/busy states.
-
-Visual redesign must not reduce usability.
+There is **no** localization or RTL infrastructure today: no i18n library, no
+`I18nManager` usage, no Arabic strings; UI copy is hardcoded English. Arabic/RTL
+is a redesign goal, not an existing capability. Do not claim RTL support that
+has not been built and verified. Do not introduce ad-hoc per-screen translation
+mechanisms; the localization approach is an explicit, user-approved decision.
 
 ---
 
-## 13. Responsive Design
+## 12. Task sizing
 
-The app supports more than one phone size.
-
-Design for:
-
-- small phones,
-- normal phones,
-- large phones,
-- tablets where supported,
-- portrait and relevant landscape cases,
-- safe areas,
-- keyboard interaction.
-
-Avoid layouts dependent on one screenshot size.
+Work in coherent feature batches (e.g. "Cart + Checkout", "My Tickets").
+Split only at a genuine architecture, security, transaction, ownership, or
+verification-risk boundary. No micro-phases for ceremony. No unrelated
+refactors or speculative cleanup.
 
 ---
 
-## 14. Change Discipline
+## 13. Verification expectations
 
-Before implementation:
+Run what is relevant and report exact results:
 
-1. Read `AGENTS.md`.
-2. Read `docs/STATUS.md`.
-3. Read the relevant architecture/API/security documentation.
-4. Inspect the CURRENT implementation.
-5. Identify ownership.
-6. Identify affected tests.
-7. State the intended scope.
+- TypeScript: `npx tsc --noEmit`
+- Lint: `npx expo lint`
+- Tests: `node --test $(git ls-files '*.test.mjs')` (Node ≥ 22 type stripping; there is no `npm test` script)
+- Expo config: `npx expo config` when config/plugins/env change
+- Runtime checks for behavior changes, on the platforms affected
 
-During implementation:
+Many tests assert on source text (regex over `.tsx` files). A failing source
+test after a redesign is a signal to inspect, not something to silence. Do not
+delete or weaken tests to pass. Known failures are listed in `docs/STATUS.md`.
 
-- make the smallest coherent change,
-- preserve existing domain behavior,
-- avoid unrelated cleanup,
-- avoid dependency changes unless justified,
-- keep components understandable,
-- reuse existing primitives when appropriate.
-
-After implementation:
-
-- inspect the diff,
-- run relevant tests,
-- run TypeScript checks,
-- run lint,
-- run Expo/config checks when relevant,
-- perform focused runtime verification when behavior changed.
-
-Do not declare success from source inspection alone when runtime behavior matters.
+Do not report success from source inspection alone when runtime behavior matters.
+Label uncertain claims: CONFIRMED / HIGH-CONFIDENCE / POSSIBLE / NOT VERIFIED.
 
 ---
 
-## 15. Git Rules
+## 14. Git
 
-Do not commit automatically unless explicitly instructed.
-
-Before a commit:
-
-- show changed files,
-- show relevant diff/stat,
-- state validation performed,
-- disclose anything not verified.
-
-Do not include unrelated changes.
-
-Do not modify local-only agent configuration unless explicitly requested.
+- Never commit, push, amend, or rebase unless the user explicitly instructs it.
+- Run `git status` before starting. Pre-existing changes belong to the user:
+  do not revert, reformat, stage, or fold them into your work.
+- Before proposing a commit: show changed files and the relevant diff, exclude
+  unrelated work, list checks run, and disclose anything not verified.
+- Do not modify local agent configuration (`.claude/`, `.vscode/`) unless asked.
 
 ---
 
-## 16. Agent Responsibilities
+## 15. Agent roles
 
-### Claude Code
+- **Claude Code** — primary implementation and design-engineering agent.
+- **Codex** — independent verifier and targeted inspector; does not redesign
+  work it is reviewing to suit its own preference.
+- **User** (with ChatGPT as coordinator) — owns requirements, scope, acceptance,
+  documentation changes, and commit approval.
 
-Claude is the PRIMARY implementation/design-engineering agent for the redesign.
-
-Use Claude for:
-
-- substantial UI redesign,
-- architecture-aware implementation,
-- component restructuring,
-- complex React Native work,
-- state-sensitive changes,
-- design-system work,
-- accessibility work,
-- localization/RTL work,
-- complex bug fixes,
-- broader refactors when genuinely required.
-
-Claude must read:
-- `AGENTS.md`
-- `CLAUDE.md`
-- relevant `/docs/*`
-
-before major work.
-
-### Codex
-
-Codex is primarily the INDEPENDENT verification and targeted-inspection agent.
-
-Use Codex for:
-
-- repository inspection,
-- validating Claude's implementation,
-- focused bug investigation,
-- diff review,
-- targeted mechanical fixes,
-- test/typecheck/lint/build/config verification,
-- identifying unintended architectural drift.
-
-Codex must not redesign Claude's work merely because it prefers another implementation.
-
-### User
-
-The user is the requirements owner and final authority.
-
-The user decides:
-
-- product requirements,
-- design direction,
-- accepted UX,
-- scope,
-- whether implementation proceeds,
-- whether fixes are accepted,
-- whether code is committed.
-
----
-
-## 17. Required Handoff Model
-
-For substantial redesign work:
-
-    ChatGPT / User defines scope
-                ↓
-        Claude inspects
-                ↓
-        Claude implements
-                ↓
-        Claude reports
-                ↓
-      Codex independently verifies
-                ↓
-      Claude fixes valid findings
-                ↓
-          final verification
-                ↓
-             User approves
-                ↓
-              commit
-
-Avoid endless Claude ↔ Codex loops.
-
-A review finding must be concrete and supported by evidence.
-
----
-
-## 18. Evidence Requirement
-
-Important claims should be supported by inspectable evidence such as:
-
-- file + line/reference,
-- code path,
-- diff,
-- command output,
-- test result,
-- runtime observation.
-
-Do not report speculative defects as confirmed facts.
-
-Use labels such as:
-
-- CONFIRMED
-- HIGH-CONFIDENCE
-- POSSIBLE
-- NOT VERIFIED
-
-when uncertainty matters.
-
----
-
-## 19. Documentation Rule
-
-Documentation is part of the implementation.
-
-Update relevant docs when:
-
-- architecture ownership changes,
-- API integration changes,
-- security assumptions change,
-- a redesign phase completes,
-- a major decision becomes durable,
-- current project status changes.
-
-Do not allow documentation to describe an architecture that no longer exists.
-
-Primary documentation:
-
-- `AGENTS.md`
-- `CLAUDE.md`
-- `docs/ARCHITECTURE.md`
-- `docs/API_INTEGRATION.md`
-- `docs/SECURITY.md`
-- `docs/STATUS.md`
-- `docs/WORKFLOW.md`
-
----
-
-## 20. Redesign Definition of Done
-
-A redesigned area is not complete merely because it visually resembles the reference.
-
-It must:
-
-- use real production data,
-- preserve correct API behavior,
-- preserve authentication,
-- preserve navigation,
-- preserve business rules,
-- support loading/error/empty states,
-- support Arabic/RTL,
-- behave responsively,
-- meet accessibility expectations,
-- preserve security-sensitive behavior,
-- pass relevant tests/checks,
-- survive independent verification.
-
-Production correctness takes precedence over visual similarity.
-```
-
----
-
+Process details: `docs/WORKFLOW.md`.

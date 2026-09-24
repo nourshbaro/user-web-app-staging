@@ -1,184 +1,323 @@
-# `docs/API_INTEGRATION.md`
+# API Integration — LFA User App
 
-```md
-# API Integration — LFA User Mobile App
+How the app talks to the LFA backend today, from source inspection of
+`src/services/*`, `src/lib/config.ts`, and their call sites.
 
-## Principle
+The backend is authoritative. This document records what the **client sends
+and expects**; it is not a backend specification. Where the repository cannot
+establish a contract, that is stated explicitly (§14). Never invent endpoints,
+fields, or payloads to satisfy a design (§15).
 
-The backend is authoritative.
-
-The redesign must adapt to existing API contracts rather than invent frontend contracts based on desired UI.
-
----
-
-## API Ownership
-
-Network requests should continue through the established API/service layer.
-
-Before adding a new request, search for:
-
-- an existing service,
-- an existing endpoint wrapper,
-- an existing type,
-- another screen already using the same data.
-
-Do not duplicate requests because the new visual component lives elsewhere.
+Related: `docs/ARCHITECTURE.md` (owners), `docs/SECURITY.md` (invariants).
 
 ---
 
-## Authentication
+## 1. Configuration (`src/lib/config.ts`)
 
-Authenticated requests must use the established authentication mechanism.
+All configuration is read from `EXPO_PUBLIC_*` environment variables, which are
+**inlined into the client bundle** (see `docs/SECURITY.md` §3.1).
 
-Do not:
+| Variable | Used as |
+| -------- | ------- |
+| `EXPO_PUBLIC_LFA_API_BASE_URL` | `config.apiBaseUrl` — native request base (…`/api`) |
+| `EXPO_PUBLIC_LFA_SITE_URL` | `config.siteUrl` — CyberSource target origin (native) and WebView `baseUrl` |
+| `EXPO_PUBLIC_LFA_STORAGE_BASE` | `config.storageBaseUrl` — media URLs via `storageUrl()` |
+| `EXPO_PUBLIC_LFA_API_PASSWORD` | `password` request header (see §3) |
+| `EXPO_PUBLIC_LFA_API_TIMEOUT_MS` | request timeout (default 15000) |
+| `EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL` | Unified Checkout SDK script URL |
+| `EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN` | only origin accepted for BLUE `payment_url` |
+| `EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN` | only origin whose `/payment/success|failed` is terminal |
 
-- manually copy tokens into random components,
-- store authentication tokens in presentation state,
-- bypass the shared client,
-- log sensitive authentication data.
+Per-environment values live in `eas.json` build profiles (staging API for
+development/preview/apk; production API for production) and a local,
+gitignored `.env` (`.env.example` is the template). `environment.d.ts` types
+only the first five variables.
 
-Authentication lifecycle remains independent from redesign presentation.
-
----
-
-## User Identity
-
-Authoritative user/profile data must come from the actual authenticated user flow.
-
-Do not fabricate missing identity fields for redesigned screens.
-
-Where backend information is unavailable, the UI should represent that state honestly.
-
----
-
-## Request State
-
-Every redesigned API-backed surface should account for:
-
-- initial loading,
-- refreshing,
-- success,
-- empty response,
-- recoverable failure,
-- non-recoverable failure where applicable.
-
-Avoid permanently replacing failed requests with fake data.
+The two BLUE origins are parsed by `configuredHttpOrigin`: a bare http(s)
+origin with no credentials, path, query, or hash — otherwise empty, which
+disables BLUE ("not configured for this environment").
 
 ---
 
-## Mutations
+## 2. Central client (`src/services/api.ts` → `apiRequest`)
 
-For mutations:
+Every JSON request goes through `apiRequest<T>(path, init)`:
 
-- identify submission authority,
-- guard duplicate actions when necessary,
-- display pending state,
-- prevent accidental repeated requests,
-- surface stable user-facing errors,
-- preserve backend error details only where safe and appropriate.
+- **URL**: native → `${config.apiBaseUrl}${path}`; web → `/api${path}` (the
+  Expo server proxy, §4).
+- **Headers**: `Accept: application/json`; `Content-Type: application/json`
+  unless the body is `FormData`; `password` (native only, when configured);
+  `Authorization: Bearer <token>` when a token applies; then caller headers.
+- **Token selection**: the token comes from a fresh
+  `captureAuthenticationSnapshot()` at call time. Options:
+  - `overrideAuthorizationToken: null` → force anonymous.
+  - `overrideAuthorizationToken: "<token>"` → pin a token.
+  - `skipUnauthenticatedNotify: true` → a 401/403 does not end the session
+    (used by all pre-login auth calls, logout, and anonymous device registration).
+- **Timeout**: `AbortController` at `config.timeoutMs`.
+- **Body**: parsed as JSON; non-JSON bodies become `null`.
+- **Non-2xx**:
+  - 503 → `activateMaintenance()` (§11).
+  - 401/403 (unless skipped) → `invalidateAuthentication(snapshot)` for the
+    generation that made the request; stale generations are ignored.
+  - throws `ApiError(message, status, body)`, where `message` is
+    `body.message ?? body.error ?? "Request failed with <status>"`.
+- **Transport failure** → `ApiTransportError` with category `timeout` or
+  `network` and a fixed user-safe message.
+- `unwrapData(payload)` returns `payload.data` when present.
 
-Do not infer mutation success from button interaction alone.
-
----
-
-## Cart / Checkout
-
-Cart and checkout APIs are stateful.
-
-Preserve:
-
-- authoritative cart identity,
-- item identity,
-- quantity behavior,
-- checkout lifecycle,
-- order relationships.
-
-Redesign controls may use local draft state where appropriate, but server mutations must remain deliberate and controlled.
-
----
-
-## Payment
-
-BLUE/payment integration is a protected integration boundary.
-
-Before modifying:
-
-- trace order creation,
-- payment URL creation,
-- payment launch,
-- callback/redirect handling,
-- success detection,
-- failure/cancel behavior,
-- retries,
-- cart cleanup.
-
-Do not invent a frontend-only payment state machine without reconciling it with the existing implementation.
+Exception: `profileService.orderPdf` performs its own `fetch` (binary body) but
+replicates the same URL, header, timeout, 503, and 401/403 behavior.
 
 ---
 
-## Tickets
+## 3. Authentication headers and refresh
 
-Ticket data must originate from the actual ticket/order APIs.
-
-The redesign may derive presentation values, but must not manufacture authoritative values such as:
-
-- ticket IDs,
-- QR values,
-- order IDs,
-- seat assignments,
-- entry status.
-
----
-
-## Device Registration / Notifications
-
-Push-device registration is platform-integrated API behavior.
-
-Keep registration tied to the existing application/auth lifecycle.
-
-Current intended behavior:
-
-- notification permission is requested through the established startup flow,
-- FCM token registration occurs through the established `/devices` integration,
-- authenticated registration must use the authenticated user context where required,
-- refreshed device tokens must be reconciled correctly,
-- duplicate registration requests should not create duplicate device identity server-side.
-
-Do not redesign this mechanism while redesigning notification UI.
+- Bearer token issued by login-family endpoints, read by `readToken` from
+  `token | access_token | data.token | data.access_token`; user from
+  `user | data.user | customer`.
+- The static `password` header is attached to every native request and injected
+  by the web proxy. Its purpose (backend gateway / API key) is not documented in
+  this repository.
+- **There is no token refresh endpoint or logic.** The session ends on 401/403
+  or explicit logout. "Token refresh" in this codebase refers only to **FCM
+  device-token** refresh (§10).
 
 ---
 
-## Error Messages
+## 4. Web proxy (`src/app/api/[...path]+api.ts`)
 
-UI text should be safe and stable.
-
-Do not blindly show:
-- raw exception strings,
-- internal HTTP details,
-- secrets,
-- backend stack traces.
-
-Logging and user-facing messaging serve different purposes.
+Web builds use `web.output: "server"`. The route forwards `GET/POST/PATCH/DELETE`
+`/api/*` to `EXPO_PUBLIC_LFA_API_BASE_URL` (falling back to the staging base when
+unset), adds the `password` header server-side (from
+`EXPO_PUBLIC_LFA_API_PASSWORD` or `API_PASSWORD`), forwards `Authorization`,
+and streams PDF/octet-stream bodies with `Content-Disposition`. It returns 500
+if no password is configured. It does not restrict which paths are forwarded.
 
 ---
 
-## Contract Uncertainty
+## 5. Endpoint inventory (as called by the client)
 
-If the frontend appears to require data or behavior not represented in the current API:
+Paths are relative to the API base. "Validated" means the client checks the
+response shape at runtime and throws on mismatch.
 
-DO NOT invent it.
+### Auth — `src/services/auth.ts` (`authService`)
+| Method & path | Body (client) | Notes |
+| ------------- | ------------- | ----- |
+| `POST /auth/login` | `email, password, remember` | May return `reason: "phone_required"` (2xx or error body) |
+| `POST /auth/complete-phone` | `email, password, phone` | Saves session |
+| `POST /auth/register` | `name, email, password, password_confirmation, phone` | Saves session |
+| `POST /auth/verify-otp` | `user_id` and/or `email`, `code` | Saves session |
+| `POST /auth/resend-otp` | `user_id` and/or `email` | |
+| `POST /auth/check-email-verification` → `/auth/check-email` → `/auth/email-verification-status` | `email` | Tries in order, skipping 404/405; returns `null` if none exist |
+| `POST /auth/forgot-password` | `email` | |
+| `POST /auth/forgot-password/verify-otp` | `email, code` | |
+| `POST /auth/reset-password` | `email, code, password, password_confirmation` | Field name disputed by a test — see §14 |
+| `GET /auth/me` | — | Validated (`isUser`) |
+| `POST /auth/change-password` | `current_password, password, password_confirmation` | Session cleared afterwards |
+| `POST /auth/profile-picture` | multipart `avatar` | Returns `{ avatar }` |
+| `DELETE /auth/profile-picture` | — | |
+| `DELETE /auth/account` | `password` | Session cleared afterwards |
+| `POST /auth/logout` | — | Fire-and-forget with the captured token |
 
-Report:
+### Matches — `src/services/matches.ts` (`matchesService`)
+| Method & path | Notes |
+| ------------- | ----- |
+| `GET /matches/scheduled?team=&stadium=&date=` | Normalized from array, `matches`, `scheduled_matches`, or `items` |
+| `GET /matches/scheduled/filters` | `{ teams, stadiums }` (optionally under `data`) |
+| `GET /matches/single/{id}` | Match detail including zones (`has_seats`, price, currency, map data) |
+| `GET /matches/{matchId}/zones/{zoneId}/seats` | `{ zone, seats }`; seat selectable iff `status === "available"` |
 
-- desired UX,
-- current endpoint,
-- missing field/behavior,
-- affected screen,
-- possible frontend fallback if legitimate,
-- backend dependency if required.
+All four are cached in a module-level map for 5 minutes, keyed by path;
+`force = true` bypasses the cache (pull-to-refresh). Not user-scoped (public data).
 
-Backend changes require separate coordination.
-```
+### Cart — `src/services/cart.ts` (`cartService`)
+| Method & path | Body | Notes |
+| ------------- | ---- | ----- |
+| `POST /cart/items` | `match_id, stadium_zone_id, quantity?` or `seat_ids?`, `checkout_session_id?` | Omitting the session ID starts a new session |
+| `GET /cart?checkout_session_id=` | — | 404 ⇒ session gone |
+| `PATCH /cart/items/{lock_key}` | `quantity` (or `seat_ids`) | Sets, not increments |
+| `DELETE /cart/items/{lock_key}` | — | Followed by a refresh |
+
+Responses must contain `cart` and `checkout_session_id` or the client throws.
+`expires_at` drives the reservation timer. Items come from `cart.items` or are
+flattened from `cart.matches[].items`. `total` is coerced to number; `currency`
+defaults to `USD`.
+
+### Checkout and payment — `src/services/checkout.ts` (`checkoutService`)
+| Method & path | Body | Notes |
+| ------------- | ---- | ----- |
+| `POST /payments/cybersource/capture-context` | `checkout_session_id, target_origins[], locale: "en-us"` | Returns `capture_context` (root or `data`) |
+| `POST /checkout/mobile/submit` | `CheckoutSubmitRequest` (`src/types.ts`) | Both payment methods |
+
+`CheckoutSubmitRequest`: `checkout_session_id`, `billing { name, email, phone,
+country: "LB" }`, `tickets_by_match: { [matchId]: [{ holder_name }] }`,
+`payment_method: "cybersource" | "blue"`, and for card
+`payment.transient_token`.
+`CheckoutSubmitResponse` (all optional): `order_id`, `order_number`,
+`reference`, `payment_reference`, `status`, `payment { payment_url, reference,
+payment_reference, status }`.
+
+### Portal (orders and tickets) — `profileService` in `src/services/auth.ts`
+| Method & path | Notes |
+| ------------- | ----- |
+| `GET /portal/matches?filter=all\|upcoming\|past` | Paginated `{ data, meta.total }`; validated (`isPortalMatch`) |
+| `GET /portal/tickets?match_id=` | Validated (`isPortalTicket`, requires `qr_image` string) |
+| `GET /portal/tickets/{ticket_code}` | Detail merge when a listed ticket lacks `qr_image` |
+| `GET /portal/orders/{orderNumber}` | Payment details; `ORD-` prefix stripped by the caller |
+| `GET /portal/orders/{orderId}/pdf` | Binary; `Accept: application/pdf,…` |
+| `GET /portal/orders` | Defined, **not called** by any screen |
+
+### Other
+| Method & path | Owner | Notes |
+| ------------- | ----- | ----- |
+| `POST /devices` | `registerAnonymousDevice` / `registerAuthenticatedDevice` | `{ token, platform: "android" \| "ios" }` |
+| `GET /ads?placement=app_banner` | `adsService` | Items filtered field-by-field; invalid items dropped |
+| `GET /legal/privacy-policy`, `GET /legal/terms-of-use` | `legalService` | String or object with content key; HTML stripped to text |
 
 ---
 
+## 6. Cart and reservation behavior
+
+- The server owns contents, prices, totals, seat locks, and expiry. The client
+  never computes totals authoritatively (`cart.total` is displayed as returned).
+- The client persists only `{ version: 1, sessionId, expiresAt }` under
+  `lfa_cart_session_id`, and only while authenticated.
+- A rejected session on add (404) is dropped and the add is retried once
+  without a session ID.
+- A 404 on refresh clears the local session; other refresh errors keep it.
+- Mutations are serialized; responses are published only if the captured cart
+  session ticket is still current.
+
+Full state model: `docs/ARCHITECTURE.md` §8.
+
+---
+
+## 7. Seat and zone handling
+
+- Zone type is backend-defined: `has_seats: true` → reserved seating with seat
+  IDs; otherwise general admission with a quantity.
+- Seat availability is read fresh per zone (`/matches/{m}/zones/{z}/seats`,
+  5-min cache unless forced). Seats already in the cart are excluded from the
+  pending selection.
+- GA quantity changes are local drafts until the user commits; commit sends
+  `add` for new lines, `PATCH` (set) for changed lines, `DELETE` for zero.
+- The stadium map is a backend-provided image (SVG or raster) plus zone
+  polygons; the client does not own stadium geometry.
+
+---
+
+## 8. CyberSource boundary
+
+- The client never sees card data. Unified Checkout (Visa Acceptance SDK,
+  loaded from `EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL`) runs in a WebView
+  (native) or the page (web) and returns a **transient token**.
+- The capture context is requested per cart session with `target_origins` =
+  `config.siteUrl` (native) or `window.location.origin` (web). Stale responses
+  are discarded via `createRequestAuthority`.
+- The transient token is sent once to `/checkout/mobile/submit`. Only the
+  backend authorizes the charge.
+- Success is inferred from a **2xx** submit response for the current cart
+  session. The response `status` is displayed, not evaluated.
+
+---
+
+## 9. BLUE boundary
+
+- `/checkout/mobile/submit` with `payment_method: "blue"` must return
+  `payment.payment_url`. The client accepts it only if its origin equals
+  `EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN` and its path is exactly
+  `/payment/<id>` with no encoded separators, credentials, or hash.
+- The returned order/payment references are stored with the pending attempt; a
+  retry for the same cart session reuses the stored URL instead of resubmitting.
+- Terminal detection is client-side URL classification (`classifyBlueTerminalUrl`):
+  `EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN` + `/payment/success` or `/payment/failed`, or
+  `lfa-app://checkout/success|failed` (optional `provider=blue`).
+- No client call verifies payment status with the backend after the terminal
+  redirect. Tickets and orders shown later come from the portal API.
+
+---
+
+## 10. Device and push registration
+
+- FCM token from `@react-native-firebase/messaging` (`getFcmDeviceToken`),
+  only on physical devices with notification permission granted.
+- `sendDeviceToken` checks the current session: no token → anonymous
+  `POST /devices` (`overrideAuthorizationToken: null`); token → authenticated
+  `POST /devices` using the live token.
+- Sent on app start (after permission), on every authenticated token change,
+  and on every FCM token refresh. Re-sending the same token authenticated after
+  login is intentional (device association). Whether the backend deduplicates
+  is not established here.
+- Logout does not unregister the device.
+
+---
+
+## 11. Maintenance responses
+
+A 503 from any request activates a process-wide maintenance flag; the whole
+navigator is replaced by `UnderConstruction503`. There is no retry or reset path
+in code.
+
+---
+
+## 12. Error handling
+
+- `userFacingError(error, fallback)` (`src/lib/userFacingError.ts`): transport
+  errors → their fixed message; `ApiError` → backend `message` / `error` / first
+  validation error; anything else → the caller's fallback.
+- `backendProvidedError` additionally falls back to `ApiError.message`.
+- `paymentError()` is the standard payment fallback copy.
+- Backend messages are shown verbatim when present. Raw exception text and stack
+  traces are not shown.
+
+---
+
+## 13. Stale-request and session protection
+
+| Mechanism | Where | Guards |
+| --------- | ----- | ------ |
+| Authentication generation | `src/services/api.ts`, `src/lib/authSessionOwnership.ts` | 401/403 invalidation, restore, logout, user refresh |
+| User-scoped cache generation | `src/lib/userScopedCache.ts` | Tickets list/detail and PDF results after identity change |
+| Request authority | `src/lib/requestAuthority.ts` | Match detail, seats, tickets, capture context |
+| Cart session tickets | `src/lib/cartSessionAuthority.ts` | All cart mutations and payment completion |
+| Cart refresh guard | `src/lib/cartRefreshPolicy.ts` | Out-of-order refresh responses |
+| Checkout submission authority | `src/lib/checkoutSubmissionAuthority.ts` | BLUE submit result vs unmount/session change |
+| Single-flight | `createSingleFlight` (`src/lib/cartSessionRecovery.ts`) | Concurrent `addItem` |
+| Auth submission guard | `src/lib/authSubmissionGuard.ts` | Double-submitted auth forms |
+| Identity-keyed remounts | `CartProvider key`, `withAuthRequired key` | All screen and cart state on account switch |
+
+New API-backed features must use the existing mechanism for their domain rather
+than adding a parallel one.
+
+---
+
+## 14. Contracts not established by this repository
+
+- Authoritative request/response schemas for any endpoint (no OpenAPI or shared
+  types in the repo; types in `src/types.ts` are client-side expectations).
+- **Reset-password field name**: code sends `password_confirmation`; the test
+  `src/services/authRecoveryContracts.test.mjs` expects `password-confirmation`.
+  Which one the backend accepts is unknown.
+- Whether `/checkout/mobile/submit` returns non-2xx for declined or failed card
+  payments.
+- Server-side idempotency of `/checkout/mobile/submit` for a repeated session.
+- Backend behavior on BLUE callback, and how web BLUE results are finalized.
+- The meaning of the `password` header and of `remember` on login.
+- Ticket `status` value set; whether "used" is `status` or `checked_in_at`.
+- Whether any endpoint provides live scores, results, or competitions/standings.
+- `/devices` deduplication and whether a device can be detached on logout.
+- Which of the three email-verification endpoints actually exists.
+
+---
+
+## 15. When a design needs data the API lacks
+
+Do not fabricate it and do not add speculative endpoints. Report:
+
+- desired UX and affected screen,
+- current endpoint and the missing field/behavior,
+- any legitimate client-side fallback (derived only from real data),
+- the backend dependency, if required.
+
+Backend changes are coordinated separately.
