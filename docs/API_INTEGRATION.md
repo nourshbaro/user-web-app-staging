@@ -131,6 +131,16 @@ response shape at runtime and throws on mismatch.
 All four are cached in a module-level map for 5 minutes, keyed by path;
 `force = true` bypasses the cache (pull-to-refresh). Not user-scoped (public data).
 
+**Scheduled matches on Home and Matches:**
+- Both screens call `matchesService.list` / `.filters` through
+  `useScheduledMatches`; no new endpoint was introduced.
+- The Matches filters map to the existing `team`, `stadium` and `date` (YYYY-MM-DD) parameters.
+- **Observed fields (staging):** `id`, `match_date` ("YYYY-MM-DD"), clock-only
+  `kickoff_at` ("HH:MM:SS"), `status` (only `"scheduled"` observed), `stadium`,
+  and `home_team`/`away_team` (`name`, `short_name`, `logo`).
+- The response has no live, score, result, competition, standings, favourite
+  or availability/sold-out data; the app does not derive any of these.
+
 ### Cart — `src/services/cart.ts` (`cartService`)
 | Method & path | Body | Notes |
 | ------------- | ---- | ----- |
@@ -303,6 +313,11 @@ than adding a parallel one.
 - The meaning of the `password` header and of `remember` on login.
 - Ticket `status` value set; whether "used" is `status` or `checked_in_at`.
 - Whether any endpoint provides live scores, results, or competitions/standings.
+- **Kickoff timezone:** the backend sends `match_date` plus a clock-only
+  `kickoff_at` with no zone. The app reads them as local wall-clock time,
+  preserving existing behavior. The authoritative timezone is not established
+  by this repository, so do not introduce UTC (or other) conversion without
+  backend evidence.
 - `/devices` deduplication and whether a device can be detached on logout.
 - Which of the three email-verification endpoints actually exists.
 

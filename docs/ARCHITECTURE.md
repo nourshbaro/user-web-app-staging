@@ -79,9 +79,9 @@ All routes are plain `Stack` screens; there is no Expo Router `Tabs` layout.
 
 | Route | File | Auth | Notes |
 | ----- | ---- | ---- | ----- |
-| `/` | `index.tsx` | public | Home: `MainHeader` + `MatchesList limit={5} showAppBanner` |
+| `/` | `index.tsx` | public | Home: `MainHeader` + `HomeFeed` (banner, featured match, upcoming) |
 | `/tournament` | `tournament.tsx` | public | Static "Coming Soon" placeholder |
-| `/matches` | `matches.tsx` | public | `MatchesList filterable` |
+| `/matches` | `matches.tsx` | public | `MainHeader` + `MatchesList` (filters, full scheduled list) |
 | `/match/[id]` | `match/[id].tsx` | public view; auth to add | Zones, stadium map, GA quantities, seat selection |
 | `/tickets` | `tickets.tsx` | `withAuthRequired` | Portal matches → tickets, QR, order/payment details, PDF |
 | `/profile` | `profile.tsx` | `withAuthRequired` | Account hub, contact links |
@@ -101,11 +101,18 @@ All routes are plain `Stack` screens; there is no Expo Router `Tabs` layout.
 **Primary navigation** is a custom bottom bar rendered by `Screen` in
 `src/components/ui.tsx` when the pathname is one of `PRIMARY_TAB_ROUTES`
 (`src/lib/navigationPresentation.ts`): Home, Tournament, Matches, My Tickets,
-Profile. Items are icon-only: each label is used as its `accessibilityLabel`
-(and fallback glyph) but is not rendered as visible text; visible labels are
-Phase 2 work. Tab switches use `router.replace`;
-horizontal swipe on a primary screen moves to the adjacent tab
-(`Gesture.Pan` in `Screen`).
+Profile.
+- **Presentation** (owned by `Screen` / `BottomNavigation`): each tab shows its
+  icon and a visible catalog label. The selected tab gets an indicator pill,
+  heavier weight and brand colour. Semantics are `tablist` / `tab` with
+  `aria-selected`.
+- **Switching** is owned by `navigateToTab` in `Screen`: `router.replace`, no
+  push, and a tap on the active tab is ignored.
+- **Swipe:** a horizontal swipe on a primary screen moves to the adjacent tab
+  (`Gesture.Pan` in `Screen`).
+- **RTL:** swipe direction and the entrance offset follow reading direction
+  (`swipeTabStep`, `tabEntranceOffset` in `navigationPresentation.ts`). Reduced
+  motion skips the entrance.
 
 **Auth gating** is per screen: `withAuthRequired` (`src/components/withAuthRequired.tsx`)
 renders `Loading` until `auth.isReady`, an `AuthRequired` prompt when signed
@@ -151,6 +158,8 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | Direction-transition marker | `I18nProvider` + `src/i18n/directionTransition.ts` | `lfa_direction_transition` = `{desired, attempts}` |
 | Format locale | `src/lib/format.ts` (`setFormatLocale`, set by `I18nProvider`) | memory |
 | Match list/detail/seat data | `src/services/matches.ts` module cache (5-min TTL) | memory |
+| Scheduled-match screen state (Home, Matches) | `useScheduledMatches`, one instance per screen (filter-tagged snapshot, loading, refresh, retry) | memory |
+| Match filter values | `MatchesList` (composition-level `useState`) | memory |
 | Toasts / dialogs | `ToastContext`, `AlertDialogContext` | memory |
 
 Not used by any route (do not assume they own anything):
@@ -188,9 +197,75 @@ Not used by any route (do not assume they own anything):
 
 ## 7. Match discovery and ticket selection
 
-- `MatchesList` (`src/components/MatchesList.tsx`) loads
-  `matchesService.list(filters)` + `matchesService.filters()`; filters are team,
-  stadium, and date. The data source is **scheduled matches** only.
+### Scheduled-match discovery (Home and Matches)
+
+- **`matchesService`** (`src/services/matches.ts`) still owns the backend
+  contract (`/matches/scheduled`, `/matches/scheduled/filters`) and its
+  module-level 5-minute cache. The data source is **scheduled matches** only.
+- **`useScheduledMatches`** (`src/hooks/useScheduledMatches.ts`) is the
+  screen-level owner:
+  - initial load, pull-to-refresh (`force`) and retry;
+  - request authority (`createRequestAuthority`), plus a synchronous
+    `invalidate(nextFilters)`;
+  - loading and error state;
+  - a snapshot that tags successful results and errors with the filter
+    identity that produced them (`src/lib/matchQuery.ts`).
+
+  Home and Matches each use their own hook instance; they share only the
+  service cache.
+- **Query/result integrity (invariant):**
+  - a stale request can never publish under a newer filter selection;
+  - displayed results always belong to the currently selected filters;
+  - a failed refresh of the *same* filters keeps the earlier results and shows
+    Retry;
+  - a failed *changed*-filter request shows the new filters' error and never
+    presents old results as if they belonged to the new filters;
+  - a selection with neither results nor an error counts as loading.
+- **Kickoff parsing** (`matchKickoffTime` in `src/lib/matchDiscovery.ts`):
+  - valid only for a real calendar `match_date` plus an in-range clock time
+    (or a well-formed ISO datetime);
+  - anything missing or malformed is *unknown*, never fabricated as midnight;
+  - unknown kickoffs sort last and can never be featured or upcoming;
+  - times are read as local wall-clock time, because the backend timezone
+    contract is unresolved (`docs/API_INTEGRATION.md` §14).
+- **Home** (`src/components/HomeFeed.tsx`):
+  - ads banner, then the featured-match hero, then an "Upcoming matches"
+    section with "All matches" (tab-replace to `/matches`);
+  - the featured match is **presentation-derived**, not backend metadata: the
+    earliest valid kickoff not yet passed (`selectHomeMatches`);
+  - Upcoming holds only further valid, not-yet-passed kickoffs, so Home shows
+    the featured match plus up to 4 more (5 total). Past and unknown-time
+    fixtures appear only on the Matches screen;
+  - the presentation time comes from `useKickoffClock`: the load time,
+    advanced by one timer at the next valid kickoff and on app foreground. No
+    polling and no network request; it re-selects from loaded data;
+  - states: skeletons, error with Retry, "No scheduled matches", and "No
+    upcoming matches" (with a link to Matches).
+- **Matches** (`src/components/MatchesList.tsx`):
+  - filter values (team, stadium, date) are composition-level state and map
+    to the existing backend parameters;
+  - every change goes through `changeFilters`, which calls `invalidate`
+    before setting state;
+  - UI: a filter bar (Filters button with active count, removable chips,
+    Clear) and a filter sheet (`BottomSheetModal`) with radio-style
+    team/venue options and an inline calendar;
+  - filters apply immediately, and "Done" only closes the sheet;
+  - states: skeletons, error with Retry, global empty vs filtered empty (with
+    Clear), and results sorted by kickoff;
+  - opening a card still pushes `/match/[id]`.
+- **Match presentation** (`src/components/match/*`: `MatchCard`,
+  `FeaturedMatchCard`, `TeamCrest`, `matchLabels`, the skeletons, and the
+  filter bar/sheet):
+  - they render team names and logos (with an initials fallback), date and
+    kickoff, stadium, a status (only a backend `scheduled` shows as Scheduled;
+    blank is neutral "Status unavailable"; others use the backend's own word),
+    and one accessible description per card;
+  - they must not fetch, route except through a passed `onPress`, own filter
+    state, infer cart or checkout state, or fabricate match states (live,
+    results, sold out…).
+
+### Match detail and ticket selection
+
 - `AppBanner` loads `/ads?placement=app_banner`; links are validated by
   `src/lib/adUrls.ts` (internal allowlist or external HTTPS only).
 - `match/[id].tsx` loads `matchesService.details(id)` and, for reserved-seating
@@ -362,8 +437,10 @@ retry, so recovery requires an app restart.
   - Ticket primitives (`TicketCardShell`, `TicketCardSection`,
     `TicketPerforation`, `TicketQrFrame`) — layout only; no QR generation.
   - `PhysicalLayout`, `DirectionalChevron`.
-  - Consumers so far: `tournament.tsx` (`StatePanel`). The rest are ready for
-    Phases 2–5.
+  - Consumers so far: `tournament.tsx` (`StatePanel`); Home, Matches and
+    `src/components/match/*` (`AppText`, `StatusBadge`, `SectionHeader`,
+    `StatePanel`, skeletons, `DirectionalChevron`). `TransactionBar` and the
+    ticket primitives are ready for Phases 3–5.
 - Responsive: `useResponsive()` → `isNarrow` (<390), `isTablet` (≥768),
   `isDesktop` (≥1024), `contentWidth` (≤1180). Safe-area insets are applied in
   `Screen`, headers, and payment screens.
@@ -381,7 +458,7 @@ retry, so recovery requires an app restart.
     `accessibilityLabelledBy`); callers can override it.
   - `Loading`: a single labelled progress element with `aria-busy`.
   - Bottom navigation: `tablist`/`tab` with `aria-selected`; labels come from
-    the catalog. Items are still icon-only; visible labels are Phase 2 work.
+    the catalog and are rendered visibly (Phase 2).
   - `StatePanel`: one polite live region for errors, and no nested `alert` role.
 - **State props:** react-native-web ignores the `accessibilityState` object, so
   shared primitives use `aria-*` props (`aria-selected`, `aria-disabled`,
@@ -448,7 +525,9 @@ enabled.** No third-party i18n library is used.
   - formatters never alter the values that callers or transactions use.
 - **Other locale touchpoints:** the CyberSource capture context still requests
   `locale: "en-us"`, and phone country names use `i18n-iso-countries` English
-  data.
+  data. The browser entry (`i18n-iso-countries/index.js`) is imported on
+  purpose: the package Node entry loads every locale through a dynamic require
+  that Metro cannot bundle, which broke web server rendering.
 
 ---
 
@@ -467,6 +546,8 @@ enabled.** No third-party i18n library is used.
 11. App content renders only when `I18nProvider` is ready, i.e. when the active native direction equals the app language's.
 12. Stadium maps, seat maps and QR codes never mirror (`PHYSICAL_LAYOUT_STYLE`).
 13. Startup code never constructs an `Intl` API without a capability check (Hermes lacks some, e.g. `PluralRules`).
+14. Scheduled-match loading goes through `useScheduledMatches` over `matchesService`; filter changes invalidate synchronously, and results are shown only under the filters that produced them.
+15. Unknown or invalid kickoffs are never fabricated into a time, featured, or listed as upcoming.
 
 ---
 
@@ -477,6 +558,8 @@ enabled.** No third-party i18n library is used.
 - How BLUE results are finalized on **web** (the in-app route is native-only).
 - Whether "live" or "result/score" data exists in any API (discovery uses
   scheduled matches only).
+- The timezone of `match_date` + clock-only `kickoff_at` (read as local
+  wall-clock time; see `docs/API_INTEGRATION.md` §14).
 - Full set of backend ticket `status` values and whether "used" is represented
   by `status` or only `checked_in_at`.
 - What the `remember` flag changes server-side (the client always persists the token).

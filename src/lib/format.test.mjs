@@ -59,3 +59,21 @@ test("invalid and missing clock values have a stable fallback", () => {
   assert.equal(formatTime(), "TBC");
   assert.equal(formatTime("25:00"), "TBC");
 });
+
+test("match calendar dates are parsed as local dates, never shifted by UTC", async () => {
+  const { formatCalendarDate, parseCalendarDate } = await import("./format.ts");
+  const parsed = parseCalendarDate("2026-10-22");
+  assert.equal(parsed.getFullYear(), 2026);
+  assert.equal(parsed.getMonth(), 9);
+  assert.equal(parsed.getDate(), 22);
+  assert.equal(parseCalendarDate("22/10/2026"), null);
+  assert.equal(formatCalendarDate("2026-10-22"), new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(new Date(2026, 9, 22)));
+  assert.equal(formatCalendarDate(undefined), "Date TBC");
+});
+
+test("calendar labels follow the app locale", async () => {
+  const { formatMonthYear, formatWeekdayShort, formatAccessibleCalendarDate } = await import("./format.ts");
+  assert.equal(formatMonthYear(new Date(2026, 9, 1)), "October 2026");
+  assert.equal(formatWeekdayShort(new Date(2023, 0, 1)), "Sun");
+  assert.equal(formatAccessibleCalendarDate(new Date(2026, 7, 12)), "Wednesday, August 12, 2026");
+});

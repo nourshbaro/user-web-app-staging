@@ -115,6 +115,12 @@ Do not create a second owner for state that already has one. Current owners
 - Payment handoffs: `src/lib/bluePaymentHandoff.ts`, `src/lib/cardPaymentHandoff.ts`.
 - Maintenance: `src/services/api.ts` (503 → `MaintenanceGuard`).
 - Theme: `ThemeProvider` in `src/components/ui.tsx`.
+- Scheduled-match discovery:
+  - `src/services/matches.ts` (`matchesService`) owns the API contract and cache;
+  - `src/hooks/useScheduledMatches.ts` is the screen-level loading owner for Home and Matches;
+  - do not add a second fetch or state for scheduled matches;
+  - filter changes must keep the synchronous request invalidation and filter-tagged results;
+  - `src/components/match/*` is presentation-only.
 
 Backend JSON/API calls go through the service layer (`src/services/*`) and
 `apiRequest`, which owns auth headers, 401/403 invalidation, 503 maintenance,

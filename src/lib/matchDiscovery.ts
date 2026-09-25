@@ -1,0 +1,198 @@
+/**
+ * Match-discovery presentation rules (pure module, unit-tested).
+ *
+ * Backend reality (see docs/API_INTEGRATION.md §5): `/matches/scheduled`
+ * returns scheduled fixtures only — `match_date` ("YYYY-MM-DD"), a clock-only
+ * or ISO `kickoff_at`, and a `status` string. There is no live, score, result
+ * or competition data, so nothing here derives those states.
+ *
+ * Timezone: the backend contract for `match_date` + clock-only `kickoff_at` is
+ * not documented. These values are read as local wall-clock time (as the app
+ * already did); nothing here converts to or from UTC.
+ */
+import type { ApiMatch, MatchFilters } from "@/types";
+import type { StatusTone } from "./themePalette";
+
+/** A real calendar date, or null (rejects e.g. 2026-02-30 instead of rolling it into March). */
+function parseStrictCalendarDate(value: string | null | undefined) {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(value ?? "");
+  if (!parts) return null;
+  const [year, month, day] = [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return { year, month, day };
+}
+
+const CLOCK = /^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/;
+const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+
+/**
+ * Kickoff timestamp, or null when it is UNKNOWN. Valid only when `match_date`
+ * is a real calendar date and `kickoff_at` is a clock time with in-range
+ * hour/minute/second (or a well-formed ISO datetime). Missing or malformed
+ * data is never normalized into a fake time such as midnight.
+ */
+export function matchKickoffTime(match: Pick<ApiMatch, "match_date" | "kickoff_at">): number | null {
+  const kickoff = (match.kickoff_at ?? "").trim();
+
+  const clock = CLOCK.exec(kickoff);
+  if (clock) {
+    const date = parseStrictCalendarDate(match.match_date);
+    if (!date) return null;
+    const [hour, minute, second] = [Number(clock[1]), Number(clock[2]), Number(clock[3] ?? 0)];
+    if (hour > 23 || minute > 59 || second > 59) return null;
+    return new Date(date.year, date.month - 1, date.day, hour, minute, second).getTime();
+  }
+
+  if (ISO_DATETIME.test(kickoff) && parseStrictCalendarDate(kickoff)) {
+    const time = Date.parse(kickoff);
+    return Number.isFinite(time) ? time : null;
+  }
+
+  return null;
+}
+
+/** Ascending by kickoff; matches with unknown kickoff keep their order at the end. */
+export function sortMatchesByKickoff<T extends Pick<ApiMatch, "match_date" | "kickoff_at">>(matches: readonly T[]): T[] {
+  return matches
+    .map((match, index) => ({ match, index, time: matchKickoffTime(match) }))
+    .sort((a, b) => {
+      if (a.time === null && b.time === null) return a.index - b.index;
+      if (a.time === null) return 1;
+      if (b.time === null) return -1;
+      return a.time - b.time || a.index - b.index;
+    })
+    .map((entry) => entry.match);
+}
+
+/**
+ * Home presentation rule, evaluated against `now` (the presentation clock):
+ * - `featured`: the earliest match with a valid kickoff that has not passed;
+ * - `upcoming`: the next valid, not-yet-passed kickoffs after it, so Home shows
+ *   at most `limit` matches in total (featured + up to `limit - 1`);
+ * - matches with an unknown kickoff or a passed kickoff are never featured or
+ *   listed as upcoming (the full Matches screen still lists them);
+ * - `nextBoundary`: when this selection next changes (the featured kickoff),
+ *   so the screen can re-evaluate without refetching.
+ */
+export function selectHomeMatches<T extends ApiMatch>(matches: readonly T[], now: number, limit: number) {
+  const future = sortMatchesByKickoff(matches).filter((match) => {
+    const time = matchKickoffTime(match);
+    return time !== null && time >= now;
+  });
+  const featured = future[0] ?? null;
+  const upcoming = future.slice(1, Math.max(1, limit));
+  const nextBoundary = featured ? matchKickoffTime(featured) : null;
+  return { featured, upcoming, nextBoundary };
+}
+
+export function activeFilterCount(filters: MatchFilters) {
+  return [filters.team, filters.stadium, filters.date].filter(Boolean).length;
+}
+
+export type MatchListState = "loading" | "error" | "empty" | "filtered-empty" | "results";
+
+/** Distinguishes "nothing scheduled" from "nothing matches these filters". */
+export function matchListState({
+  loading,
+  error,
+  count,
+  filters,
+}: {
+  loading: boolean;
+  error: string | null;
+  count: number;
+  filters: MatchFilters;
+}): MatchListState {
+  if (loading) return "loading";
+  if (error && count === 0) return "error";
+  if (count > 0) return "results";
+  return activeFilterCount(filters) > 0 ? "filtered-empty" : "empty";
+}
+
+/**
+ * Only statuses the backend actually returns are mapped. `scheduled` maps to
+ * the scheduled presentation only when the backend says so. A blank/missing
+ * status is `unknown` (neutral, never assumed to be scheduled); any other
+ * value is shown as the backend's own word with a neutral tone — never
+ * reinterpreted as live, finished or sold out.
+ */
+export function matchStatusPresentation(status: string | null | undefined): {
+  known: "scheduled" | "unknown" | null;
+  tone: StatusTone;
+  raw: string;
+} {
+  const raw = (status ?? "").trim();
+  if (raw === "") return { known: "unknown", tone: "neutral", raw: "" };
+  if (raw.toLowerCase() === "scheduled") return { known: "scheduled", tone: "info", raw: "scheduled" };
+  return { known: null, tone: "neutral", raw: raw.replace(/[_-]+/g, " ") };
+}
+
+/** Short crest fallback when the backend has no logo: short name, else initials. */
+export function teamInitials(team: { name?: string | null; short_name?: string | null } | null | undefined) {
+  const short = team?.short_name?.trim();
+  if (short) return short.slice(0, 4).toUpperCase();
+  const words = (team?.name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "?";
+  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+  return words.slice(0, 3).map((word) => word[0]).join("").toUpperCase();
+}
+
+// ---- Date-filter calendar helpers (moved unchanged from MatchesList) ----
+
+export function startOfToday(now = new Date()) {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+export function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+export function addMonths(date: Date, months: number) {
+  return new Date(date.getFullYear(), date.getMonth() + months, 1);
+}
+
+/** Sunday-first month grid; `null` cells pad the first and last weeks. */
+export function getCalendarDays(month: Date) {
+  const first = startOfMonth(month);
+  const last = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+  const days: (Date | null)[] = Array.from({ length: first.getDay() }, () => null);
+  for (let day = 1; day <= last.getDate(); day += 1) {
+    days.push(new Date(month.getFullYear(), month.getMonth(), day));
+  }
+  while (days.length % 7 !== 0) days.push(null);
+  return days;
+}
+
+/** "YYYY-MM-DD" value sent as the `date` filter. */
+export function toDateInputValue(date: Date) {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function dayValue(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+export function isBeforeDay(left: Date, right: Date) {
+  return dayValue(left) < dayValue(right);
+}
+
+export function isSameDay(left: Date, right: Date) {
+  return dayValue(left) === dayValue(right);
+}
+
+/**
+ * The next valid kickoff strictly after `now`, or null. This is when a
+ * kickoff-based selection (featured / upcoming) can next change.
+ */
+export function nextKickoffAfter(matches: readonly Pick<ApiMatch, "match_date" | "kickoff_at">[], now: number): number | null {
+  let next: number | null = null;
+  for (const match of matches) {
+    const time = matchKickoffTime(match);
+    if (time !== null && time > now && (next === null || time < next)) next = time;
+  }
+  return next;
+}

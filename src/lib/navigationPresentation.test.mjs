@@ -21,3 +21,19 @@ test("child and workflow routes hide bottom navigation", () => {
     assert.equal(shouldShowBottomNavigation(route), false, route);
   }
 });
+
+test("swipe direction follows reading direction: leftward = next in LTR, rightward = next in RTL", async () => {
+  const { swipeTabStep } = await import("./navigationPresentation.ts");
+  assert.equal(swipeTabStep(-120, false), 1);
+  assert.equal(swipeTabStep(120, false), -1);
+  assert.equal(swipeTabStep(120, true), 1);
+  assert.equal(swipeTabStep(-120, true), -1);
+});
+
+test("tab entrance offset mirrors in RTL so content arrives from the matching side", async () => {
+  const { tabEntranceOffset } = await import("./navigationPresentation.ts");
+  assert.equal(tabEntranceOffset(1, false), 10);
+  assert.equal(tabEntranceOffset(-1, false), -10);
+  assert.equal(tabEntranceOffset(1, true), -10);
+  assert.equal(tabEntranceOffset(-1, true), 10);
+});

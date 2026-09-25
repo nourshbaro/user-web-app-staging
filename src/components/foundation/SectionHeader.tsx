@@ -37,7 +37,7 @@ export function SectionHeader({ title, subtitle, action }: Props) {
 }
 
 const local = {
-  row: { flexDirection: "row" as const, alignItems: "flex-end" as const, gap: spacing.md },
+  row: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md },
   copy: { flex: 1, minWidth: 0, gap: spacing.xxs },
   action: {
     minHeight: size.touchTargetMin,

@@ -117,8 +117,18 @@ below). Delivered as described in `docs/ARCHITECTURE.md` §14–§15.
   fed by the existing owners (cart, checkout, tickets). The foundations never
   own transaction state.
 
-### Phase 2 — Navigation + Home + Match Discovery ← **NEXT**
-### Phase 3 — Matches + Match Detail + Ticket Selection
+### Phase 2 — Navigation + Home + Match Discovery ✅ complete (pending commit)
+Delivered as described in `docs/ARCHITECTURE.md` §3 and §7.
+
+### Phase 3 — Matches + Match Detail + Ticket Selection ← **NEXT**
+Reuse, don't re-create:
+- the match-discovery ownership (`matchesService`, `useScheduledMatches`, and
+  presentation-only `src/components/match/*`);
+- the strict kickoff handling in `src/lib/matchDiscovery.ts`;
+- the Phase 1 design, i18n and accessibility foundations (including
+  `TransactionBar` for the ticket-selection action area).
+
+Ticket-selection transaction ownership (`CartContext`) stays as is.
 ### Phase 4 — Cart + Checkout
 ### Phase 5 — Tickets
 ### Phase 6 — Profile + supporting screens
@@ -151,8 +161,7 @@ Bad: *"Copy the reference's `buy/` routes, Zustand store, and mock data."*
 ### 5.1 Approved concepts (presentation only)
 
 - football-first hierarchy; featured-match emphasis; dark match hero
-- visible bottom-navigation labels (production items are icon-only with
-  accessibility labels; making labels visible is Phase 2 work)
+- visible bottom-navigation labels (done in Phase 2)
 - clearer match states; Upcoming / Live / Results **only where the backend
   supports them** (discovery currently uses scheduled matches only)
 - compact date browsing; a focused filter bottom sheet (existing filters:

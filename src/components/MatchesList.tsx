@@ -1,776 +1,126 @@
-import { AppBanner } from "@/components/AppBanner";
-import { MatchCard } from "@/components/MatchCard";
-import { SheetDismissHandle } from "@/components/SheetDismissHandle";
-import { Empty, Loading, useResponsive, useTheme } from "@/components/ui";
-import { useToast } from "@/context/ToastContext";
-import {
-  formatAccessibleDate,
-  getDateTriggerLabel,
-  getDropdownTriggerLabel,
-  isDropdownOptionSelected,
-} from "@/lib/matchFilterAccessibility";
-import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
-import { userFacingError } from "@/lib/userFacingError";
-import { matchesService } from "@/services/matches";
-import type { ApiMatch, FilterOption, MatchFilters } from "@/types";
-import { SymbolView } from "expo-symbols";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, RefreshControl, ScrollView, Text, View, type DimensionValue } from "react-native";
+import { AppText, StatePanel } from "@/components/foundation";
+import { MatchCard } from "@/components/match/MatchCard";
+import { MatchFilterBar, MatchFiltersSheet } from "@/components/match/MatchFilters";
+import { MatchListSkeleton } from "@/components/match/MatchSkeletons";
+import { useResponsive } from "@/components/ui";
+import { useScheduledMatches } from "@/hooks/useScheduledMatches";
+import { useI18n } from "@/i18n/I18nProvider";
+import { spacing } from "@/lib/designTokens";
+import { matchListState, sortMatchesByKickoff } from "@/lib/matchDiscovery";
+import type { ApiMatch, MatchFilters } from "@/types";
+import { router } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
+import { RefreshControl, ScrollView, View, type DimensionValue } from "react-native";
 
-type MatchesListProps = {
-  limit?: number;
-  filterable?: boolean;
-  showAppBanner?: boolean;
-};
+const GRID_GAP = spacing.md;
 
-export function MatchesList({ limit, filterable = false, showAppBanner = false }: MatchesListProps) {
+/** Responsive columns for match cards; thresholds unchanged from the previous list. */
+export function useMatchGrid() {
   const responsive = useResponsive();
-  const theme = useTheme();
-  const toast = useToast();
-  const [matches, setMatches] = useState<ApiMatch[]>([]);
-  const [filters, setFilters] = useState<{ teams: FilterOption[]; stadiums: FilterOption[] }>({ teams: [], stadiums: [] });
-  const [selected, setSelected] = useState<MatchFilters>({});
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [teamOpen, setTeamOpen] = useState(false);
-  const [venueOpen, setVenueOpen] = useState(false);
-  const [dateText, setDateText] = useState("");
-  const [calendarOpen, setCalendarOpen] = useState(false);
-  const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(today()));
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const requestAuthority = useMemo(() => createRequestAuthority(), []);
-  const filterIdentity = createRequestIdentity([selected.team, selected.stadium, selected.date]);
   const columns = responsive.width >= 1120 ? 3 : responsive.width >= 720 ? 2 : 1;
-  const wideFilters = responsive.width >= 760;
-  const hasFilters = Boolean(selected.team || selected.stadium || selected.date);
-  const gridGap = 12;
-  const cardWidth: DimensionValue = columns === 1 ? "100%" : (responsive.contentWidth - gridGap * (columns - 1)) / columns;
+  const cardWidth: DimensionValue = columns === 1 ? "100%" : (responsive.contentWidth - GRID_GAP * (columns - 1)) / columns;
+  return { columns, cardWidth };
+}
 
-  const visibleMatches = useMemo(() => {
-    const next = limit ? matches.slice(0, limit) : matches;
-    return next;
-  }, [limit, matches]);
+export function openMatch(match: ApiMatch) {
+  router.push({ pathname: "/match/[id]", params: { id: String(match.id) } });
+}
 
-  const load = useCallback(async (forceRefresh = false) => {
-    const requestFilters = { team: selected.team, stadium: selected.stadium, date: selected.date };
-    const requestIdentity = createRequestIdentity([requestFilters.team, requestFilters.stadium, requestFilters.date]);
-    const ticket = requestAuthority.begin(requestIdentity);
-    setError(null);
-    if (!forceRefresh) setLoading(true);
-    try {
-      const [nextMatches, nextFilters] = await Promise.all([matchesService.list(requestFilters, forceRefresh), matchesService.filters(forceRefresh)]);
-      if (!requestAuthority.isCurrent(ticket)) return;
-      setMatches(nextMatches);
-      setFilters(nextFilters);
-    } catch (err) {
-      if (!requestAuthority.isCurrent(ticket)) return;
-      const message = userFacingError(err, "Could not load matches. Please try again.");
-      setError(message);
-      toast.showToast({ variant: "error", title: "Could not load matches", message });
-    } finally {
-      if (!requestAuthority.isCurrent(ticket)) return;
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [requestAuthority, selected.date, selected.stadium, selected.team, toast]);
-
-  useEffect(() => {
-    requestAuthority.mount();
-    return () => requestAuthority.unmount();
-  }, [requestAuthority]);
-
-  useEffect(() => {
-    const timeout = setTimeout(() => void load(), 0);
-    return () => {
-      clearTimeout(timeout);
-      requestAuthority.invalidate(filterIdentity);
-    };
-  }, [filterIdentity, load, requestAuthority]);
-
-  const chooseTeam = (team?: string) => {
-    const next = { ...selected, team };
-    requestAuthority.invalidate(createRequestIdentity([next.team, next.stadium, next.date]));
-    setSelected(next);
-    setTeamOpen(false);
-  };
-
-  const chooseVenue = (stadium?: string) => {
-    const next = { ...selected, stadium };
-    requestAuthority.invalidate(createRequestIdentity([next.team, next.stadium, next.date]));
-    setSelected(next);
-    setVenueOpen(false);
-  };
-
-  const applyDate = (date: Date) => {
-    const value = toDateInputValue(date);
-    const next = { ...selected, date: value };
-    requestAuthority.invalidate(createRequestIdentity([next.team, next.stadium, next.date]));
-    setDateText(value);
-    setSelected(next);
-    setCalendarOpen(false);
-  };
-
-  const clearFilters = () => {
-    requestAuthority.invalidate(createRequestIdentity([null, null, null]));
-    setSelected({});
-    setDateText("");
-    setTeamOpen(false);
-    setVenueOpen(false);
-  };
-
-  if (loading) return <Loading />;
+/**
+ * Matches (discovery) screen body. Owns the filter values; loading goes
+ * through `useScheduledMatches` (the existing service + request authority).
+ */
+export function MatchesList() {
+  const { t, plural } = useI18n();
+  const { columns, cardWidth } = useMatchGrid();
+  const [filters, setFilters] = useState<MatchFilters>({});
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const data = useScheduledMatches(filters, { withFilterOptions: true });
+  const matches = useMemo(() => sortMatchesByKickoff(data.matches), [data.matches]);
+  const state = matchListState({ loading: data.loading, error: data.error, count: matches.length, filters });
+  const { invalidate } = data;
+  // Every filter change voids the in-flight request synchronously, before state changes.
+  const changeFilters = useCallback((next: MatchFilters) => {
+    invalidate(next);
+    setFilters(next);
+  }, [invalidate]);
+  const clearFilters = useCallback(() => changeFilters({}), [changeFilters]);
 
   return (
-    <ScrollView
-      showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(true); }} />}
-      contentContainerStyle={local.scrollContent}
-    >
-      {showAppBanner ? <AppBanner /> : null}
-
-      {filterable ? (
-        <View style={[local.filterCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-          <View style={local.filterHeader}>
-            <Pressable
-              onPress={() => setFiltersOpen((value) => !value)}
-              style={local.filterToggle}
-              accessibilityRole="button"
-              accessibilityLabel="Filter matches"
-              accessibilityState={{ expanded: filtersOpen }}
-            >
-              <SymbolView
-                accessible={false}
-                name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as any}
-                size={20}
-                tintColor={theme.colors.primary}
-                fallback={
-                  <Text accessible={false} style={[local.filterIcon, { color: theme.colors.primary }]}>
-                    F
-                  </Text>
-                }
-              />
-              <Text style={[local.filterTitle, { color: theme.colors.ink }]}>
-                Filter Matches
-              </Text>
-              {hasFilters ? <View accessible={false} style={local.clearButtonPlaceholder} /> : null}
-              <ChevronIcon open={filtersOpen} color={theme.colors.muted} />
-            </Pressable>
-
-            {hasFilters ? (
-              <Pressable
-                onPress={clearFilters}
-                style={[
-                  local.clearButton,
-                  local.clearButtonOverlay,
-                  {
-                    backgroundColor: theme.colors.panelSoft,
-                    borderColor: theme.colors.line,
-                  },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Clear match filters"
-              >
-                <SymbolView
-                  accessible={false}
-                  name={{ ios: "xmark", android: "close", web: "close" } as any}
-                  size={15}
-                  tintColor={theme.colors.primary}
-                  fallback={
-                    <Text accessible={false} style={{ color: theme.colors.primary }}>
-                      X
-                    </Text>
-                  }
-                />
-              </Pressable>
-            ) : null}
-          </View>
-
-          {filtersOpen ? (
-            <View style={[local.filterBody, wideFilters && local.filterBodyWide, { borderTopColor: theme.colors.line }]}>
-              <Dropdown
-                label="Team"
-                value={selected.team ? filters.teams.find((team) => team.slug === selected.team)?.name ?? "Team" : "All teams"}
-                selectedValue={selected.team}
-                open={teamOpen}
-                options={[{ label: "All teams", value: undefined }, ...filters.teams.map((team) => ({ label: team.name, value: team.slug }))]}
-                onToggle={() => { setTeamOpen((value) => !value); setVenueOpen(false); }}
-                onSelect={chooseTeam}
-                wide={wideFilters}
-              />
-              <Dropdown
-                label="Venue"
-                value={selected.stadium ? filters.stadiums.find((stadium) => stadium.slug === selected.stadium)?.name ?? "Venue" : "All venues"}
-                selectedValue={selected.stadium}
-                open={venueOpen}
-                options={[{ label: "All venues", value: undefined }, ...filters.stadiums.map((stadium) => ({ label: stadium.name, value: stadium.slug }))]}
-                onToggle={() => { setVenueOpen((value) => !value); setTeamOpen(false); }}
-                onSelect={chooseVenue}
-                wide={wideFilters}
-              />
-              <View style={[local.fieldWrap, wideFilters && local.fieldWrapWide]}>
-                <Text style={[local.fieldLabel, { color: theme.colors.secondary }]}>Match Date</Text>
-                <Pressable
-                  onPress={() => setCalendarOpen(true)}
-                  style={[
-                    local.dateInputWrap,
-                    {
-                      borderColor: theme.colors.line,
-                      backgroundColor: theme.colors.panel,
-                    },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel={getDateTriggerLabel(
-                    dateText ? parseDateValue(dateText) : null,
-                  )}
-                  accessibilityState={{ expanded: calendarOpen }}
-                >
-                  <Text
-                    style={[
-                      local.dateInputText,
-                      {
-                        color: dateText
-                          ? theme.colors.ink
-                          : theme.colors.muted,
-                      },
-                    ]}
-                  >
-                    {dateText || "Select date"}
-                  </Text>
-                  <SymbolView
-                    accessible={false}
-                    name={{
-                      ios: "calendar",
-                      android: "calendar_month",
-                      web: "calendar_month",
-                    } as any}
-                    size={17}
-                    tintColor={theme.colors.ink}
-                    fallback={
-                      <Text accessible={false} style={{ color: theme.colors.ink }}>
-                        Cal
-                      </Text>
-                    }
-                  />
-                </Pressable>
-              </View>
-              <CalendarModal
-                visible={calendarOpen}
-                month={calendarMonth}
-                selectedValue={dateText}
-                onMonthChange={setCalendarMonth}
-                onSelect={applyDate}
-                onClose={() => setCalendarOpen(false)}
-              />
-            </View>
+    <>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={data.refreshing} onRefresh={data.refresh} />}
+        contentContainerStyle={local.content}
+      >
+        <View style={local.titleRow}>
+          <AppText variant="screenTitle" accessibilityRole="header">{t("matches.title")}</AppText>
+          {state === "results" ? (
+            <AppText variant="label" tone="muted">{plural("matches.count", matches.length)}</AppText>
           ) : null}
         </View>
-      ) : null}
 
-      {error ? <Empty title="Could not load matches" detail={error} /> : null}
+        <MatchFilterBar
+          filters={filters}
+          options={data.filterOptions}
+          sheetOpen={sheetOpen}
+          onOpen={() => setSheetOpen(true)}
+          onChange={changeFilters}
+          onClear={clearFilters}
+        />
 
-      {visibleMatches.length ? (
-        <View style={local.listBar}>
-          <Text style={[local.listTitle, { color: theme.colors.ink }]}>{limit ? "Latest matches" : "Scheduled matches"}</Text>
-          <Text style={[local.resultCount, { color: theme.colors.muted }]}>{visibleMatches.length} match{visibleMatches.length === 1 ? "" : "es"}</Text>
-        </View>
-      ) : null}
-
-      {visibleMatches.length ? (
-        <View style={local.matchGrid}>
-          {visibleMatches.map((match) => <MatchCard key={match.id} match={match} width={cardWidth} />)}
-        </View>
-      ) : !error ? <Empty title="No scheduled matches" detail="Pull to refresh or change filters when matches become available." /> : null}
-    </ScrollView>
-  );
-}
-
-function Dropdown({
-  label,
-  value,
-  selectedValue,
-  open,
-  options,
-  onToggle,
-  onSelect,
-  wide,
-}: {
-  label: string;
-  value: string;
-  selectedValue?: string;
-  open: boolean;
-  options: { label: string; value?: string }[];
-  onToggle: () => void;
-  onSelect: (value?: string) => void;
-  wide?: boolean;
-}) {
-  const theme = useTheme();
-
-  return (
-    <View style={[local.fieldWrap, wide && local.fieldWrapWide]}>
-      <Text style={[local.fieldLabel, { color: theme.colors.secondary }]}>
-        {label}
-      </Text>
-      <Pressable
-        onPress={onToggle}
-        style={[
-          local.selectInput,
-          {
-            borderColor: theme.colors.line,
-            backgroundColor: theme.colors.panel,
-          },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel={getDropdownTriggerLabel(label, value)}
-        accessibilityState={{ expanded: open }}
-      >
-        <Text
-          numberOfLines={1}
-          style={[local.selectText, { color: theme.colors.muted }]}
-        >
-          {value}
-        </Text>
-        <ChevronIcon open={open} color={theme.colors.muted} />
-      </Pressable>
-
-      {open ? (
-        <View
-          style={[
-            local.optionsPanel,
-            {
-              borderColor: theme.colors.line,
-              backgroundColor: theme.colors.panel,
-            },
-          ]}
-        >
-          {options.map((option) => {
-            const optionSelected = isDropdownOptionSelected(
-              selectedValue,
-              option.value,
-            );
-
-            return (
-              <Pressable
-                key={option.value ?? "all"}
-                onPress={() => onSelect(option.value)}
-                style={[
-                  local.optionRow,
-                  optionSelected && {
-                    backgroundColor: theme.colors.primary,
-                  },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={option.label}
-                accessibilityState={{ selected: optionSelected }}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={[
-                    local.optionText,
-                    { color: theme.colors.muted },
-                    optionSelected && local.optionTextActive,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function ChevronIcon({ open, color }: { open: boolean; color: string }) {
-  return (
-    <SymbolView
-      accessible={false}
-      name={(open
-        ? {
-          ios: "chevron.up",
-          android: "keyboard_arrow_up",
-          web: "keyboard_arrow_up",
-        }
-        : {
-          ios: "chevron.down",
-          android: "keyboard_arrow_down",
-          web: "keyboard_arrow_down",
-        }) as any}
-      size={18}
-      tintColor={color}
-      fallback={
-        <Text
-          accessible={false}
-          style={[local.selectChevron, { color }]}
-        >
-          {open ? "Up" : "Down"}
-        </Text>
-      }
-    />
-  );
-}
-
-function CalendarModal({
-  visible,
-  month,
-  selectedValue,
-  onMonthChange,
-  onSelect,
-  onClose,
-}: {
-  visible: boolean;
-  month: Date;
-  selectedValue: string;
-  onMonthChange: (date: Date) => void;
-  onSelect: (date: Date) => void;
-  onClose: () => void;
-}) {
-  const theme = useTheme();
-  const todayDate = today();
-  const selectedDate = selectedValue ? parseDateValue(selectedValue) : null;
-  const days = getCalendarDays(month);
-  const canGoPrevious = startOfMonth(addMonths(month, -1)).getTime() >= startOfMonth(todayDate).getTime();
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Close calendar" onPress={onClose} style={local.calendarOverlay}>
-        <Pressable onPress={(event) => event.stopPropagation()} style={[local.calendarPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-          <SheetDismissHandle onDismiss={onClose} color={theme.colors.muted} />
-          <View style={local.calendarHeader}>
-            <Pressable
-              disabled={!canGoPrevious}
-              onPress={() => onMonthChange(addMonths(month, -1))}
-              style={[
-                local.calendarNav,
-                { opacity: canGoPrevious ? 1 : 0.35 },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Previous month"
-              accessibilityState={{ disabled: !canGoPrevious }}
-            >
-              <SymbolView
-                accessible={false}
-                name={{
-                  ios: "chevron.left",
-                  android: "keyboard_arrow_left",
-                  web: "keyboard_arrow_left",
-                } as any}
-                size={20}
-                tintColor={theme.colors.ink}
-                fallback={
-                  <Text accessible={false} style={{ color: theme.colors.ink }}>
-                    Prev
-                  </Text>
-                }
+        {state === "loading" ? (
+          <MatchListSkeleton label={t("matches.loading")} count={3} columns={columns} cardWidth={cardWidth} />
+        ) : state === "error" ? (
+          <StatePanel
+            variant="error"
+            title={t("matches.error.title")}
+            message={data.error ?? undefined}
+            action={{ label: t("common.retry"), onPress: data.retry }}
+          />
+        ) : state === "filtered-empty" ? (
+          <StatePanel
+            variant="empty"
+            title={t("matches.filteredEmpty.title")}
+            message={t("matches.filteredEmpty.message")}
+            action={{ label: t("filters.clear"), onPress: clearFilters }}
+          />
+        ) : state === "empty" ? (
+          <StatePanel variant="empty" title={t("matches.empty.title")} message={t("matches.empty.message")} />
+        ) : (
+          <>
+            {data.error ? (
+              // A refresh failed but earlier results are still valid: keep them and offer a retry.
+              <StatePanel
+                variant="error"
+                title={t("matches.error.title")}
+                message={data.error}
+                action={{ label: t("common.retry"), onPress: data.retry }}
               />
-            </Pressable>
+            ) : null}
+            <View style={local.grid}>
+              {matches.map((match) => (
+                <MatchCard key={match.id} match={match} width={cardWidth} onPress={() => openMatch(match)} />
+              ))}
+            </View>
+          </>
+        )}
+      </ScrollView>
 
-            <Text style={[local.calendarTitle, { color: theme.colors.ink }]}>
-              {monthLabel(month)}
-            </Text>
-
-            <Pressable
-              onPress={() => onMonthChange(addMonths(month, 1))}
-              style={local.calendarNav}
-              accessibilityRole="button"
-              accessibilityLabel="Next month"
-            >
-              <SymbolView
-                accessible={false}
-                name={{
-                  ios: "chevron.right",
-                  android: "keyboard_arrow_right",
-                  web: "keyboard_arrow_right",
-                } as any}
-                size={20}
-                tintColor={theme.colors.ink}
-                fallback={
-                  <Text accessible={false} style={{ color: theme.colors.ink }}>
-                    Next
-                  </Text>
-                }
-              />
-            </Pressable>
-          </View>
-
-          <View style={local.weekRow}>
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-              <Text key={day} style={[local.weekLabel, { color: theme.colors.muted }]}>{day}</Text>
-            ))}
-          </View>
-
-          <View style={local.calendarGrid}>
-            {days.map((date, index) => {
-              if (!date) {
-                return (
-                  <View
-                    key={`blank-${index}`}
-                    accessible={false}
-                    style={local.calendarDay}
-                  />
-                );
-              }
-
-              const disabled = isBeforeDay(date, todayDate);
-              const selected = Boolean(
-                selectedDate && isSameDay(date, selectedDate),
-              );
-
-              return (
-                <Pressable
-                  key={toDateInputValue(date)}
-                  disabled={disabled}
-                  onPress={() => onSelect(date)}
-                  style={[
-                    local.calendarDay,
-                    selected && {
-                      backgroundColor: theme.colors.primary,
-                    },
-                    disabled && local.calendarDayDisabled,
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel={formatAccessibleDate(date)}
-                  accessibilityState={{
-                    selected,
-                    disabled,
-                  }}
-                >
-                  <Text
-                    style={[
-                      local.calendarDayText,
-                      {
-                        color: disabled
-                          ? theme.colors.muted
-                          : theme.colors.ink,
-                      },
-                      selected && local.calendarDayTextSelected,
-                    ]}
-                  >
-                    {date.getDate()}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={local.calendarActions}>
-            <Pressable
-              onPress={onClose}
-              style={[
-                local.calendarButton,
-                { borderColor: theme.colors.line },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Close calendar"
-            >
-              <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={20} tintColor={theme.colors.ink} fallback={<View />} />
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+      <MatchFiltersSheet
+        visible={sheetOpen}
+        filters={filters}
+        options={data.filterOptions}
+        onChange={changeFilters}
+        onClear={clearFilters}
+        onClose={() => setSheetOpen(false)}
+      />
+    </>
   );
-}
-
-function today() {
-  const date = new Date();
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function startOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-function addMonths(date: Date, months: number) {
-  return new Date(date.getFullYear(), date.getMonth() + months, 1);
-}
-
-function getCalendarDays(month: Date) {
-  const first = startOfMonth(month);
-  const last = new Date(month.getFullYear(), month.getMonth() + 1, 0);
-  const days: (Date | null)[] = Array.from({ length: first.getDay() }, () => null);
-  for (let day = 1; day <= last.getDate(); day += 1) {
-    days.push(new Date(month.getFullYear(), month.getMonth(), day));
-  }
-  while (days.length % 7 !== 0) days.push(null);
-  return days;
-}
-
-function toDateInputValue(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function parseDateValue(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day);
-}
-
-function isBeforeDay(left: Date, right: Date) {
-  return todayValue(left) < todayValue(right);
-}
-
-function isSameDay(left: Date, right: Date) {
-  return todayValue(left) === todayValue(right);
-}
-
-function todayValue(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-function monthLabel(date: Date) {
-  return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(date);
 }
 
 const local = {
-  scrollContent: { gap: 12, paddingBottom: 28 },
-  filterCard: {
-    borderRadius: 8,
-    borderWidth: 1,
-    overflow: "hidden" as const,
-    marginTop: 8,
-  },
-  filterHeader: {
-    position: "relative" as const,
-  },
-  filterToggle: {
-    minHeight: 58,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 12,
-    paddingHorizontal: 14,
-  },
-  filterIcon: { fontSize: 18, fontWeight: "900" as const },
-  filterTitle: { flex: 1, fontSize: 13, fontWeight: "900" as const },
-  clearButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  clearButtonPlaceholder: {
-    width: 32,
-    height: 32,
-  },
-  clearButtonOverlay: {
-    position: "absolute" as const,
-    top: 13,
-    right: 44,
-  },
-  filterBody: {
-    borderTopWidth: 1,
-    padding: 12,
-    gap: 12,
-  },
-  filterBodyWide: { flexDirection: "row" as const, alignItems: "flex-start" as const },
-  fieldWrap: { gap: 5 },
-  fieldWrapWide: { flex: 1, minWidth: 0 },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: "900" as const,
-    textTransform: "uppercase" as const,
-    paddingLeft: 6,
-  },
-  selectInput: {
-    minHeight: 44,
-    borderRadius: 6,
-    borderWidth: 1,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    paddingHorizontal: 12,
-    gap: 8,
-  },
-  selectText: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: "700" as const },
-  selectChevron: { fontSize: 18, lineHeight: 18 },
-  optionsPanel: {
-    borderWidth: 1,
-  },
-  optionRow: {
-    minHeight: 26,
-    justifyContent: "center" as const,
-    paddingHorizontal: 12,
-  },
-  optionText: { fontSize: 13 },
-  optionTextActive: { color: "#FFFFFF", fontWeight: "900" as const },
-  dateInputWrap: {
-    minHeight: 44,
-    borderRadius: 6,
-    borderWidth: 1,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    paddingHorizontal: 12,
-    gap: 8,
-  },
-  dateInputText: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: "700" as const },
-  calendarOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(21,26,44,0.44)",
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-    padding: 18,
-  },
-  calendarPanel: {
-    width: "100%" as const,
-    maxWidth: 380,
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 14,
-    gap: 12,
-  },
-  calendarHeader: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-  },
-  calendarNav: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  calendarTitle: { fontSize: 16, fontWeight: "900" as const },
-  weekRow: { flexDirection: "row" as const },
-  weekLabel: { flex: 1, textAlign: "center" as const, fontSize: 11, fontWeight: "900" as const },
-  calendarGrid: { flexDirection: "row" as const, flexWrap: "wrap" as const },
-  calendarDay: {
-    width: "14.2857%" as const,
-    aspectRatio: 1,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-    borderRadius: 8,
-  },
-  calendarDayDisabled: { opacity: 0.38 },
-  calendarDayText: { fontSize: 13, fontWeight: "800" as const },
-  calendarDayTextSelected: { color: "#FFFFFF" },
-  calendarActions: { alignItems: "flex-end" as const },
-  calendarButton: {
-    minHeight: 38,
-    borderRadius: 10,
-    borderWidth: 1,
-    justifyContent: "center" as const,
-    paddingHorizontal: 14,
-  },
-  calendarButtonText: { fontSize: 13, fontWeight: "900" as const },
-  listBar: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    paddingTop: 2,
-  },
-  listTitle: { fontSize: 17, fontWeight: "900" as const },
-  resultCount: { fontSize: 12, fontWeight: "800" as const, textTransform: "uppercase" as const },
-  matchGrid: {
-    width: "100%" as const,
-    flexDirection: "row" as const,
-    flexWrap: "wrap" as const,
-    gap: 12,
-    alignItems: "stretch" as const,
-  },
+  content: { gap: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl },
+  titleRow: { flexDirection: "row" as const, alignItems: "baseline" as const, justifyContent: "space-between" as const, gap: spacing.md },
+  grid: { width: "100%" as const, flexDirection: "row" as const, flexWrap: "wrap" as const, gap: GRID_GAP, alignItems: "stretch" as const },
 };

@@ -27,6 +27,35 @@ export function formatDate(value?: string) {
   return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "short", month: "short", day: "numeric" }).format(date);
 }
 
+/** Parses "YYYY-MM-DD" as a local calendar date (not UTC midnight, which can shift the day). */
+export function parseCalendarDate(value?: string | null) {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
+  if (!parts) return null;
+  const date = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Calendar-date label for backend `match_date` values ("Thu, Oct 22"). */
+export function formatCalendarDate(value?: string | null) {
+  const date = parseCalendarDate(value);
+  if (!date) return "Date TBC";
+  return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "short", month: "short", day: "numeric" }).format(date);
+}
+
+/** Full spoken date for assistive tech ("Thursday, October 22, 2026"). */
+export function formatAccessibleCalendarDate(date: Date) {
+  return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "long", year: "numeric", month: "long", day: "numeric" }).format(date);
+}
+
+export function formatMonthYear(date: Date) {
+  return new Intl.DateTimeFormat(formatLocaleTag, { month: "long", year: "numeric" }).format(date);
+}
+
+/** Short weekday name ("Sun") in the app locale. */
+export function formatWeekdayShort(date: Date) {
+  return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "short" }).format(date);
+}
+
 export function formatTime(value?: string) {
   if (!value) return "TBC";
 

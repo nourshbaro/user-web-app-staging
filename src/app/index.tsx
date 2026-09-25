@@ -1,6 +1,6 @@
 import { View } from "react-native";
 import { MainHeader } from "@/components/MainHeader";
-import { MatchesList } from "@/components/MatchesList";
+import { HomeFeed } from "@/components/HomeFeed";
 import { Screen, useResponsive } from "@/components/ui";
 
 export default function HomeScreen() {
@@ -10,7 +10,7 @@ export default function HomeScreen() {
     <Screen>
       <View style={[local.shell, { width: responsive.contentWidth }]}>
         <MainHeader />
-        <MatchesList limit={5} showAppBanner />
+        <HomeFeed />
       </View>
     </Screen>
   );

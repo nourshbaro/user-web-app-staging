@@ -1,4 +1,7 @@
-import countries from "i18n-iso-countries";
+// Browser entry on purpose: the package's Node `main` (entry-node.js) loads every
+// locale with a dynamic require that Metro cannot bundle, which broke web SSR.
+// English is registered explicitly below, so no other locale data is needed.
+import countries from "i18n-iso-countries/index.js";
 import englishCountryNames from "./englishCountryNames.cjs";
 import {
     AsYouType,

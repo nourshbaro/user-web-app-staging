@@ -1,5 +1,5 @@
 import { storage } from "@/lib/storage";
-import { adjacentPrimaryTab, getPrimaryTabTransitionDirection, PRIMARY_TAB_ROUTES, setPrimaryTabTransitionDirection, shouldShowBottomNavigation, type PrimaryTabRoute } from "@/lib/navigationPresentation";
+import { adjacentPrimaryTab, getPrimaryTabTransitionDirection, PRIMARY_TAB_ROUTES, setPrimaryTabTransitionDirection, shouldShowBottomNavigation, swipeTabStep, tabEntranceOffset, type PrimaryTabRoute } from "@/lib/navigationPresentation";
 import { darkColors, getThemeColors, lightColors, type ThemeMode } from "@/lib/themePalette";
 import { router, usePathname } from "expo-router";
 import { SymbolView } from "expo-symbols";
@@ -15,6 +15,18 @@ import { scheduleOnRN } from "react-native-worklets";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 
 const THEME_KEY = "lfa_theme";
+
+/** Visible-label tab row: 30pt icon pill + 14pt label + spacing, ≥ the 48pt touch target. */
+const BOTTOM_NAV_ROW_HEIGHT = 58;
+
+function bottomNavBottomPadding(bottomInset: number) {
+  return Math.max(bottomInset, spacing.sm);
+}
+
+/** Total height the bottom navigation occupies, so screen content can clear it. */
+function bottomNavHeight(bottomInset: number) {
+  return spacing.xs + BOTTOM_NAV_ROW_HEIGHT + bottomNavBottomPadding(bottomInset) + 1;
+}
 
 export type { ThemeColors } from "@/lib/themePalette";
 type ThemeContextValue = {
@@ -87,6 +99,7 @@ export function Screen({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const hasBottomNavigation = shouldShowBottomNavigation(pathname);
   const reducedMotion = useReducedMotion();
+  const { isRTL } = useI18n();
   const [entrance] = useState(() => new Animated.Value(0));
   const navigateToTab = useCallback((destination: PrimaryTabRoute) => {
     if (destination === pathname) return;
@@ -99,6 +112,10 @@ export function Screen({ children }: { children: React.ReactNode }) {
     const destination = adjacentPrimaryTab(pathname, direction);
     if (destination) navigateToTab(destination);
   }, [navigateToTab, pathname]);
+  // The tab row mirrors in RTL, so the swipe that reveals the next tab mirrors too.
+  const navigateBySwipe = useCallback((translationX: number) => {
+    navigateAdjacent(swipeTabStep(translationX, isRTL));
+  }, [isRTL, navigateAdjacent]);
   const swipeGesture = useMemo(
     () => Gesture.Pan()
       .enabled(hasBottomNavigation)
@@ -107,9 +124,9 @@ export function Screen({ children }: { children: React.ReactNode }) {
       .cancelsTouchesInView(false)
       .onEnd((event) => {
         if (Math.abs(event.translationX) < 72 && Math.abs(event.velocityX) < 550) return;
-        scheduleOnRN(navigateAdjacent, event.translationX < 0 ? 1 : -1);
+        scheduleOnRN(navigateBySwipe, event.translationX);
       }),
-    [hasBottomNavigation, navigateAdjacent],
+    [hasBottomNavigation, navigateBySwipe],
   );
 
   useEffect(() => {
@@ -127,9 +144,9 @@ export function Screen({ children }: { children: React.ReactNode }) {
         theme.styles.screen,
         {
           paddingTop: Math.max(insets.top, 14),
-          paddingBottom: hasBottomNavigation ? Math.max(insets.bottom, 12) + 74 : Math.max(insets.bottom, 12),
+          paddingBottom: hasBottomNavigation ? bottomNavHeight(insets.bottom) + spacing.sm : Math.max(insets.bottom, 12),
           opacity: entrance,
-          transform: [{ translateX: entrance.interpolate({ inputRange: [0, 1], outputRange: [10 * getPrimaryTabTransitionDirection(), 0] }) }],
+          transform: [{ translateX: entrance.interpolate({ inputRange: [0, 1], outputRange: [tabEntranceOffset(getPrimaryTabTransitionDirection(), isRTL), 0] }) }],
         },
       ]}>
         {children}
@@ -258,36 +275,54 @@ function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; on
   return (
     <>
       <View
-        accessibilityRole="tablist"
-        accessibilityLabel={t("nav.primary")}
-        style={[theme.styles.bottomNav, { bottom: Math.max(bottomInset, 12), backgroundColor: theme.colors.bg, borderTopColor: theme.colors.line }]}
+        style={[
+          theme.styles.bottomNav,
+          {
+            paddingBottom: bottomNavBottomPadding(bottomInset),
+            backgroundColor: theme.colors.surface,
+            borderTopColor: theme.colors.divider,
+          },
+        ]}
       >
-        {tabs.map((tab) => {
-          const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
-          const label = t(tab.labelKey);
-          return (
-            <Pressable
-              key={tab.href}
-              onPress={() => {
-                if (active) return;
-                onNavigate(tab.href);
-              }}
-              style={[theme.styles.bottomNavItem, active && theme.styles.bottomNavItemActive]}
-              accessibilityRole="tab"
-              accessibilityLabel={label}
-              aria-selected={active}
-            >
-              <View style={theme.styles.bottomNavIconWrap}>
-                <SymbolView
-                  name={tab.icon as any}
-                  size={20}
-                  tintColor={active ? theme.colors.primary : theme.colors.muted}
-                  fallback={<Text style={[theme.styles.bottomNavFallback, { color: active ? theme.colors.primary : theme.colors.muted }]}>{label.slice(0, 1)}</Text>}
-                />
-              </View>
-            </Pressable>
-          );
-        })}
+        <View accessibilityRole="tablist" accessibilityLabel={t("nav.primary")} style={theme.styles.bottomNavRow}>
+          {tabs.map((tab) => {
+            const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
+            const label = t(tab.labelKey);
+            const color = active ? theme.colors.tones.brand.fg : theme.colors.textMuted;
+            return (
+              <Pressable
+                key={tab.href}
+                onPress={() => {
+                  if (active) return;
+                  onNavigate(tab.href);
+                }}
+                style={theme.styles.bottomNavItem}
+                accessibilityRole="tab"
+                accessibilityLabel={label}
+                aria-selected={active}
+              >
+                {/* Selected = indicator pill + weight + colour, never colour alone. */}
+                <View style={[theme.styles.bottomNavIconWrap, active && { backgroundColor: theme.colors.selectedSurface }]}>
+                  <SymbolView
+                    name={tab.icon as any}
+                    size={22}
+                    tintColor={color}
+                    fallback={<Text style={[theme.styles.bottomNavFallback, { color }]}>{label.slice(0, 1)}</Text>}
+                  />
+                </View>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  maxFontSizeMultiplier={1.3}
+                  style={[theme.styles.bottomNavText, { color, fontWeight: active ? "800" : "600" }]}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
     </>
   );
@@ -357,31 +392,37 @@ function createStyles(palette: typeof lightColors) {
     sectionLabel: { color: palette.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.8 },
     badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: "rgba(200,16,46,0.09)" },
     badgeText: { color: palette.primary, fontSize: 11, fontWeight: "800", textTransform: "uppercase" },
+    // Anchored to the bottom edge; the bar pads itself for the home indicator.
     bottomNav: {
       position: "absolute",
-      left: 14,
-      right: 14,
-      bottom: 12,
-      height: 62,
+      left: 0,
+      right: 0,
+      bottom: 0,
       borderTopWidth: 1,
-      flexDirection: "row",
+      paddingTop: spacing.xs,
       alignItems: "center",
-      justifyContent: "space-around",
-      shadowColor: "#000000",
-      shadowOpacity: 0,
-      elevation: 0,
+    },
+    bottomNavRow: {
+      width: "100%",
+      maxWidth: 640,
+      height: BOTTOM_NAV_ROW_HEIGHT,
+      flexDirection: "row",
+      alignItems: "stretch",
+      paddingHorizontal: spacing.xs,
     },
     bottomNavItem: {
       flex: 1,
-      height: 52,
+      minWidth: 0,
+      minHeight: size.touchTarget,
       alignItems: "center",
       justifyContent: "center",
-      gap: 2,
-      borderRadius: 14,
+      gap: spacing.xxs,
+      paddingHorizontal: spacing.xxs,
     },
     bottomNavIconWrap: {
-      width: 42,
-      height: 26,
+      width: 56,
+      height: 30,
+      borderRadius: radius.pill,
       alignItems: "center",
       justifyContent: "center",
       position: "relative",
@@ -408,9 +449,10 @@ function createStyles(palette: typeof lightColors) {
       backgroundColor: isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.08)",
     },
     bottomNavText: {
+      maxWidth: "100%",
       fontSize: 11,
       lineHeight: 14,
-      fontWeight: "800",
+      textAlign: "center",
     },
     bottomNavFallback: {
       fontSize: 14,

@@ -10,7 +10,7 @@ export default function MatchesScreen() {
     <Screen>
       <View style={[local.shell, { width: responsive.contentWidth }]}>
         <MainHeader />
-        <MatchesList filterable />
+        <MatchesList />
       </View>
     </Screen>
   );
