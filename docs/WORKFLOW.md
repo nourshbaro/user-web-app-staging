@@ -84,7 +84,7 @@ cart is cleared after payment is a separate transaction-boundary task.
 The redesign happens in place, phase by phase. Each phase is a batch (or a few
 batches) run through §2.
 
-### Phase 0 — Baseline / redesign readiness ← **NEXT**
+### Phase 0 — Baseline / redesign readiness ✅ complete
 Before significant visual change:
 - confirm Git state and isolate pre-existing work,
 - reconcile the known failing tests (`docs/STATUS.md`) — fix, update with
@@ -98,27 +98,37 @@ Before significant visual change:
 - decide the localization/RTL approach (see note below).
 No unrelated refactors. Exit criterion: a credible `PASS — READY FOR REDESIGN`.
 
-### Phase 1 — Design foundations
+### Phase 1 — Design foundations ✅ complete
 Semantic tokens (extending `src/lib/themePalette.ts`), typography, surfaces,
 spacing, radii, status badges, section headers, skeletons, state panels
 (loading/empty/error), a sticky transaction bar, the ticket-card foundation, an
-accessibility baseline, and RTL-safe layout conventions.
+accessibility baseline, and RTL-safe layout conventions. The English-only
+localization foundation was also brought forward into this phase (see the note
+below). Delivered as described in `docs/ARCHITECTURE.md` §14–§15.
 
-### Phase 2 — Navigation + Home + Match Discovery
+**How Phases 2–6 use the foundations:**
+- **Tokens:** the semantic tokens and scales (no new literals where a token exists).
+- **Strings and formatting:** `useI18n()` catalog access for new or changed
+  copy, and the locale-aware formatters.
+- **Layout:** logical, RTL-safe layout, with physical layouts pinned via
+  `PhysicalLayout`.
+- **Accessibility:** the shared accessible primitives and `aria-*` state props.
+- **Transactions:** the presentation-only transaction and ticket foundations,
+  fed by the existing owners (cart, checkout, tickets). The foundations never
+  own transaction state.
+
+### Phase 2 — Navigation + Home + Match Discovery ← **NEXT**
 ### Phase 3 — Matches + Match Detail + Ticket Selection
 ### Phase 4 — Cart + Checkout
 ### Phase 5 — Tickets
 ### Phase 6 — Profile + supporting screens
 ### Phase 7 — Localization / RTL / Accessibility / Responsive / Performance / regression polish
 
-**Roadmap boundary note (pending user decision).** Inspection found no
-localization or RTL infrastructure (`docs/ARCHITECTURE.md` §15). If Arabic is a
-launch requirement, placing all localization in Phase 7 means extracting every
-hardcoded string after Phases 2–6 have rewritten those screens. The suggested
-alternative is to decide the i18n/RTL mechanism in Phase 0 and introduce it in
-Phase 1, so Phases 2–6 build localized, RTL-safe screens, and Phase 7 becomes
-verification and polish. This is a recommendation only; the roadmap above stays
-as written until the user decides.
+**Roadmap boundary note (resolved).** The localization/RTL mechanism was
+established in Phase 1, so Phases 2–6 build catalog-backed, RTL-safe screens.
+Phase 7 remains the phase for the Arabic catalog, enabling `ar`, Arabic/RTL
+device verification, and cross-app accessibility, responsive and performance
+polish.
 
 ---
 

@@ -170,11 +170,25 @@ ticket lifecycle states that contradict backend data.
 
 ## 11. Localization and RTL — current reality
 
-There is **no** localization or RTL infrastructure today: no i18n library, no
-`I18nManager` usage, no Arabic strings; UI copy is hardcoded English. Arabic/RTL
-is a redesign goal, not an existing capability. Do not claim RTL support that
-has not been built and verified. Do not introduce ad-hoc per-screen translation
-mechanisms; the localization approach is an explicit, user-approved decision.
+- **What exists:** an English-only localization foundation in `src/i18n/`
+  (details in `docs/ARCHITECTURE.md` §15):
+  - an app-language setting stored in `lfa_locale`;
+  - a typed catalog, and a translator with internal CLDR plural rules;
+  - restart-aware native direction handling;
+  - locale-aware formatters in `src/lib/format.ts`.
+- **What doesn't:** Arabic metadata and plural rules exist, but **Arabic UI is
+  not translated or enabled**. Do not claim Arabic or RTL support that has not
+  been built and verified.
+- **Rules for new work:**
+  - Use this infrastructure for user-facing strings and date, time and money
+    formatting. Do not add another localization mechanism or per-screen
+    translation hacks.
+  - Prefer logical (start/end) layout. Stadium maps, seat maps and QR codes
+    must never mirror.
+  - Do not add startup reliance on an `Intl` constructor without confirming the
+    native engine (Hermes) supports it, or providing a capability-safe
+    fallback. `Intl.PluralRules` is missing on Hermes and once crashed native
+    startup.
 
 ---
 

@@ -3,7 +3,10 @@ import { adjacentPrimaryTab, getPrimaryTabTransitionDirection, PRIMARY_TAB_ROUTE
 import { darkColors, getThemeColors, lightColors, type ThemeMode } from "@/lib/themePalette";
 import { router, usePathname } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { createContext, forwardRef, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useI18n } from "@/i18n/I18nProvider";
+import type { MessageKey } from "@/i18n/messages/en";
+import { radius, size, spacing, typography } from "@/lib/designTokens";
+import { createContext, forwardRef, PropsWithChildren, useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 import type { RefObject } from "react";
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, TextInput, TextInputProps, useColorScheme, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -141,21 +144,48 @@ export function Card({ children }: { children: React.ReactNode }) {
   return <View style={theme.styles.card}>{children}</View>;
 }
 
-export function Button({ title, onPress, variant = "primary", disabled }: { title: string; onPress?: () => void; variant?: "primary" | "secondary" | "danger"; disabled?: boolean }) {
+type ButtonProps = {
+  title: string;
+  onPress?: () => void;
+  variant?: "primary" | "secondary" | "danger";
+  disabled?: boolean;
+  /** Owner's in-flight flag: shows a spinner, blocks presses, and reports busy to assistive tech. */
+  loading?: boolean;
+  /** Defaults to `title`; override only when the visible text is ambiguous out of context. */
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
+};
+
+export function Button({ title, onPress, variant = "primary", disabled, loading = false, accessibilityLabel, accessibilityHint }: ButtonProps) {
   const theme = useTheme();
+  const inactive = Boolean(disabled || loading);
+  const textColor = inactive
+    ? theme.colors.disabledText
+    : variant === "secondary"
+      ? theme.colors.onActionSecondary
+      : variant === "danger"
+        ? theme.colors.onActionDestructive
+        : theme.colors.onActionPrimary;
   return (
     <Pressable
       onPress={onPress}
-      disabled={disabled}
+      disabled={inactive}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityHint={accessibilityHint}
+      // aria-* state props work on native (RN ≥ 0.71) and web; react-native-web ignores `accessibilityState`.
+      aria-disabled={inactive}
+      aria-busy={loading}
       style={({ pressed }) => [
         theme.styles.button,
         variant === "secondary" && theme.styles.buttonSecondary,
         variant === "danger" && theme.styles.buttonDanger,
-        disabled && theme.styles.buttonDisabled,
-        pressed && !disabled && { opacity: 0.82 },
+        inactive && theme.styles.buttonDisabled,
+        pressed && !inactive && { opacity: 0.82 },
       ]}
     >
-      <Text style={[theme.styles.buttonText, variant === "secondary" && theme.styles.buttonSecondaryText]}>{title}</Text>
+      {loading ? <ActivityIndicator size="small" color={textColor} accessibilityElementsHidden importantForAccessibility="no" /> : null}
+      <Text style={[theme.styles.buttonText, { color: textColor }]}>{title}</Text>
     </Pressable>
   );
 }
@@ -167,10 +197,19 @@ export const Input = forwardRef<TextInput, TextInputProps & {
 }>(
   function Input({ label, containerRef, ...props }, ref) {
     const theme = useTheme();
+    const labelId = `input-label-${useId()}`;
     return (
       <View ref={containerRef} style={theme.styles.inputWrap}>
-        <Text style={theme.styles.label}>{label}</Text>
-        <TextInput ref={ref} {...props} placeholderTextColor={theme.colors.muted} style={[theme.styles.input, props.style]} />
+        <Text nativeID={labelId} style={theme.styles.label}>{label}</Text>
+        <TextInput
+          ref={ref}
+          // The visible label names the field for assistive tech unless the caller overrides it.
+          accessibilityLabel={label}
+          accessibilityLabelledBy={labelId}
+          {...props}
+          placeholderTextColor={theme.colors.muted}
+          style={[theme.styles.input, props.style]}
+        />
       </View>
     );
   },
@@ -180,34 +219,52 @@ export function Empty({ title, detail }: { title: string; detail?: string }) {
   const theme = useTheme();
   return (
     <Card>
-      <Text style={theme.styles.emptyTitle}>{title}</Text>
-      {detail ? <Text style={theme.styles.muted}>{detail}</Text> : null}
+      <Text accessibilityRole="header" style={theme.styles.emptyTitle}>{title}</Text>
+      {detail ? <Text style={[theme.styles.muted, { color: theme.colors.textMuted }]}>{detail}</Text> : null}
     </Card>
   );
 }
 
-export function Loading() {
+/** Full-area loading indicator; announced once as a busy progress element, not repeatedly. */
+export function Loading({ label }: { label?: string } = {}) {
   const theme = useTheme();
-  return <View style={theme.styles.loading}><ActivityIndicator color={theme.colors.primary} /></View>;
+  const { t } = useI18n();
+  return (
+    <View
+      style={theme.styles.loading}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={label ?? t("common.loading")}
+      aria-busy
+    >
+      <ActivityIndicator color={theme.colors.primary} />
+    </View>
+  );
 }
 
 function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; onNavigate: (route: PrimaryTabRoute) => void }) {
   const pathname = usePathname();
   const theme = useTheme();
+  const { t } = useI18n();
 
-  const tabs: { label: string; href: PrimaryTabRoute; icon: any }[] = [
-    { label: "Home", href: "/", icon: { ios: "house", android: "home", web: "home" } },
-    { label: "Tournament", href: "/tournament", icon: { ios: "trophy", android: "emoji_events", web: "emoji_events" } },
-    { label: "Matches", href: "/matches", icon: { ios: "sportscourt", android: "stadium", web: "stadium" } },
-    { label: "My Tickets", href: "/tickets", icon: { ios: "ticket", android: "confirmation_number", web: "confirmation_number" } },
-    { label: "Profile", href: "/profile", icon: { ios: "person", android: "person_outline", web: "person_outline" } },
+  const tabs: { labelKey: MessageKey; href: PrimaryTabRoute; icon: any }[] = [
+    { labelKey: "nav.home", href: "/", icon: { ios: "house", android: "home", web: "home" } },
+    { labelKey: "nav.tournament", href: "/tournament", icon: { ios: "trophy", android: "emoji_events", web: "emoji_events" } },
+    { labelKey: "nav.matches", href: "/matches", icon: { ios: "sportscourt", android: "stadium", web: "stadium" } },
+    { labelKey: "nav.tickets", href: "/tickets", icon: { ios: "ticket", android: "confirmation_number", web: "confirmation_number" } },
+    { labelKey: "nav.profile", href: "/profile", icon: { ios: "person", android: "person_outline", web: "person_outline" } },
   ];
 
   return (
     <>
-      <View style={[theme.styles.bottomNav, { bottom: Math.max(bottomInset, 12), backgroundColor: theme.colors.bg, borderTopColor: theme.colors.line }]}>
+      <View
+        accessibilityRole="tablist"
+        accessibilityLabel={t("nav.primary")}
+        style={[theme.styles.bottomNav, { bottom: Math.max(bottomInset, 12), backgroundColor: theme.colors.bg, borderTopColor: theme.colors.line }]}
+      >
         {tabs.map((tab) => {
           const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
+          const label = t(tab.labelKey);
           return (
             <Pressable
               key={tab.href}
@@ -216,14 +273,16 @@ function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; on
                 onNavigate(tab.href);
               }}
               style={[theme.styles.bottomNavItem, active && theme.styles.bottomNavItemActive]}
-              accessibilityLabel={tab.label}
+              accessibilityRole="tab"
+              accessibilityLabel={label}
+              aria-selected={active}
             >
               <View style={theme.styles.bottomNavIconWrap}>
                 <SymbolView
                   name={tab.icon as any}
                   size={20}
                   tintColor={active ? theme.colors.primary : theme.colors.muted}
-                  fallback={<Text style={[theme.styles.bottomNavFallback, { color: active ? theme.colors.primary : theme.colors.muted }]}>{tab.label.slice(0, 1)}</Text>}
+                  fallback={<Text style={[theme.styles.bottomNavFallback, { color: active ? theme.colors.primary : theme.colors.muted }]}>{label.slice(0, 1)}</Text>}
                 />
               </View>
             </Pressable>
@@ -273,15 +332,26 @@ function createStyles(palette: typeof lightColors) {
     chip: { borderWidth: 1, borderColor: palette.line, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: isDark ? "rgba(17,24,39,0.8)" : "rgba(255,255,255,0.8)" },
     chipActive: { borderColor: palette.primary, backgroundColor: "rgba(200,16,46,0.08)" },
     chipText: { color: palette.ink, fontSize: 13, fontWeight: "600" },
-    button: { minHeight: 46, borderRadius: 14, backgroundColor: palette.primary, alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
-    buttonSecondary: { backgroundColor: palette.panel, borderWidth: 1, borderColor: palette.line },
-    buttonDanger: { backgroundColor: palette.danger },
-    buttonDisabled: { backgroundColor: isDark ? "#334155" : "#D8DEE8", borderColor: isDark ? "#334155" : "#D8DEE8" },
-    buttonText: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
-    buttonSecondaryText: { color: palette.ink },
+    button: {
+      minHeight: size.controlHeight,
+      borderRadius: radius.md,
+      backgroundColor: palette.actionPrimary,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: spacing.sm,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+    },
+    buttonSecondary: { backgroundColor: palette.actionSecondary, borderWidth: 1, borderColor: palette.border },
+    buttonDanger: { backgroundColor: palette.actionDestructive },
+    buttonDisabled: { backgroundColor: palette.disabledSurface, borderColor: palette.disabledSurface },
+    // Color is applied per state in <Button>; text may wrap for long (e.g. Arabic) labels.
+    buttonText: { color: palette.onActionPrimary, fontWeight: typography.action.fontWeight, fontSize: typography.action.fontSize, lineHeight: typography.action.lineHeight, textAlign: "center", flexShrink: 1 },
+    buttonSecondaryText: { color: palette.onActionSecondary },
     inputWrap: { gap: 6 },
     label: { color: palette.ink, fontSize: 13, fontWeight: "700" },
-    input: { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.panel, color: palette.ink, paddingHorizontal: 12, fontSize: 15 },
+    input: { minHeight: size.controlHeight, borderRadius: radius.md, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.panel, color: palette.ink, paddingHorizontal: 12, fontSize: 15 },
     emptyTitle: { color: palette.ink, fontSize: 17, fontWeight: "700" },
     loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.bg },
     sectionLabel: { color: palette.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.8 },

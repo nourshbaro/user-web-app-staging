@@ -5,6 +5,7 @@ import { Screen, useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useToast } from "@/context/ToastContext";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
+import { useI18n } from "@/i18n/I18nProvider";
 import { registerPushDevice } from "@/lib/registerPushDevice";
 import type { ThemeMode } from "@/lib/themePalette";
 import { Stack } from "expo-router";
@@ -50,6 +51,7 @@ function SettingsScreen() {
   const toast = useToast();
   const responsive = useResponsive();
   const theme = useTheme();
+  const i18n = useI18n();
 
   const [deleteVisible, setDeleteVisible] = useState(false);
 
@@ -148,7 +150,7 @@ function SettingsScreen() {
           <Section title="Preferences">
             <SettingRow
               title="Language"
-              detail="English"
+              detail={i18n.meta.nativeName}
               icon={{
                 ios: "globe",
                 android: "language",
@@ -161,7 +163,7 @@ function SettingsScreen() {
                     { backgroundColor: theme.colors.primary },
                   ]}
                 >
-                  <Text style={styles.languageText}>EN</Text>
+                  <Text style={styles.languageText}>{i18n.locale.toUpperCase()}</Text>
                 </View>
               }
             />

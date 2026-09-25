@@ -1,5 +1,20 @@
 import type { ApiMatch } from "@/types";
 
+/**
+ * Presentation-only formatting. The locale follows the *app* language (set by
+ * `I18nProvider` via `setFormatLocale`), never the device locale, so dates and
+ * money match the interface language. Values and calculations are untouched.
+ */
+let formatLocaleTag = "en-US";
+
+export function setFormatLocale(tag: string) {
+  formatLocaleTag = tag;
+}
+
+export function getFormatLocale() {
+  return formatLocaleTag;
+}
+
 export function matchTitle(match?: ApiMatch | null) {
   if (!match) return "Match";
   return `${match.home_team?.name ?? "Home"} vs ${match.away_team?.name ?? "Away"}`;
@@ -9,7 +24,7 @@ export function formatDate(value?: string) {
   if (!value) return "Date TBC";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Date TBC";
-  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(date);
+  return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "short", month: "short", day: "numeric" }).format(date);
 }
 
 export function formatTime(value?: string) {
@@ -21,16 +36,23 @@ export function formatTime(value?: string) {
   if (clock) {
     const hour = Number(clock[1]);
     if (hour > 23) return "TBC";
-    const displayHour = hour % 12 || 12;
-    return `${displayHour}:${clock[2]} ${hour < 12 ? "AM" : "PM"}`;
+    if (formatLocaleTag === "en-US") {
+      const displayHour = hour % 12 || 12;
+      return `${displayHour}:${clock[2]} ${hour < 12 ? "AM" : "PM"}`;
+    }
+    // Other locales: format the wall-clock value in UTC so no offset is applied.
+    return new Intl.DateTimeFormat(formatLocaleTag, {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "UTC",
+    }).format(Date.UTC(2000, 0, 1, hour, Number(clock[2])));
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "TBC";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(formatLocaleTag, {
     hour: "numeric",
     minute: "2-digit",
-    hour12: true,
   }).format(date);
 }
 
@@ -38,19 +60,43 @@ export function formatDateTime(value?: string) {
   if (!value) return "Date unavailable";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Date unavailable";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(formatLocaleTag, {
     month: "short",
     day: "numeric",
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    hour12: true,
   }).format(date);
 }
 
-export function formatMoney(value?: number | string, currency = "USD") {
-  const amount = Number(value ?? 0);
-  return `${amount.toFixed(2)} ${currency}`;
+/**
+ * Shown instead of an amount when the value is missing or not a finite number,
+ * so corrupted data can never look like a genuine (e.g. free) price. Like the
+ * other fallbacks in this module, it moves to the catalog with its screens.
+ */
+export const MONEY_UNAVAILABLE = "Price unavailable";
+
+function parseAmount(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const amount = Number(value);
+    return Number.isFinite(amount) ? amount : null;
+  }
+  return null;
+}
+
+/**
+ * Amount with two decimals and locale grouping, followed by the backend
+ * currency code. Presentation only: it never alters the value callers keep.
+ */
+export function formatMoney(value?: number | string | null, currency = "USD") {
+  const amount = parseAmount(value);
+  if (amount === null) return MONEY_UNAVAILABLE;
+  // Capability check: never assume an Intl constructor exists on every JS engine.
+  const number = typeof Intl !== "undefined" && typeof Intl.NumberFormat === "function"
+    ? new Intl.NumberFormat(formatLocaleTag, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)
+    : amount.toFixed(2);
+  return `${number} ${currency}`;
 }
 
 export function minutesSeconds(seconds: number) {

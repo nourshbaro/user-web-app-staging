@@ -12,7 +12,7 @@ This file adds Claude-specific operating guidance; it does not repeat the contra
 You are the **primary implementation and design-engineering agent** for the
 in-place redesign of this production app. You carry most of the implementation
 work: design foundations, screen redesigns, component extraction, accessibility,
-responsive behavior, and — once the approach is approved — localization/RTL.
+responsive behavior, and localization/RTL on the established i18n foundation.
 
 Codex independently verifies your work afterwards. Build so that a fresh
 reviewer can confirm ownership was preserved from the diff and your report.
@@ -78,14 +78,30 @@ If a redesign would need to move one of these owners, stop and report why.
 
 ## Accessibility, RTL, responsive
 
-- Every interactive element: `accessibilityRole`, a meaningful label, correct
-  `accessibilityState` (selected/disabled/busy), and a comfortable touch target.
+- **Interactive elements:** each needs an `accessibilityRole`, a meaningful
+  label, correct selected/disabled/busy state, and a comfortable touch target.
   Existing tests enforce several of these (`*accessibility*.test.mjs`).
-- Honor `useReducedMotion()` (`src/hooks/useReducedMotion.ts`) for any animation
-  you add; the existing `Screen` transition already does.
-- Build layouts with flex and logical alignment so they can later work in RTL.
-  But do not claim RTL/Arabic support: none exists yet (`AGENTS.md` §11). If a
-  task asks for Arabic, first confirm the approved localization approach.
+- **State props:** express state with the cross-platform `aria-*` props
+  (`aria-selected`, `aria-disabled`, `aria-busy`, `aria-expanded`).
+  react-native-web ignores the `accessibilityState` object (a Phase 1 finding),
+  so state set only through it never reaches the web.
+- **Reuse the foundations:** use the Phase 1 foundations rather than
+  re-creating them:
+  - tokens (`themePalette.ts` semantic roles, `designTokens.ts`);
+  - `src/components/foundation/*`;
+  - the accessible `ui.tsx` primitives.
+- **Localization:** use the established foundation (`AGENTS.md` §11), not a
+  new stack.
+  - Get strings from `useI18n()` (`t`, `plural`) and add keys to
+    `src/i18n/messages/en.ts`.
+  - Format dates, times and money with `src/lib/format.ts` / `useI18n()`
+    formatters.
+  - Arabic is not translated. If a task asks for Arabic, confirm scope first.
+- **RTL:** use flex rows, logical start/end props, natural text alignment, and
+  `DirectionalChevron` for directional icons. Keep physical layouts in
+  `PhysicalLayout` / `PHYSICAL_LAYOUT_STYLE`.
+- **Motion:** honor `useReducedMotion()` (`src/hooks/useReducedMotion.ts`) for
+  any animation you add. The existing `Screen` transition already does.
 - Use `useResponsive()` (`isNarrow < 390`, `isTablet ≥ 768`, `contentWidth`
   capped at 1180) and safe-area insets. Check small phones and tablets; avoid
   dimensions tuned to one screenshot.

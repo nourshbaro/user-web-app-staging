@@ -5,78 +5,72 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-09-24 · Phase 0 closed
+**As of:** 2026-09-25 · Phase 1 final verification
 
 ---
 
 ## Stage
 
-- ✅ Governance established (`4253605`).
-- ✅ **Phase 0 — Baseline / redesign readiness:**
-  `PASS WITH DEFERRED NON-BLOCKING FINDINGS — READY FOR REDESIGN`
-- ▶ **Next: Phase 1 — Design Foundations** (`docs/WORKFLOW.md` §4).
-
-Phase 0 changes were made on top of HEAD `4253605` (`main`). Check `git log`
-for whether they have since been committed.
+- ✅ Phase 0 — Baseline / redesign readiness (`e64a150`).
+- ✅ **Phase 1 — Design Foundations: COMPLETE, pending commit.** The changes
+  (foundations, docs, and the current working-tree Expo patch alignment in
+  `package.json` / `package-lock.json`) sit uncommitted on `e64a150`.
+- ▶ **Next: Phase 2 — Navigation + Home + Match Discovery** (`docs/WORKFLOW.md` §4).
 
 ---
 
-## Validation baseline (end of Phase 0)
+## Validation (current working tree)
 
 | Check | Result |
 | ----- | ------ |
 | `npx tsc --noEmit` | PASS |
 | `npx expo lint` | 0 errors, 5 existing unused-variable warnings |
-| Tests (`AGENTS.md` §13 command, 48 files) | **458 / 458 pass** |
-| `expo-doctor` | 21/21 during Phase 0; at closure 20/21 — see note |
-| `npx expo install --check` | Aligned during Phase 0; at closure one patch drift — see note |
+| Tests (`AGENTS.md` §13 command) | 54 files, **509 / 509 pass** |
+| `expo-doctor` | 21/21 |
+| `npx expo install --check` | Dependencies up to date (the Expo 57 patch alignment is applied) |
+| `npm ls` | Clean |
 | Android + iOS Metro export | PASS |
-| Web export (server output, incl. `/api`) | PASS |
-| Web runtime (headless Chrome) | PASS after the notification guard fix |
-| Native device runtime, push on device, EAS build | NOT VERIFIED |
-
-**Dependency drift note:** `expo-sharing@57.0.22` was published upstream on
-2026-09-24 (10:15 UTC), after the Phase 0 checks. The project pins
-`~57.0.21`. `package.json` and the lockfile are unchanged. Aligning it is a
-separate one-package task (`npx expo install expo-sharing`), not done here.
+| Web export (server output, incl. `/api`) | PASS; headless-Chrome startup PASS (`lang="en-US"`, `dir="ltr"`) |
+| Android native runtime (Hermes, EAS dev build `4e8937cd` on the Pixel_9a emulator) | PASS: Home renders staging data, tab navigation works, no JS/route/localization errors |
+| iOS native runtime | NOT VERIFIED (Windows environment) |
+| Native RTL direction transition on a device | NOT VERIFIED (unit-tested only) |
 
 ---
 
-## Phase 0 outcomes
+## Phase 1 outcome
 
-- Reconciled all 9 original test failures:
-  - 7 stale or over-broad source assertions (checkout guards, result
-    destination, clear-filters scope, bottom-nav delegation), each verified
-    against current behavior
-  - the reset-password test now expects `password_confirmation`, matching
-    the code and the sibling `user-web` client
-  - 2 contact tests updated to the product decision below
-- **Product decision:** Profile contacts are WhatsApp + Email only;
-  Instagram, Facebook and X stay removed.
-- **Fixed a web startup crash:** `subscribeToFcmTokenRefresh` is now a no-op
-  off native (React Native Firebase has no default app on web). A regression
-  test was added (`src/lib/notifications.test.mjs`).
+- **Tokens:** semantic color roles and status tones, with an AA contrast test,
+  plus spacing, radius, size, layout and typography scales (`designTokens.ts`).
+- **Localization:**
+  - an English-only i18n foundation: the `lfa_locale` app setting, a catalog,
+    a translator, and internal CLDR plural rules (no `Intl.PluralRules`,
+    which Hermes lacks);
+  - a restart-aware direction lifecycle with loop prevention;
+  - locale-aware formatters, including "Price unavailable" for invalid money.
+- **Accessibility:** `Button`, `Input`, `Loading`, bottom-nav tabs and
+  `StatePanel` corrected; `aria-*` props for state.
+- **Foundation components:** `AppText`, `SectionHeader`, `StatusBadge`,
+  `StatePanel`, skeletons, a presentation-only `TransactionBar`, ticket
+  primitives, `PhysicalLayout`, and `DirectionalChevron`.
+- **Physical layouts:** stadium and seat maps pinned LTR.
 
 ---
 
 ## Deferred (non-blocking) findings
 
-- **Security:** all items in `docs/SECURITY.md` §3, notably the client-visible
-  API credential (native **and web** client bundles), the open web proxy, the
-  web token in `localStorage`, and redirect-inferred BLUE success. These need
-  backend/infrastructure coordination.
-- **Backend contracts** (`docs/API_INTEGRATION.md` §14):
-  - declined-card HTTP status — unresolved; the sibling web tests assume 402
-  - checkout idempotency
-  - full ticket status set — affects Phase 5 "Used" state
-  - live/results data — affects Phase 2 states
-  - `remember` semantics
-  - BLUE on this app's web build ends on the separate `user-web` site (per the configured redirect origins)
-- **Unused modules** (keep until a scoped cleanup task):
-  - `CardPaymentPreparationContext` — dead
-  - `ProfileDetailModal` — dead; only a source test still reads it
-  - `bluePaymentDiagnostics` — temporary, unused
-  - unused Expo/device push-token helpers
-  - `profileService.orders()` — dormant
-- **Accessibility primitive gaps** and **localization/RTL foundations** are
-  Phase 1 scope (`docs/ARCHITECTURE.md` §14–§15).
+- **Arabic:** full translation not implemented and `ar` not enabled; the
+  Arabic numerals decision is open.
+- **RTL:** the Arabic/RTL device flow and the native direction-transition
+  reload are not runtime-tested. Primary-tab swipe and entrance motion are not
+  RTL-aware yet (Phase 2).
+- **Legacy screens:**
+  - the old `muted` color (about 3.6:1 on white) fails the contrast target;
+  - some use the `accessibilityState` object, which react-native-web ignores.
+  - Both are migrated as screens are redesigned.
+- **Tooling:** the `i18n-iso-countries` dev-server-only issue is still to be
+  investigated. iOS runtime is unverified.
+- **Unused modules:** keep until a scoped cleanup (`CardPaymentPreparationContext`,
+  `ProfileDetailModal`, `bluePaymentDiagnostics`, unused push-token helpers,
+  `profileService.orders()`).
+- **Security and backend** concerns remain tracked in `docs/SECURITY.md` §3 and
+  `docs/API_INTEGRATION.md` §14.

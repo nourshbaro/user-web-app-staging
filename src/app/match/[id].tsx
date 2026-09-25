@@ -13,6 +13,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
+import { PHYSICAL_LAYOUT_STYLE } from "@/i18n/direction";
 import { groupCartItems } from "@/lib/cartDisplay";
 import { storageUrl } from "@/lib/config";
 import { formatDate, formatMoney, formatTime, matchTitle } from "@/lib/format";
@@ -1759,6 +1760,8 @@ function createMatchStyles(colors: ThemeColors) {
       textTransform: "uppercase" as const,
     },
     mapFrame: {
+      // Real stadium geometry: never mirrored in RTL.
+      ...PHYSICAL_LAYOUT_STYLE,
       alignSelf: "center" as const,
       borderRadius: 18,
       borderWidth: 1,
@@ -1846,6 +1849,8 @@ function createMatchStyles(colors: ThemeColors) {
       fontWeight: "800" as const,
     },
     seatMapFrame: {
+      // Real seat geometry: never mirrored in RTL.
+      ...PHYSICAL_LAYOUT_STYLE,
       alignSelf: "center" as const,
       borderRadius: 18,
       borderWidth: 1,
@@ -1854,7 +1859,7 @@ function createMatchStyles(colors: ThemeColors) {
       position: "relative" as const,
       overflow: "hidden" as const,
     },
-    seatMapScroll: { width: "100%" as const },
+    seatMapScroll: { ...PHYSICAL_LAYOUT_STYLE, width: "100%" as const },
     seatMapScroller: {
       flexGrow: 1,
       justifyContent: "center" as const,

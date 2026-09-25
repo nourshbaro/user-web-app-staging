@@ -35,15 +35,16 @@ function findScreenDeclaration(routeName) {
 test("bottom navigation ignores the active root and replaces a different root", () => {
   const bottomNavigation = extractBottomNavigation();
 
-  for (const [label, href] of [
-    ["Home", "/"],
-    ["Tournament", "/tournament"],
-    ["Matches", "/matches"],
-    ["Profile", "/profile"],
+  for (const [labelKey, href] of [
+    ["nav.home", "/"],
+    ["nav.tournament", "/tournament"],
+    ["nav.matches", "/matches"],
+    ["nav.tickets", "/tickets"],
+    ["nav.profile", "/profile"],
   ]) {
     assert.match(
       bottomNavigation,
-      new RegExp(`label: "${label}", href: "${href.replace("/", "\\/")}"`),
+      new RegExp(`labelKey: "${labelKey.replace(".", "\\.")}", href: "${href.replace("/", "\\/")}"`),
     );
   }
   assert.match(

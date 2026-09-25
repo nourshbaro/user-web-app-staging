@@ -33,8 +33,10 @@ in `tsconfig.json` `moduleSuffixes` and in the ESLint resolver.
 origin is not the configured HTTPS provider origin, and adds an iOS ATS
 exception for the staging BLUE host only for staging profiles.
 
-Tests: 47 `*.test.mjs` files run with `node --test` (Node type stripping imports
-`.ts` directly). Many are source-assertion tests that regex over `.tsx`/`.ts`
+Tests: `*.test.mjs` files run with `node --test` (Node type stripping imports
+`.ts` directly; current totals are in `docs/STATUS.md`). Pure modules they
+import must not use runtime relative imports (Node cannot resolve
+extensionless paths); inject dependencies instead, as `createTranslator` does. Many are source-assertion tests that regex over `.tsx`/`.ts`
 source; they constrain redesign edits. There is no `npm test` script.
 
 ---
@@ -44,9 +46,11 @@ source; they constrain redesign edits. There is no `npm test` script.
 ```
 GestureHandlerRootView
 └─ SafeAreaProvider
-   └─ ThemeProvider                 (src/components/ui.tsx)
-      └─ AuthProvider               (src/context/AuthContext.tsx)
-         └─ AppProviders            — renders null until auth.isReady
+   └─ I18nProvider                  (src/i18n/I18nProvider.tsx) — renders nothing
+      │                              until locale + native direction are ready (§15)
+      └─ ThemeProvider              (src/components/ui.tsx)
+         └─ AuthProvider            (src/context/AuthContext.tsx)
+            └─ AppProviders         — renders null until auth.isReady && i18n.isReady
             ├─ ToastProvider
             ├─ AlertDialogProvider
             └─ CartProvider key={userCacheKey | "authenticated" | "guest"}
@@ -55,6 +59,9 @@ GestureHandlerRootView
                      └─ MaintenanceGuard
                         └─ <Stack> (all routes)
 ```
+
+Because `I18nProvider` withholds its children until ready, auth restore and the
+cart start only after the app language and layout direction are settled.
 
 Invariant: `CartProvider` (and therefore `TicketHoldersProvider`) is **keyed by
 the authenticated identity**, so a login, logout, or account switch remounts the
@@ -140,6 +147,9 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | Card handoff | `src/lib/cardPaymentHandoff.ts` (module singleton) | memory |
 | Maintenance flag | `src/services/api.ts` (`activateMaintenance`, `useSyncExternalStore` in `MaintenanceGuard`) | memory |
 | Theme mode | `ThemeProvider` (`system`/`light`/`dark`) | `lfa_theme` |
+| App language | `I18nProvider` (resolved against `ENABLED_LOCALES`) | `lfa_locale` |
+| Direction-transition marker | `I18nProvider` + `src/i18n/directionTransition.ts` | `lfa_direction_transition` = `{desired, attempts}` |
+| Format locale | `src/lib/format.ts` (`setFormatLocale`, set by `I18nProvider`) | memory |
 | Match list/detail/seat data | `src/services/matches.ts` module cache (5-min TTL) | memory |
 | Toasts / dialogs | `ToastContext`, `AlertDialogContext` | memory |
 
@@ -320,10 +330,40 @@ retry, so recovery requires an app restart.
 
 ## 14. Theming, responsive, accessibility
 
-- Palettes: `src/lib/themePalette.ts` (`lightColors`, `darkColors`; brand red
-  primary). Shared text/surface styles: `createStyles` in `src/components/ui.tsx`.
-  There are no spacing, radius, or typography token scales yet — values are
-  inline per component.
+- **Colors** — `src/lib/themePalette.ts` (`lightColors`, `darkColors`):
+  - legacy roles (`bg`, `panel`, `ink`, `muted`, `primary`…) kept for
+    not-yet-redesigned screens;
+  - semantic roles (`background`, `surface`, `textStrong`, `textMuted`,
+    `action*`/`on*`, `disabled*`, `selectedSurface`, `focusRing`, `hero`,
+    `skeleton*`, `scrim`, `scanSurface`) and 8 status `tones`
+    (neutral, brand, success, warning, danger, info, live, unavailable).
+  - Semantic text and tone pairs meet WCAG AA in both themes
+    (`src/lib/themeContrast.test.mjs`). The legacy `muted` does not.
+  - Tones are presentation vocabulary; mapping a backend status to a tone
+    belongs to the screen that owns the data.
+- **Scales** — `src/lib/designTokens.ts` (pure, theme-independent): `spacing`,
+  `radius`, `size` (touch target 48 / 44 minimum, control height 48),
+  `breakpoints` (mirroring `useResponsive`), `layout`/`pageGutter`, and
+  `typography` (12 variants; system fonts; letter-spacing never used because
+  it breaks Arabic joining; tabular digits for prices and totals).
+- **Shared primitives** (`src/components/ui.tsx`): `Screen`, `Card`, `Button`,
+  `Input`, `Empty`, `Loading`, `BottomNavigation` (see accessibility below).
+  `createStyles` still carries legacy per-screen styles.
+- **Foundation components** (`src/components/foundation/`; they import from
+  `ui.tsx`, never the reverse):
+  - `AppText` — typography variant and tone, natural alignment.
+  - `SectionHeader`.
+  - `StatusBadge` — tone-driven; never interprets statuses.
+  - `StatePanel` — empty/error/unavailable/info with optional actions; never
+    fetches.
+  - `Skeleton*` — reduced-motion aware.
+  - `TransactionBar` — presentation-only total and primary action; receives
+    values and callbacks from the existing owner and holds no transaction state.
+  - Ticket primitives (`TicketCardShell`, `TicketCardSection`,
+    `TicketPerforation`, `TicketQrFrame`) — layout only; no QR generation.
+  - `PhysicalLayout`, `DirectionalChevron`.
+  - Consumers so far: `tournament.tsx` (`StatePanel`). The rest are ready for
+    Phases 2–5.
 - Responsive: `useResponsive()` → `isNarrow` (<390), `isTablet` (≥768),
   `isDesktop` (≥1024), `contentWidth` (≤1180). Safe-area insets are applied in
   `Screen`, headers, and payment screens.
@@ -334,21 +374,81 @@ retry, so recovery requires an app restart.
   `MatchesList`), `announceForAccessibility` on payment results, a live region
   on the maintenance screen, reduced-motion gating, and responsive/safe-area
   infrastructure — enforced partly by source tests.
-- Accessibility gaps in shared primitives (Phase 0 finding; Phase 1 work):
-  `Button` has no `accessibilityRole` and no disabled/busy `accessibilityState`;
-  `Input`'s visible label is not programmatically associated with its
-  `TextInput`; `Loading` has no accessible label/status; bottom-navigation
-  items have no role or selected state. Many screens compensate with their own
-  `Pressable` semantics, so coverage is uneven.
+- **Shared primitives (corrected in Phase 1):**
+  - `Button`: button role, label defaulting to the title, `aria-disabled` /
+    `aria-busy`, optional `loading`, 48pt height, readable disabled text.
+  - `Input`: the visible label names the field (`accessibilityLabel` and
+    `accessibilityLabelledBy`); callers can override it.
+  - `Loading`: a single labelled progress element with `aria-busy`.
+  - Bottom navigation: `tablist`/`tab` with `aria-selected`; labels come from
+    the catalog. Items are still icon-only; visible labels are Phase 2 work.
+  - `StatePanel`: one polite live region for errors, and no nested `alert` role.
+- **State props:** react-native-web ignores the `accessibilityState` object, so
+  shared primitives use `aria-*` props (`aria-selected`, `aria-disabled`,
+  `aria-busy`), which React Native also supports natively.
+- **Remaining legacy concerns:**
+  - Existing screens that use `accessibilityState` (e.g. ticket filters,
+    `MatchesList`) do not expose that state on web.
+  - Older screens still use the legacy `muted` color.
+  - Both are migrated as each screen is redesigned.
 
 ---
 
 ## 15. Localization and RTL
 
-**Unknown / not implemented.** No i18n library, no string catalog, no
-`I18nManager`, no Arabic. All copy is inline English. Dates/money use `Intl`
-helpers in `src/lib/format.ts`. The CyberSource capture context requests
-`locale: "en-us"`. Country names come from `i18n-iso-countries` English data.
+An English-only foundation exists (Phase 1). **Arabic UI is not translated or
+enabled.** No third-party i18n library is used.
+
+- **Locale ownership** — `src/i18n/locales.ts`:
+  - `AppLocale` is `en | ar`, with `LOCALE_META` holding the tag, direction,
+    script and native name.
+  - `ENABLED_LOCALES = ["en"]`. The app language is an app setting stored in
+    `lfa_locale`, never inferred from the device. Unknown or disabled values
+    resolve to `en`.
+- **Catalog** — `src/i18n/messages/en.ts`:
+  - flat keys (`area.purpose`), `{name}` interpolation, and plural families
+    (`.one`/`.other`, and other CLDR categories where a language needs them);
+  - only foundation, navigation, Tournament and direction-restart strings so
+    far; other screens still hold inline English and move to the catalog as
+    they are redesigned.
+- **Translator** — `src/i18n/translate.ts`, pure:
+  - lookup falls back from locale → English → the key itself;
+  - the explicit plural `count` is authoritative, and a conflicting
+    `params.count` is rejected by type and ignored at runtime.
+- **Plural rules** — `src/i18n/pluralRules.ts`:
+  - internal CLDR cardinal rules for `en` (one/other) and `ar`
+    (zero/one/two/few/many/other), checked against full ICU in tests;
+  - the translator receives the selector from `pluralSelectorFor(tag)`;
+  - an unsupported language throws a clear error.
+  - **Native startup never depends on `Intl.PluralRules`**, because Hermes does
+    not provide it; constructing it crashed native startup during Phase 1.
+- **Direction lifecycle** — `src/i18n/directionTransition.ts` (pure) plus
+  `I18nProvider`:
+  - The desired direction comes from the app language; the active direction is
+    `I18nManager.isRTL`, fixed per runtime.
+  - Match → ready. Mismatch → set `allowRTL`/`forceRTL`, persist
+    `lfa_direction_transition`, then reload once with `reloadAppAsync`
+    (shipped in `expo`).
+  - A mismatch that survives the reload, a no-op reload (4 s timeout), or an
+    unreadable or unwritable marker produces a blocking "Restart required"
+    screen with a manual restart button.
+  - At most one automatic reload per desired direction, so no loop is possible.
+  - Web sets `document.documentElement.dir`/`lang` and is ready immediately.
+- **RTL conventions** — `src/i18n/direction.ts`: logical start/end props,
+  natural text alignment, and mirrored directional chevrons only.
+  `PHYSICAL_LAYOUT_STYLE` / `<PhysicalLayout>` pins real-world geometry to LTR:
+  the stadium map and seat map in `match/[id].tsx`, and `TicketQrFrame`.
+- **Formatters** — `src/lib/format.ts` (presentation only):
+  - date, time and money follow the app locale (`setFormatLocale`), not the
+    device's;
+  - `formatMoney` shows two decimals with locale grouping plus the backend
+    currency code, and returns `MONEY_UNAVAILABLE` ("Price unavailable") for
+    missing or non-finite values, never a fake `0.00`;
+  - `Intl.NumberFormat` is capability-checked, with a `toFixed(2)` fallback;
+  - formatters never alter the values that callers or transactions use.
+- **Other locale touchpoints:** the CyberSource capture context still requests
+  `locale: "en-us"`, and phone country names use `i18n-iso-countries` English
+  data.
 
 ---
 
@@ -364,6 +464,9 @@ helpers in `src/lib/format.ts`. The CyberSource capture context requests
 8. Duplicate-submission guards on checkout and auth forms remain.
 9. 503 → maintenance, 401/403 → session invalidation remain centralized in `apiRequest`.
 10. Platform splits (`.native` / `.web`) keep equivalent ownership on each platform.
+11. App content renders only when `I18nProvider` is ready, i.e. when the active native direction equals the app language's.
+12. Stadium maps, seat maps and QR codes never mirror (`PHYSICAL_LAYOUT_STYLE`).
+13. Startup code never constructs an `Intl` API without a capability check (Hermes lacks some, e.g. `PluralRules`).
 
 ---
 
@@ -383,7 +486,9 @@ helpers in `src/lib/format.ts`. The CyberSource capture context requests
 
 ## 18. Future design direction (not current architecture)
 
-Planned by the redesign roadmap (`docs/WORKFLOW.md` §4), subject to per-phase
-approval: semantic spacing/radius/typography tokens alongside the existing
-palette, shared state panels and skeletons, a sticky transaction bar, a
-ticket-card foundation, and a localization/RTL layer. None of these exist yet.
+The Phase 1 foundations described in §14–§15 now exist. Still planned, per the
+roadmap (`docs/WORKFLOW.md` §4) and subject to per-phase approval:
+- screen redesigns that consume these foundations (Phases 2–6);
+- an Arabic catalog and enabling `ar` (plus the Arabic numerals decision);
+- RTL-aware tab swipe and entrance motion;
+- migrating legacy colors and `accessibilityState` usage.

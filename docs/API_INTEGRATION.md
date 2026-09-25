@@ -112,7 +112,7 @@ response shape at runtime and throws on mismatch.
 | `POST /auth/check-email-verification` → `/auth/check-email` → `/auth/email-verification-status` | `email` | Tries in order, skipping 404/405; returns `null` if none exist |
 | `POST /auth/forgot-password` | `email` | |
 | `POST /auth/forgot-password/verify-otp` | `email, code` | |
-| `POST /auth/reset-password` | `email, code, password, password_confirmation` | Field name disputed by a test — see §14 |
+| `POST /auth/reset-password` | `email, code, password, password_confirmation` | Code and tests agree; the sibling `user-web` client sends the same field (backend source not inspected) |
 | `GET /auth/me` | — | Validated (`isUser`) |
 | `POST /auth/change-password` | `current_password, password, password_confirmation` | Session cleared afterwards |
 | `POST /auth/profile-picture` | multipart `avatar` | Returns `{ avatar }` |
@@ -296,9 +296,6 @@ than adding a parallel one.
 
 - Authoritative request/response schemas for any endpoint (no OpenAPI or shared
   types in the repo; types in `src/types.ts` are client-side expectations).
-- **Reset-password field name**: code sends `password_confirmation`; the test
-  `src/services/authRecoveryContracts.test.mjs` expects `password-confirmation`.
-  Which one the backend accepts is unknown.
 - Whether `/checkout/mobile/submit` returns non-2xx for declined or failed card
   payments.
 - Server-side idempotency of `/checkout/mobile/submit` for a repeated session.

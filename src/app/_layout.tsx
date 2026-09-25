@@ -3,6 +3,7 @@ import { AlertDialogProvider } from "@/context/AlertDialogContext";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { CartProvider } from "@/context/CartContext";
 import { CartSheetProvider } from "@/context/CartSheetContext";
+import { I18nProvider, useI18n } from "@/i18n/I18nProvider";
 import { TicketHoldersProvider } from "@/context/TicketHoldersContext";
 import { ToastProvider } from "@/context/ToastContext";
 import * as Notifications from "expo-notifications";
@@ -34,11 +35,13 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ThemeProvider>
-          <AuthProvider>
-            <AppProviders />
-          </AuthProvider>
-        </ThemeProvider>
+        <I18nProvider>
+          <ThemeProvider>
+            <AuthProvider>
+              <AppProviders />
+            </AuthProvider>
+          </ThemeProvider>
+        </I18nProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
@@ -47,12 +50,14 @@ export default function RootLayout() {
 function AppProviders() {
   const theme = useTheme();
   const auth = useAuth();
+  const i18n = useI18n();
+  const isReady = auth.isReady && i18n.isReady;
 
   useEffect(() => {
-    if (auth.isReady) {
+    if (isReady) {
       SplashScreen.hide();
     }
-  }, [auth.isReady]);
+  }, [isReady]);
 
   useEffect(() => {
     const setupNotifications = async () => {
@@ -131,7 +136,7 @@ function AppProviders() {
     };
   }, []);
 
-  if (!auth.isReady) {
+  if (!isReady) {
     return null;
   }
 

@@ -1,22 +1,23 @@
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import { MainHeader } from "@/components/MainHeader";
-import { Card, Screen, useResponsive, useTheme } from "@/components/ui";
+import { StatePanel } from "@/components/foundation";
+import { Screen, useResponsive } from "@/components/ui";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export default function TournamentScreen() {
   const responsive = useResponsive();
-  const theme = useTheme();
+  const { t } = useI18n();
 
   return (
     <Screen>
       <View style={[local.shell, { width: responsive.contentWidth }]}>
         <MainHeader />
         <View style={local.content}>
-          <Card>
-            <View style={local.comingSoon}>
-              <Text style={[local.title, { color: theme.colors.ink }]}>Coming Soon</Text>
-              <Text style={[theme.styles.muted, local.copy]}>Tournament information will be available here.</Text>
-            </View>
-          </Card>
+          <StatePanel
+            variant="unavailable"
+            title={t("tournament.comingSoon.title")}
+            message={t("tournament.comingSoon.message")}
+          />
         </View>
       </View>
     </Screen>
@@ -26,12 +27,4 @@ export default function TournamentScreen() {
 const local = {
   shell: { flex: 1, alignSelf: "center" as const },
   content: { flex: 1, justifyContent: "center" as const },
-  comingSoon: {
-    minHeight: 220,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-    gap: 8,
-  },
-  title: { fontSize: 28, fontWeight: "900" as const },
-  copy: { textAlign: "center" as const },
 };

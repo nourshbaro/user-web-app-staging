@@ -8,6 +8,7 @@ const settings = await readFile(new URL("../app/settings.tsx", import.meta.url),
 const tournament = await readFile(new URL("../app/tournament.tsx", import.meta.url), "utf8");
 const appSwitch = await readFile(new URL("../components/AppSwitch.tsx", import.meta.url), "utf8");
 const about = await readFile(new URL("../app/about.tsx", import.meta.url), "utf8");
+const catalog = await readFile(new URL("../i18n/messages/en.ts", import.meta.url), "utf8");
 
 test("profile is a compact account hub", () => {
   for (const label of ["Edit Profile", "Settings", "About LFA Tickets", "Contact Us", "Log Out"]) assert.match(profile, new RegExp(label));
@@ -59,7 +60,8 @@ test("match cards keep responsive metadata rows and selected stadium context", (
 
 test("Tournament remains a public coming-soon screen", () => {
   assert.match(tournament, /export default function TournamentScreen/);
-  assert.match(tournament, /Coming Soon/);
+  assert.match(tournament, /t\("tournament\.comingSoon\.title"\)/);
+  assert.match(catalog, /"tournament\.comingSoon\.title": "Coming Soon"/);
   assert.doesNotMatch(tournament, /AuthRequired|profileService|apiRequest/);
 });
 
