@@ -82,7 +82,7 @@ All routes are plain `Stack` screens; there is no Expo Router `Tabs` layout.
 | `/` | `index.tsx` | public | Home: `MainHeader` + `HomeFeed` (banner, featured match, upcoming) |
 | `/tournament` | `tournament.tsx` | public | Static "Coming Soon" placeholder |
 | `/matches` | `matches.tsx` | public | `MainHeader` + `MatchesList` (filters, full scheduled list) |
-| `/match/[id]` | `match/[id].tsx` | public view; auth to add | Zones, stadium map, GA quantities, seat selection |
+| `/match/[id]` | `match/[id].tsx` | public view; auth to add | Match hero, zones, stadium map, GA quantities, seat selection, one confirmation action |
 | `/tickets` | `tickets.tsx` | `withAuthRequired` | Portal matches → tickets, QR, order/payment details, PDF |
 | `/profile` | `profile.tsx` | `withAuthRequired` | Account hub, contact links |
 | `/edit-profile` | `edit-profile.tsx` | `withAuthRequired` | Profile from `/auth/me`, avatar upload/remove, change password |
@@ -160,6 +160,7 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | Match list/detail/seat data | `src/services/matches.ts` module cache (5-min TTL) | memory |
 | Scheduled-match screen state (Home, Matches) | `useScheduledMatches`, one instance per screen (filter-tagged snapshot, loading, refresh, retry) | memory |
 | Match filter values | `MatchesList` (composition-level `useState`) | memory |
+| Ticket-selection drafts (GA quantities, reserved-seat picks, cart re-read gate) | `src/app/match/[id].tsx` local state — transient, never a cart authority | memory only |
 | Toasts / dialogs | `ToastContext`, `AlertDialogContext` | memory |
 
 Not used by any route (do not assume they own anything):
@@ -268,18 +269,88 @@ Not used by any route (do not assume they own anything):
 
 - `AppBanner` loads `/ads?placement=app_banner`; links are validated by
   `src/lib/adUrls.ts` (internal allowlist or external HTTPS only).
-- `match/[id].tsx` loads `matchesService.details(id)` and, for reserved-seating
-  zones, `matchesService.seats(matchId, zoneId)`; the stadium map is an image
-  (SVG/raster from storage) with polygon overlays (`src/lib/mapGeometry.ts`).
+- **Route** (`src/app/match/[id].tsx`) owns:
+  - screen composition;
+  - the selected zone;
+  - the transient GA drafts and reserved-seat draft;
+  - request coordination: `matchesService.details(id)` and, for reserved zones,
+    `matchesService.seats(matchId, zoneId)`, each behind its own
+    `createRequestAuthority` (`src/lib/requestAuthority.ts`);
+  - the confirmation orchestration.
+
+  It does **not** own cart or reservation state; that stays in `CartContext`
+  and the backend (§8).
+- **Presentation** (`src/components/match/*`) renders values and calls back.
+  These components never fetch, read the cart, or hold selection state:
+  - `MatchDetailHero`: the dark hero, built from the shared `matchLabels`,
+    `TeamCrest` and `StatusBadge`;
+  - `TicketOptions`: zone cards, the GA stepper, and the reserved-zone status;
+  - `SeatSelection`: seat glyphs, the legend, zoom controls, and the selection
+    summary;
+  - `MatchDetailSkeleton` (in `MatchSkeletons`).
+- **Pure selection rules** (`src/lib/ticketSelection.ts`). This module
+  describes drafts and how they compare with the cart. It is not a
+  transaction authority. It provides:
+  - the GA draft-vs-cart diff, which plans add / set / remove / no-op per
+    zone: no committed quantity → `addItem` with the chosen quantity; a
+    changed positive quantity → `updateItem` (set, never an additive merge);
+    zero → `removeItem`; unchanged → nothing;
+  - cart-derived projections (`cartLinesByZone`, `cartSeatIdsForZone`);
+  - the actionable-seat derivation, seat-state rules, and the seat summary;
+  - display-only estimates;
+  - the selection preflight, the confirmation executor
+    (`executeSelectionCommit`), and error classification (catalog messages
+    only, never backend wording).
 - Zone kinds come from the backend: `zone.has_seats` → reserved seating (seat
   selection) vs general admission (quantity stepper).
-- GA quantities are a **local draft** on the screen until "Add to Cart";
-  `commitSelections` diffs drafts against committed cart lines and calls
-  `addItem` / `updateItem` / `removeItem` sequentially (single-flight `addItem`
-  would drop concurrent calls). Seat selections are filtered against seats
-  already in the cart (`getEffectiveSelectedSeats`).
-- Request staleness on this screen is guarded by `createRequestAuthority`
-  (`src/lib/requestAuthority.ts`).
+- **One confirmation action** (a `TransactionBar`) sends GA changes and pending
+  seats together. The confirmation invariant (§8) applies:
+  - the preflight runs before any cart mutation;
+  - the changes then run **sequentially** through `CartContext` (the
+    single-flight `addItem` would drop concurrent calls): GA in zone order,
+    then the seats as one `addItem`;
+  - the sequence stops at the first step that throws or is not confirmed;
+  - success requires the last published snapshot to belong to the owner's
+    current session and to contain every intended change;
+  - **the sequence is not atomic**: earlier changes can succeed before a later
+    one fails;
+  - drafts clear, success shows and `/cart` opens **only** on confirmed
+    success;
+  - otherwise drafts are kept and re-diffed against the published cart, so an
+    applied change is not resent;
+  - an unknown outcome (unconfirmed publication, network, timeout, server
+    error) switches the action to "Refresh cart"; only a confirmed
+    `refreshCart()` re-enables confirming;
+  - a definite rejection (409/410/422/401) can be retried directly.
+- **Reserved-seat validity:**
+  - A drafted seat is actionable only against the **current successful seat
+    snapshot**, i.e. one loaded for the current match / zone / cart request
+    identity that is not loading and did not fail.
+  - A seat enters the confirmation payload only if it:
+    - exists in that snapshot;
+    - is still available;
+    - is not already in the cart.
+  - Only these actionable seats are counted, priced, summarised and sent.
+    Stale, vanished or unavailable seats are excluded, with a notice; the
+    user's draft is kept for retry, and no replacement seats are added.
+  - A loading or failed snapshot blocks confirmation. A mixed GA + seat
+    selection is blocked by the preflight **before any cart mutation starts**.
+  - Seat-load errors are scoped to the request identity that produced them.
+  - The 5-minute seat cache can age, so the backend stays the final authority
+    for races after the preflight.
+- **Seat map** (physical layout, §15):
+  - backend coordinates and polygons are authoritative and never mirror in
+    RTL;
+  - zoom (100 / 150 / 200 %) scales positions for presentation only;
+  - the visible glyph stays compact (18 px × zoom);
+  - each seat has an invisible press target, centred on the glyph and sized
+    to the nearest-neighbour spacing (at most 48 px), so targets never
+    overlap;
+  - `createSeatLayout` guarantees a 28 px minimum spacing, so a dense layout
+    has about 28 px targets at 100 % and reaches the preferred 44 px only by
+    zooming (a hint says so);
+  - every seat is a named button with its selected and disabled state, and
+    unavailable seats are not actionable.
 
 ---
 
@@ -297,6 +368,26 @@ Not used by any route (do not assume they own anything):
   session and retries once without it (`addWithSessionRecovery`).
 - **Refresh**: 404 → session cleared; other failures keep the session and set
   `cartRefreshError`. An empty cart clears the session.
+- **Publication result** (`src/lib/cartPublication.ts`):
+  - `addItem`, `updateItem`, `removeItem` and `refreshCart` resolve
+    `Promise<CartPublication>`. This is a **frontend** result contract, not a
+    backend response;
+  - **confirmed** carries the session ID and the exact items that passed the
+    existing session guards and were actually published into `CartContext`
+    (an empty cart that was cleared is confirmed with `sessionId: null`);
+  - **unconfirmed** carries a reason: `unauthenticated`, `session-changed`,
+    `session-ended` or `refresh-failed`. It does **not** mean the backend did
+    or did not apply the mutation; the outcome is unknown, deliberately;
+  - a delete is confirmed only by the refresh that publishes the resulting
+    cart;
+  - `removeItems` still resolves `void`. The queue, single-flight, session
+    guards and expiry are unchanged by the contract.
+- **Confirmation invariant.** A resolved mutation promise is **not**
+  authoritative success. Transaction-facing screens decide success from a
+  confirmed `CartPublication` for the owner's current session whose snapshot
+  contains the intended state. After an unknown outcome they re-read the cart
+  (`refreshCart`) before retrying, and never replay a mutation blindly. Match
+  Details applies this (§7).
 - **Expiry**: a 1-second tick computes `secondsLeft`; at zero, or when the app
   returns to foreground past expiry, the session is cleared and the stack is
   reset to `/`.
@@ -548,6 +639,8 @@ enabled.** No third-party i18n library is used.
 13. Startup code never constructs an `Intl` API without a capability check (Hermes lacks some, e.g. `PluralRules`).
 14. Scheduled-match loading goes through `useScheduledMatches` over `matchesService`; filter changes invalidate synchronously, and results are shown only under the filters that produced them.
 15. Unknown or invalid kickoffs are never fabricated into a time, featured, or listed as upcoming.
+16. A resolved cart mutation is not success: success requires a confirmed `CartPublication` for the current session that reflects the intended change; an unknown outcome requires a cart re-read before any retry (§8).
+17. Ticket-selection drafts stay transient screen state; a reserved-seat draft is confirmable only against the current successful seat snapshot, and the preflight runs before the first cart mutation (§7).
 
 ---
 
@@ -571,7 +664,7 @@ enabled.** No third-party i18n library is used.
 
 The Phase 1 foundations described in §14–§15 now exist. Still planned, per the
 roadmap (`docs/WORKFLOW.md` §4) and subject to per-phase approval:
-- screen redesigns that consume these foundations (Phases 2–6);
+- screen redesigns that consume these foundations (Phases 4–6; Phases 2–3 are delivered, see §7);
 - an Arabic catalog and enabling `ar` (plus the Arabic numerals decision);
 - RTL-aware tab swipe and entrance motion;
 - migrating legacy colors and `accessibilityState` usage.

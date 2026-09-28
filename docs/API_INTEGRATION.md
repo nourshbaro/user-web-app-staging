@@ -198,6 +198,10 @@ payment_reference, status }`.
 - A 404 on refresh clears the local session; other refresh errors keep it.
 - Mutations are serialized; responses are published only if the captured cart
   session ticket is still current.
+- The cart methods resolve a `CartPublication` (confirmed / unconfirmed). This
+  is a **frontend** publication result derived from the existing session
+  guards. The backend returns no such field, and cart endpoint payloads are
+  unchanged.
 
 Full state model: `docs/ARCHITECTURE.md` §8.
 
@@ -207,11 +211,14 @@ Full state model: `docs/ARCHITECTURE.md` §8.
 
 - Zone type is backend-defined: `has_seats: true` → reserved seating with seat
   IDs; otherwise general admission with a quantity.
-- Seat availability is read fresh per zone (`/matches/{m}/zones/{z}/seats`,
-  5-min cache unless forced). Seats already in the cart are excluded from the
-  pending selection.
+- Seat availability is read per zone (`/matches/{m}/zones/{z}/seats`,
+  5-min cache unless forced). A drafted seat is sent only if it is in the
+  current successful seat response, still `available`, and not already in the
+  cart. The cache can age, so the backend add remains the final authority.
 - GA quantity changes are local drafts until the user commits; commit sends
-  `add` for new lines, `PATCH` (set) for changed lines, `DELETE` for zero.
+  `add` for new lines, `PATCH` (set) for changed lines, `DELETE` for zero. The
+  payloads are unchanged; success is decided from the published cart
+  (`docs/ARCHITECTURE.md` §8).
 - The stadium map is a backend-provided image (SVG or raster) plus zone
   polygons; the client does not own stadium geometry.
 
@@ -280,6 +287,11 @@ in code.
 - `paymentError()` is the standard payment fallback copy.
 - Backend messages are shown verbatim when present. Raw exception text and stack
   traces are not shown.
+- Exception: Match Details classifies failures by HTTP status and transport
+  category (`ticketErrorKind` in `src/lib/ticketSelection.ts`) and shows only
+  catalog messages, never backend wording. A structured backend error-code
+  contract would allow more specific messages, e.g. ticket limits (not
+  established; §14).
 
 ---
 
@@ -294,6 +306,7 @@ in code.
 | Cart refresh guard | `src/lib/cartRefreshPolicy.ts` | Out-of-order refresh responses |
 | Checkout submission authority | `src/lib/checkoutSubmissionAuthority.ts` | BLUE submit result vs unmount/session change |
 | Single-flight | `createSingleFlight` (`src/lib/cartSessionRecovery.ts`) | Concurrent `addItem` |
+| Cart publication result | `src/lib/cartPublication.ts` (returned by `CartContext`) | Treating a resolved cart mutation as confirmed success |
 | Auth submission guard | `src/lib/authSubmissionGuard.ts` | Double-submitted auth forms |
 | Identity-keyed remounts | `CartProvider key`, `withAuthRequired key` | All screen and cart state on account switch |
 
@@ -318,6 +331,10 @@ than adding a parallel one.
   preserving existing behavior. The authoritative timezone is not established
   by this repository, so do not introduce UTC (or other) conversion without
   backend evidence.
+- Structured error codes for cart/seat rejections (e.g. ticket limit vs seat
+  taken); the client can only distinguish HTTP status classes.
+- Idempotency of cart mutations: a request that times out may or may not have
+  been applied, so the client re-reads the cart before retrying.
 - `/devices` deduplication and whether a device can be detached on logout.
 - Which of the three email-verification endpoints actually exists.
 

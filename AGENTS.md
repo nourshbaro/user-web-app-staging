@@ -110,6 +110,11 @@ Do not create a second owner for state that already has one. Current owners
 
 - Session / token: `src/services/api.ts` (authentication generations) + `src/context/AuthContext.tsx`.
 - Cart / reservation: `src/context/CartContext.tsx` + `src/lib/cartSession*.ts`; backend is authoritative.
+  - Screens may hold transient selection drafts only until the `CartContext` mutation.
+  - A resolved cart mutation is not success. Decide success from the returned
+    `CartPublication`, which must be confirmed for the current session.
+  - After an unknown outcome, re-read the cart before retrying
+    (`docs/ARCHITECTURE.md` §8).
 - Ticket-holder names: `src/context/TicketHoldersContext.tsx`.
 - Checkout submission and capture context: `src/app/checkout.tsx` with `src/lib/checkoutSubmissionAuthority.ts` and `src/lib/requestAuthority.ts`.
 - Payment handoffs: `src/lib/bluePaymentHandoff.ts`, `src/lib/cardPaymentHandoff.ts`.

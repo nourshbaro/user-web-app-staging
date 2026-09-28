@@ -117,19 +117,29 @@ below). Delivered as described in `docs/ARCHITECTURE.md` §14–§15.
   fed by the existing owners (cart, checkout, tickets). The foundations never
   own transaction state.
 
-### Phase 2 — Navigation + Home + Match Discovery ✅ complete (pending commit)
+### Phase 2 — Navigation + Home + Match Discovery ✅ complete
 Delivered as described in `docs/ARCHITECTURE.md` §3 and §7.
 
-### Phase 3 — Matches + Match Detail + Ticket Selection ← **NEXT**
-Reuse, don't re-create:
-- the match-discovery ownership (`matchesService`, `useScheduledMatches`, and
-  presentation-only `src/components/match/*`);
-- the strict kickoff handling in `src/lib/matchDiscovery.ts`;
-- the Phase 1 design, i18n and accessibility foundations (including
-  `TransactionBar` for the ticket-selection action area).
+### Phase 3 — Matches + Match Detail + Ticket Selection ✅ complete (pending commit)
+Delivered as described in `docs/ARCHITECTURE.md` §7 and §8. It introduced
+the `CartPublication` return contract and the confirmation invariant. The
+reserved-seat runtime still needs a seated staging fixture.
 
-Ticket-selection transaction ownership (`CartContext`) stays as is.
-### Phase 4 — Cart + Checkout
+### Phase 4 — Cart + Checkout ← **NEXT**
+Presentation redesign around the existing owners. Must preserve:
+- `CartContext` as the cart/reservation authority (no second store);
+- `CartPublication` semantics:
+  - success only from a confirmed publication for the current session;
+  - a cart re-read after an unknown outcome;
+- the session and expiry guards (`captureCartSession`, `isCartSessionCurrent`,
+  `clearCartIfSession`), and serialized mutations;
+- existing CyberSource and BLUE ownership (`docs/ARCHITECTURE.md` §10,
+  `docs/SECURITY.md`);
+- the authoritative payment-completion rules: the cart is cleared only after
+  a trusted terminal result for the same session.
+
+A change to *when* the cart is cleared, or to payment completion, is a
+separate transaction-boundary task (§3).
 ### Phase 5 — Tickets
 ### Phase 6 — Profile + supporting screens
 ### Phase 7 — Localization / RTL / Accessibility / Responsive / Performance / regression polish

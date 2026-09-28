@@ -57,6 +57,8 @@ export function Collapsible({
         accessibilityRole="button"
         accessibilityLabel={title}
         accessibilityState={{ expanded }}
+        // react-native-web ignores accessibilityState; aria-expanded reaches the web.
+        aria-expanded={expanded}
         style={local.header}
       >
         <View style={local.headerCopy}>
@@ -89,7 +91,7 @@ const local = {
     flexDirection: "row" as const,
     alignItems: "center" as const,
     gap: 10,
-    minHeight: 24,
+    minHeight: 44,
   },
   headerCopy: { flex: 1, minWidth: 0 },
   title: { fontSize: 18, fontWeight: "800" as const },

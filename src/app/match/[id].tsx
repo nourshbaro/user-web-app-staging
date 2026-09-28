@@ -1,10 +1,28 @@
 import { Collapsible } from "@/components/Collapsible";
 import { MatchTicketsHeader } from "@/components/MatchTicketsHeader";
 import {
-  Button,
-  Card,
-  Empty,
-  Loading,
+  AppText,
+  SectionHeader,
+  SkeletonBlock,
+  SkeletonGroup,
+  StatePanel,
+  TransactionBar,
+} from "@/components/foundation";
+import { MatchDetailHero } from "@/components/match/MatchDetailHero";
+import { MatchDetailSkeleton } from "@/components/match/MatchSkeletons";
+import {
+  SeatLegend,
+  SeatSelectionSummary,
+  SeatZoomControls,
+  SelectedSeatMark,
+  seatGlyphStyle,
+} from "@/components/match/SeatSelection";
+import {
+  GaZoneStepper,
+  ReservedZoneStatus,
+  ZoneOptionCard,
+} from "@/components/match/TicketOptions";
+import {
   Screen,
   useResponsive,
   useTheme,
@@ -13,10 +31,13 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { PHYSICAL_LAYOUT_STYLE } from "@/i18n/direction";
+import { useI18n } from "@/i18n/I18nProvider";
 import { groupCartItems } from "@/lib/cartDisplay";
 import { storageUrl } from "@/lib/config";
-import { formatDate, formatMoney, formatTime, matchTitle } from "@/lib/format";
+import { radius, spacing } from "@/lib/designTokens";
+import { formatMoney } from "@/lib/format";
 import {
   createSeatLayout,
   getContainRect,
@@ -32,12 +53,36 @@ import {
   createRequestAuthority,
   createRequestIdentity,
 } from "@/lib/requestAuthority";
-import { getSeatAccessibility } from "@/lib/seatAccessibility";
-import { userFacingError } from "@/lib/userFacingError";
+import { getSeatAccessibility, getSeatIdentity } from "@/lib/seatAccessibility";
+import {
+  SEAT_ZOOM_LEVELS,
+  actionableSeatDraft,
+  cartLinesByZone,
+  cartSeatIdsForZone,
+  commitEffects,
+  executeSelectionCommit,
+  seatTouchTarget,
+  selectionPreflight,
+  type CommitPlan,
+  gaCartChanges,
+  hasSelectionChanges,
+  isSeatSelectable,
+  lineSubtotal,
+  resolveDraftQuantity,
+  seatVisualState,
+  selectionActionKind,
+  selectionEstimate,
+  stepSeatZoom,
+  ticketErrorKind,
+  toggleDraftSeat,
+  type TicketErrorContext,
+  type TicketErrorFacts,
+  type TicketErrorKind,
+} from "@/lib/ticketSelection";
+import { ApiError, ApiTransportError } from "@/services/api";
 import { matchesService } from "@/services/matches";
-import type { ApiMatch, ApiSeat, ApiZone } from "@/types";
+import type { ApiSeat, ApiZone, ApiMatch } from "@/types";
 import { Image as ExpoImage } from "expo-image";
-import { SymbolView } from "expo-symbols";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import {
   createElement,
@@ -51,29 +96,32 @@ import {
 import {
   AccessibilityInfo,
   Image,
+  Text,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
-  Text,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Polygon } from "react-native-svg";
 
 const MAP_VIEW_W = 600;
 const DEFAULT_MAP_VIEW_H = 445;
-// Bottom action bar height reserved in scroll content so the last zone/seat
-// card is never hidden underneath the fixed "Add to Cart" bar (same pattern
-// as cart.tsx's Continue Shopping / Checkout bar).
-const ACTION_BAR_HEIGHT = 64;
+// Unscaled seat marker size and spacing used by createSeatLayout.
+const SEAT_SIZE = 18;
+const SEAT_LAYOUT_PADDING = 36;
+// Readable single column on tablets and web; the page never stretches cards to 1180px.
+const COLUMN_MAX_WIDTH = 760;
+
+type I18n = ReturnType<typeof useI18n>;
 
 export default function MatchDetail() {
   const local = useMatchStyles();
   const { id } = useLocalSearchParams<{ id: string }>();
   const responsive = useResponsive();
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
+  const i18n = useI18n();
+  const reducedMotion = useReducedMotion();
   const [match, setMatch] = useState<ApiMatch | null>(null);
   const [matchIdentity, setMatchIdentity] = useState<string | null>(null);
   const [selectedZone, setSelectedZone] = useState<ApiZone | null>(null);
@@ -81,6 +129,14 @@ export default function MatchDetail() {
     identity: string;
     seats: ApiSeat[];
   } | null>(null);
+  // Seat-load failure, owned by the request identity that produced it so a
+  // stale failure never shows against another zone.
+  const [seatError, setSeatError] = useState<{
+    identity: string;
+    kind: TicketErrorKind;
+  } | null>(null);
+  // Bumped by the seat-error Retry action to re-run the guarded seat load.
+  const [seatRetryNonce, setSeatRetryNonce] = useState(0);
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
   const [selectedSeatsIdentity, setSelectedSeatsIdentity] = useState<
     string | null
@@ -94,24 +150,30 @@ export default function MatchDetail() {
   } | null>(null);
   // General-admission quantities the user is choosing on this screen, NOT
   // yet sent anywhere. Keyed by zone id. Zero requests happen while this
-  // changes — it only becomes real when "Add to Cart" is pressed (see
-  // commitSelections). A zone with no entry here simply mirrors whatever is
-  // already committed in CartContext (see getDraftQuantity), so returning
-  // to Match Details with existing cart lines shows their real quantities
-  // without needing a seeding effect.
+  // changes — it only becomes real when the confirmation action is pressed
+  // (see commitSelections). A zone with no entry here simply mirrors
+  // whatever is already committed in CartContext (see getDraftQuantity), so
+  // returning to Match Details with existing cart lines shows their real
+  // quantities without needing a seeding effect.
   const [draftQuantities, setDraftQuantities] = useState<Map<number, number>>(
     () => new Map(),
   );
   const [isCommitting, setIsCommitting] = useState(false);
+  // Set when a confirmation ended without a confirmed cart (outcome unknown).
+  // The next confirmation is blocked until the cart is re-read from its owner,
+  // so an already-applied change is never replayed.
+  const [needsCartReconcile, setNeedsCartReconcile] = useState(false);
+  const [isReconciling, setIsReconciling] = useState(false);
   const [stadiumExpanded, setStadiumExpanded] = useState(false);
+  const [seatZoom, setSeatZoom] = useState<number>(SEAT_ZOOM_LEVELS[0]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [seatLoading, setSeatLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const zoneScrollRef = useRef<ScrollView>(null);
-  const zoneChipLayouts = useRef(
-    new Map<number, { x: number; width: number }>(),
-  );
+  const [errorKind, setErrorKind] = useState<TicketErrorKind | null>(null);
+  const [transactionBarHeight, setTransactionBarHeight] = useState(0);
+  const pageScrollRef = useRef<ScrollView>(null);
+  const ticketSectionY = useRef(0);
+  const zoneCardLayouts = useRef(new Map<number, number>());
   const matchRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const seatRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const selectedZoneRef = useRef<ApiZone | null>(null);
@@ -126,19 +188,7 @@ export default function MatchDetail() {
     [cart.items],
   );
   const cartSeatIds = useMemo(
-    () =>
-      new Set(
-        cart.items
-          .filter(
-            (item) =>
-              String(item.match_id) === String(id) &&
-              String(item.stadium_zone_id) === String(selectedZone?.id),
-          )
-          .flatMap(
-            (item) =>
-              item.seat_ids ?? item.seats?.map((seat) => Number(seat.id)) ?? [],
-          ),
-      ),
+    () => cartSeatIdsForZone(cart.items, String(id ?? ""), selectedZone?.id),
     [cart.items, id, selectedZone?.id],
   );
   // Per-zone cart state for this match, read straight from CartContext —
@@ -147,33 +197,10 @@ export default function MatchDetail() {
   // reserved-seat zones resolve to a seat count used only for the card's
   // informational label (the seat map below remains the source of truth
   // for which seats are selected).
-  const cartByZone = useMemo(() => {
-    const matchId = String(id ?? "");
-    const map = new Map<
-      number,
-      { quantity: number; lockKey: string; seatCount: number }
-    >();
-    cart.items.forEach((item) => {
-      if (String(item.match_id) !== matchId) return;
-      const zoneId = Number(item.stadium_zone_id);
-      if (item.type === "zone") {
-        map.set(zoneId, {
-          quantity: Number(item.quantity ?? 0),
-          lockKey: item.lock_key,
-          seatCount: 0,
-        });
-        return;
-      }
-      const seatCount = item.seat_ids?.length ?? item.seats?.length ?? 0;
-      const existing = map.get(zoneId);
-      map.set(zoneId, {
-        quantity: 0,
-        lockKey: item.lock_key,
-        seatCount: (existing?.seatCount ?? 0) + seatCount,
-      });
-    });
-    return map;
-  }, [cart.items, id]);
+  const cartByZone = useMemo(
+    () => cartLinesByZone(cart.items, String(id ?? "")),
+    [cart.items, id],
+  );
   const cartItemsSignature = useMemo(
     () =>
       cart.items
@@ -198,12 +225,27 @@ export default function MatchDetail() {
   ]);
   const visibleSeats =
     seatSnapshot?.identity === activeSeatIdentity ? seatSnapshot.seats : [];
+  const seatSnapshotLoaded = seatSnapshot?.identity === activeSeatIdentity;
+  const visibleSeatError =
+    seatError?.identity === activeSeatIdentity ? seatError.kind : null;
   const effectiveSelectedSeats = getEffectiveSelectedSeats(
     selectedSeats,
     selectedSeatsIdentity,
     activeZoneIdentity,
     cartSeatIds,
   );
+  // The seat list owned by the CURRENT request identity, only once it has
+  // loaded successfully. While loading or failed there is nothing to validate
+  // a draft against, so no drafted seat is confirmable.
+  const currentSeatSnapshot =
+    seatSnapshotLoaded && !seatLoading && !visibleSeatError
+      ? visibleSeats
+      : null;
+  const seatDraft = actionableSeatDraft({
+    draftIds: effectiveSelectedSeats,
+    currentSeats: currentSeatSnapshot,
+    cartSeatIds,
+  });
   const matchBelongsToRoute = matchIdentity === routeMatchId;
   const zones = matchBelongsToRoute ? (match?.stadium?.zones ?? []) : [];
   const mapImageUrl = storageUrl(
@@ -247,7 +289,7 @@ export default function MatchDetail() {
         setMatch(null);
         setMatchIdentity(null);
       }
-      setError(null);
+      setErrorKind(null);
       return matchesService
         .details(requestIdentity, force)
         .then((data) => {
@@ -266,16 +308,17 @@ export default function MatchDetail() {
         })
         .catch((err) => {
           if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
-          const message = userFacingError(
-            err,
-            "Could not load this match. Please try again.",
-          );
-          setError(message);
-          toast.showToast({
-            variant: "error",
-            title: "Could not load match",
-            message,
-          });
+          const kind = ticketErrorKind("match", errorFacts(err));
+          setErrorKind(kind);
+          // A failed pull-to-refresh keeps the match on screen, so it is
+          // reported as a toast; an initial failure is shown inline instead.
+          if (force) {
+            toast.showToast({
+              variant: "error",
+              title: i18n.t("matchDetail.refreshError.title"),
+              message: ticketErrorMessage(i18n, "match", kind),
+            });
+          }
         })
         .finally(() => {
           if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
@@ -283,7 +326,7 @@ export default function MatchDetail() {
           setRefreshing(false);
         });
     },
-    [commitZone, matchRequestAuthority, routeMatchId, toast],
+    [commitZone, i18n, matchRequestAuthority, routeMatchId, toast],
   );
 
   useEffect(() => {
@@ -336,6 +379,7 @@ export default function MatchDetail() {
       }
 
       setSeatLoading(true);
+      setSeatError(null);
       void matchesService
         .seats(requestedMatchId, requestedZoneId)
         .then((data) => {
@@ -346,16 +390,10 @@ export default function MatchDetail() {
         .catch((err) => {
           if (!seatRequestAuthority.isCurrent(ticket, activeSeatIdentity))
             return;
-          toast.showToast({
-            variant: "error",
-            title: "Could not load seats",
-            message: userFacingError(
-              err,
-              "Could not load seats. Try choosing another zone.",
-            ),
-          });
+          const kind = ticketErrorKind("seats", errorFacts(err));
+          setSeatError({ identity: requestIdentity, kind });
           AccessibilityInfo.announceForAccessibility(
-            "Could not load seats. Try choosing another zone.",
+            `${i18n.t("seats.error.title")}. ${ticketErrorMessage(i18n, "seats", kind)}`,
           );
         })
         .finally(() => {
@@ -368,12 +406,13 @@ export default function MatchDetail() {
     return () => clearTimeout(timeout);
   }, [
     activeSeatIdentity,
+    i18n,
     routeMatchId,
     seatRequestAuthority,
+    seatRetryNonce,
     selectedZone?.has_seats,
     selectedZone?.id,
     selectedZoneBelongsToMatch,
-    toast,
   ]);
 
   const handleBack = () => {
@@ -386,8 +425,8 @@ export default function MatchDetail() {
     else router.replace("/");
   };
 
-  // Returns false (and redirects) for a signed-out user, exactly like the
-  // previous single add-to-cart action used to.
+  // Returns false (and redirects) for a signed-out user. The screen stays
+  // mounted beneath the auth route, so the draft selection survives sign-in.
   const ensureAuthenticated = () => {
     if (auth.isAuthenticated) return true;
     router.push({
@@ -397,44 +436,12 @@ export default function MatchDetail() {
     return false;
   };
 
-  // Selection and quantity adjustment happen entirely on this screen — no
-  // add/increment ever navigates away by itself. The dedicated Cart page is
-  // still the place tickets are reviewed/checked out, reached through the
-  // cart affordance in the header.
-  const addSelectedSeatsToCart = async () => {
-    if (!ensureAuthenticated()) return;
-    if (!selectedZone?.has_seats || !effectiveSelectedSeats.length) return;
-    try {
-      await cart.addItem({
-        match_id: Number(id),
-        stadium_zone_id: selectedZone.id,
-        seat_ids: effectiveSelectedSeats,
-      });
-      toast.showToast({
-        variant: "success",
-        title: "Added to cart",
-        message: `${effectiveSelectedSeats.length} seat${effectiveSelectedSeats.length === 1 ? "" : "s"} reserved in ${selectedZone.name}.`,
-      });
-      setSelectedSeats([]);
-      setSelectedSeatsIdentity(activeZoneIdentity);
-    } catch (err) {
-      toast.showToast({
-        variant: "error",
-        title: "Could not add tickets",
-        message: userFacingError(
-          err,
-          "Could not reserve those tickets. Please try again.",
-        ),
-      });
-    }
-  };
-
   // Pure local draft edit — no request, no CartContext mutation. A zone
   // with no draft entry falls back to its committed cart quantity (see
-  // getDraftQuantity below), so this only needs to record zones the user
+  // resolveDraftQuantity), so this only needs to record zones the user
   // has actually touched.
   const getDraftQuantity = (zoneId: number) =>
-    draftQuantities.get(zoneId) ?? cartByZone.get(zoneId)?.quantity ?? 0;
+    resolveDraftQuantity(draftQuantities, cartByZone, zoneId);
 
   const setDraftQuantity = (zoneId: number, quantity: number) => {
     setDraftQuantities((current) => {
@@ -455,133 +462,204 @@ export default function MatchDetail() {
     setDraftQuantity(zone.id, getDraftQuantity(zone.id) - 1);
   };
 
+  // Draft vs committed: which GA zones differ from CartContext right now.
+  // Recomputed from the owner's items on every render, so after a partial
+  // success the already-applied zones drop out of the next confirmation.
+  const gaChanges = gaCartChanges(zones, getDraftQuantity, cartByZone);
+  const preflight = selectionPreflight(gaChanges, seatDraft);
   const hasPendingSelection =
-    zones.some((zone) => !zone.has_seats && getDraftQuantity(zone.id) > 0) ||
-    effectiveSelectedSeats.length > 0;
+    hasSelectionChanges(gaChanges, seatDraft.actionableIds.length) ||
+    seatDraft.awaitingSnapshot;
 
-  // The one explicit confirmation action for this screen. Diffs every GA
-  // zone's draft quantity against what's actually committed in
-  // CartContext and only sends a request for zones that actually changed
-  // (addItem for a new line, updateItem to *set* an existing line to the
-  // chosen quantity — never addItem's additive merge, which would turn
-  // "existing 2 + chosen 4" into 6 instead of the intended 4 — or
-  // removeItem when the chosen quantity is 0). Calls are awaited one at a
-  // time: CartContext's addItem is guarded by a single-flight that would
-  // otherwise silently drop a second concurrent addItem call and resolve
-  // it to the first zone's response, so firing these concurrently would be
-  // a real correctness bug, not just an ordering nicety.
-  //
-  // Reserved-seat zones already made zero requests while seats were being
-  // toggled (unchanged from before this pass). Documented change: any
-  // seats picked but not yet submitted via the seat map's own "Add N
-  // seat(s)" button are now also folded into this same commit, so the
-  // bottom "Add to Cart" bar's enabled state (which reflects pending seats
-  // too) always has something to actually do when it's enabled. The seat
-  // map's own button still works standalone and is unaffected.
+  // The one explicit confirmation action for this screen. Preflight runs
+  // before the first cart mutation (a reserved-seat draft must be valid
+  // against the current seat snapshot). Then each change goes through
+  // CartContext one awaited call at a time — addItem for a new GA line,
+  // updateItem to *set* an existing line (never addItem's additive merge),
+  // removeItem for zero, then the confirmable seats as one addItem — because
+  // CartContext's addItem single-flight would otherwise drop a concurrent
+  // call. A resolved call is not success: success needs the cart CartContext
+  // actually published, for the current session, to reflect every change.
   const commitSelections = async () => {
     if (!ensureAuthenticated()) return;
-    if (isCommitting || !hasPendingSelection) return;
+    if (isCommitting || isReconciling || needsCartReconcile) return;
+    if (!preflight.canConfirm) return;
+    const plan: CommitPlan = {
+      matchId: routeMatchId,
+      gaChanges,
+      seats:
+        selectedZone?.has_seats && seatDraft.actionableIds.length
+          ? { zoneId: selectedZone.id, seatIds: seatDraft.actionableIds }
+          : null,
+    };
     setIsCommitting(true);
     try {
-      for (const zone of zones) {
-        if (zone.has_seats) continue;
-        const cartLine = cartByZone.get(zone.id);
-        const committed = cartLine?.quantity ?? 0;
-        const desired = getDraftQuantity(zone.id);
-        if (desired === committed) continue;
-        if (!cartLine || committed === 0) {
-          await cart.addItem({
+      const outcome = await executeSelectionCommit(plan, {
+        addZone: (zoneId, quantity) =>
+          cart.addItem({
             match_id: Number(id),
-            stadium_zone_id: zone.id,
-            quantity: desired,
-          });
-        } else if (desired === 0) {
-          await cart.removeItem(cartLine.lockKey);
-        } else {
-          await cart.updateItem(cartLine.lockKey, desired);
-        }
-      }
+            stadium_zone_id: zoneId,
+            quantity,
+          }),
+        setZone: (lockKey, quantity) => cart.updateItem(lockKey, quantity),
+        removeLine: (lockKey) => cart.removeItem(lockKey),
+        addSeats: (zoneId, seatIds) =>
+          cart.addItem({
+            match_id: Number(id),
+            stadium_zone_id: zoneId,
+            seat_ids: [...seatIds],
+          }),
+        currentSessionId: () => cart.captureCartSession()?.sessionId ?? null,
+      });
+      const failureKind =
+        outcome.status === "failed"
+          ? ticketErrorKind("cart", errorFacts(outcome.error))
+          : null;
+      const effects = commitEffects(outcome, failureKind);
 
-      if (selectedZone?.has_seats && effectiveSelectedSeats.length) {
-        await cart.addItem({
-          match_id: Number(id),
-          stadium_zone_id: selectedZone.id,
-          seat_ids: effectiveSelectedSeats,
-        });
+      if (effects.success) {
         setSelectedSeats([]);
         setSelectedSeatsIdentity(activeZoneIdentity);
+        setDraftQuantities(new Map());
+        toast.showToast({
+          variant: "success",
+          title: i18n.t("selection.done.title"),
+          message: i18n.t("selection.done.message"),
+        });
+        router.navigate("/cart");
+        return;
       }
 
-      setDraftQuantities(new Map());
-      toast.showToast({
-        variant: "success",
-        title: "Added to cart",
-        message: "Your tickets were added to the cart.",
-      });
-      router.navigate("/cart");
-    } catch (err) {
-      // Draft quantities are intentionally left untouched so the user can
-      // retry — re-pressing Add to Cart recomputes diffs against whatever
-      // did succeed before the failure, so already-synced zones aren't
-      // resent.
+      // Not confirmed: drafts stay. They are re-diffed against whatever the
+      // cart authoritatively shows, and when the outcome is unknown the cart
+      // must be re-read before another attempt.
+      if (effects.needsReconcile) setNeedsCartReconcile(true);
       toast.showToast({
         variant: "error",
-        title: "Could not update cart",
-        message: userFacingError(
-          err,
-          "Could not update your cart. Please try again.",
-        ),
+        title: effects.needsReconcile
+          ? i18n.t("selection.unconfirmed.title")
+          : i18n.t("selection.error.title"),
+        message: effects.needsReconcile
+          ? i18n.t("selection.unconfirmed.message")
+          : ticketErrorMessage(i18n, "cart", failureKind ?? "generic"),
       });
     } finally {
       setIsCommitting(false);
     }
   };
 
+  // Re-reads the cart through its owner. Only a confirmed publication lifts
+  // the block; the drafts are then compared with that authoritative cart.
+  const reconcileCart = async () => {
+    if (isReconciling || isCommitting) return;
+    setIsReconciling(true);
+    try {
+      const result = await cart.refreshCart();
+      if (result.confirmed) {
+        setNeedsCartReconcile(false);
+        return;
+      }
+      toast.showToast({
+        variant: "error",
+        title: i18n.t("selection.unconfirmed.title"),
+        message: i18n.t("selection.reconcileFailed"),
+      });
+    } catch {
+      toast.showToast({
+        variant: "error",
+        title: i18n.t("selection.unconfirmed.title"),
+        message: i18n.t("selection.reconcileFailed"),
+      });
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
+  const toggleSeat = (seat: ApiSeat) => {
+    if (isCommitting || !isSeatSelectable(seat, cartSeatIds)) return;
+    setSelectedSeatsIdentity(activeZoneIdentity);
+    setSelectedSeats(
+      (current) =>
+        toggleDraftSeat(
+          current,
+          seat,
+          selectedSeatsIdentity === activeZoneIdentity,
+          cartSeatIds,
+        ) ?? current,
+    );
+  };
+
+  const removeDraftSeat = (seatId: number) => {
+    if (selectedSeatsIdentity !== activeZoneIdentity) return;
+    setSelectedSeats((current) => current.filter((item) => item !== seatId));
+  };
+
+  const clearDraftSeats = () => {
+    setSelectedSeats([]);
+    setSelectedSeatsIdentity(activeZoneIdentity);
+  };
+
+  const header = (subtitle: string, withCart: boolean) => (
+    <MatchTicketsHeader
+      title={i18n.t("matchDetail.title")}
+      subtitle={subtitle}
+      onBack={handleBack}
+      cartCount={withCart ? cartCount : 0}
+      secondsLeft={withCart ? cart.secondsLeft : 0}
+      compact={responsive.isNarrow}
+    />
+  );
+
   if (loading || (match !== null && !matchBelongsToRoute)) {
     return (
       <Screen>
         <Stack.Screen options={{ headerShown: false }} />
         <View style={[local.shell, { width: responsive.contentWidth }]}>
-          <MatchTicketsHeader
-            title="Match tickets"
-            subtitle="Loading match details"
-            onBack={handleBack}
-            cartCount={0}
-            secondsLeft={0}
-            compact={responsive.isNarrow}
-          />
-          <Loading />
+          {header(i18n.t("matchDetail.loading"), false)}
+          <View style={local.column}>
+            <MatchDetailSkeleton label={i18n.t("matchDetail.loading")} />
+          </View>
         </View>
       </Screen>
     );
   }
 
   if (!match || !matchBelongsToRoute) {
+    const notFound = errorKind === "notFound";
     return (
       <Screen>
         <Stack.Screen options={{ headerShown: false }} />
         <View style={[local.shell, { width: responsive.contentWidth }]}>
-          <MatchTicketsHeader
-            title="Match tickets"
-            subtitle="Details unavailable"
-            onBack={handleBack}
-            cartCount={cartCount}
-            secondsLeft={cart.secondsLeft}
-            compact={responsive.isNarrow}
-          />
-          <Empty
-            title="Match unavailable"
-            detail={error ?? "This match could not be found."}
-          />
+          {header(i18n.t("matchDetail.unavailableSubtitle"), true)}
+          <View style={[local.column, local.centered]}>
+            <StatePanel
+              variant={notFound ? "unavailable" : "error"}
+              title={
+                notFound
+                  ? i18n.t("matchDetail.notFound.title")
+                  : i18n.t("matchDetail.error.title")
+              }
+              message={ticketErrorMessage(i18n, "match", errorKind ?? "generic")}
+              action={{
+                label: i18n.t("common.retry"),
+                onPress: () => void loadMatch(),
+              }}
+            />
+          </View>
         </View>
       </Screen>
     );
   }
 
-  const mapWidth = Math.min(responsive.contentWidth - 32, 560);
+  const columnWidth = Math.min(responsive.contentWidth, COLUMN_MAX_WIDTH);
+  // Section cards have 16px padding on each side.
+  const innerWidth = Math.max(0, columnWidth - spacing.lg * 2);
+  const mapWidth = Math.min(innerWidth, 560);
   const mapHeight = Math.round((mapWidth * mapViewHeight) / MAP_VIEW_W);
-  const seatMapSize = mapWidth;
-  const bottomBarPadding = Math.max(insets.bottom, 12);
+  const seatMapSize = innerWidth;
+  const stadiumName = match.stadium?.name ?? i18n.t("match.venueTbc");
+  const zoneLegendIndex = new Map(zones.map((zone, index) => [zone.id, index]));
+
   const selectZone = (
     zone: ApiZone,
     revealInList = false,
@@ -592,29 +670,82 @@ export default function MatchDetail() {
       fromStadium ? { matchId: routeMatchId, zoneId: zone.id } : null,
     );
     if (!revealInList) return;
+    // From the stadium map: bring the zone's ticket card into view.
     requestAnimationFrame(() => {
-      const layout = zoneChipLayouts.current.get(zone.id);
-      if (!layout) return;
-      zoneScrollRef.current?.scrollTo({
-        x: Math.max(0, layout.x - (mapWidth - layout.width) / 2),
-        animated: true,
+      const cardY = zoneCardLayouts.current.get(zone.id);
+      if (cardY === undefined) return;
+      pageScrollRef.current?.scrollTo({
+        y: Math.max(0, ticketSectionY.current + cardY - spacing.md),
+        animated: !reducedMotion,
       });
     });
   };
+
+  // Display-only estimate for the transaction bar: the tickets this commit
+  // would leave in the cart for each changed GA zone plus the pending seats.
+  const estimate = selectionEstimate([
+    ...gaChanges.map((change) => {
+      const zone = zones.find((item) => item.id === change.zoneId);
+      return {
+        quantity: change.to,
+        unitPrice: zone?.price,
+        currency: zone?.currency,
+      };
+    }),
+    ...(selectedZone?.has_seats
+      ? [
+          {
+            quantity: seatDraft.actionableIds.length,
+            unitPrice: selectedZone.price,
+            currency: selectedZone.currency,
+          },
+        ]
+      : []),
+  ]);
+  const estimateValue =
+    estimate.tickets === 0
+      ? i18n.t("selection.removal")
+      : estimate.mixedCurrency
+        ? i18n.t("selection.mixedCurrency")
+        : formatMoney(estimate.amount, estimate.currency ?? undefined);
+  const showTransactionBar =
+    hasPendingSelection || isCommitting || needsCartReconcile;
+  const actionLabel = needsCartReconcile
+    ? i18n.t("selection.refresh")
+    : !auth.isAuthenticated
+      ? i18n.t("selection.signIn")
+      : selectionActionKind(gaChanges) === "update"
+        ? i18n.t("selection.update")
+        : i18n.t("selection.add");
+  // Signed-out users can always press through to sign in; otherwise the
+  // action waits for a valid preflight (e.g. a current seat snapshot).
+  const actionDisabled =
+    isCommitting ||
+    isReconciling ||
+    (!needsCartReconcile && auth.isAuthenticated && !preflight.canConfirm);
+  const barNotice = needsCartReconcile
+    ? i18n.t("selection.unconfirmed.message")
+    : !preflight.canConfirm && preflight.reason === "seatsPending"
+      ? visibleSeatError
+        ? i18n.t("selection.seatsFailed")
+        : i18n.t("selection.seatsChecking")
+      : i18n.t("selection.estimateNote");
+
+  const summarySeats = seatDraft.actionable.map((seat) => ({
+    id: seat.id,
+    label: getSeatIdentity(seat),
+  }));
+  const seatSubtotal = selectedZone?.has_seats
+    ? lineSubtotal(seatDraft.actionableIds.length, selectedZone.price)
+    : null;
 
   return (
     <Screen>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <MatchTicketsHeader
-          title="Match tickets"
-          subtitle={match.stadium?.name ?? "Stadium TBC"}
-          onBack={handleBack}
-          cartCount={cartCount}
-          secondsLeft={cart.secondsLeft}
-          compact={responsive.isNarrow}
-        />
+        {header(stadiumName, true)}
         <ScrollView
+          ref={pageScrollRef}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -626,550 +757,350 @@ export default function MatchDetail() {
               }}
             />
           }
-          contentContainerStyle={{
-            gap: 12,
-            paddingBottom: hasPendingSelection
-              ? ACTION_BAR_HEIGHT + bottomBarPadding + 16
-              : 28,
-          }}
+          contentContainerStyle={[
+            local.column,
+            {
+              gap: spacing.lg,
+              paddingBottom: showTransactionBar
+                ? transactionBarHeight + spacing.lg
+                : spacing.xxxl,
+            },
+          ]}
         >
-          <Card>
-            <MatchTeams match={match} showNames={responsive.isTablet} />
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={theme.styles.muted}
-            >
-              {formatDate(match.match_date)} at {formatTime(match.kickoff_at)}
-            </Text>
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={theme.styles.muted}
-            >
-              {match.stadium?.name ?? "Stadium TBC"}
-              {match.stadium?.location ? `, ${match.stadium.location}` : ""}
-            </Text>
-          </Card>
-
-          <Card>
-            <Collapsible
-              title="Stadium"
-              // subtitle="Tap a zone on the map or choose from the list below."
-              expanded={stadiumExpanded}
-              onToggle={() => setStadiumExpanded((value) => !value)}
-              // headerRight={
-              //   <Text style={local.countText}>{zones.length} zones</Text>
-              // }
-            >
-              <ZoneMap
-                zones={zones}
-                selectedZoneId={
-                  selectedZone?.has_seats
-                    ? selectedZone.id
-                    : stadiumFocusedZone?.matchId === routeMatchId
-                      ? stadiumFocusedZone.zoneId
-                      : null
-                }
-                mapImageUrl={mapImageUrl}
-                width={mapWidth}
-                height={mapHeight}
-                viewHeight={mapViewHeight}
-                onSelectZone={(zone) => selectZone(zone, true, true)}
-              />
-              <ScrollView
-                ref={zoneScrollRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={local.zoneChips}
-              >
-                {zones.map((zone, index) => {
-                  const selected =
-                    (zone.has_seats && selectedZone?.id === zone.id) ||
-                    (stadiumFocusedZone?.matchId === routeMatchId &&
-                      stadiumFocusedZone.zoneId === zone.id);
-                  const color = zoneColor(index);
-                  return (
-                    <Pressable
-                      key={zone.id}
-                      onPress={() => selectZone(zone)}
-                      accessibilityRole="button"
-                      accessibilityLabel={zone.name}
-                      accessibilityState={{ selected }}
-                      onLayout={(event) =>
-                        zoneChipLayouts.current.set(
-                          zone.id,
-                          event.nativeEvent.layout,
-                        )
-                      }
-                      style={[
-                        local.zoneChip,
-                        {
-                          backgroundColor: theme.colors.panelSoft,
-                          borderColor: theme.colors.line,
-                        },
-                        selected && {
-                          borderColor: color,
-                          backgroundColor: `${color}18`,
-                        },
-                      ]}
-                    >
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          local.zoneChipText,
-                          { color: selected ? color : theme.colors.ink },
-                        ]}
-                      >
-                        {zone.name} - {formatMoney(zone.price, zone.currency)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-              {!zones.length ? (
-                <Text style={theme.styles.muted}>
-                  No ticket zones are available for this match.
-                </Text>
-              ) : null}
-            </Collapsible>
-          </Card>
+          <MatchDetailHero match={match} compact={responsive.isNarrow} />
 
           {zones.length ? (
-            <Card>
-              <Text style={theme.styles.h2}>Zones</Text>
-              <View style={local.zoneList}>
-                {zones.map((zone, index) => {
-                  const selected =
-                    (zone.has_seats && selectedZone?.id === zone.id) ||
-                    (stadiumFocusedZone?.matchId === routeMatchId &&
-                      stadiumFocusedZone.zoneId === zone.id);
-                  const color = zoneColor(index);
-                  const cartLine = cartByZone.get(zone.id);
-                  const gaQuantity = !zone.has_seats
-                    ? getDraftQuantity(zone.id)
-                    : 0;
-                  const zoneAccessibilityLabel = `${zone.name}, ${formatMoney(zone.price, zone.currency)}${zone.has_seats ? ", reserved seating" : ", general admission"}`;
-
-                  return (
-                    <View
-                      key={zone.id}
-                      style={[
-                        local.zoneRow,
-                        {
-                          borderColor: theme.colors.line,
-                          backgroundColor: theme.colors.panelSoft,
-                        },
-                        selected && {
-                          borderColor: color,
-                          backgroundColor: `${color}14`,
-                        },
-                      ]}
-                    >
-                      <View
-                        style={[
-                          local.zoneRowStripe,
-                          { backgroundColor: color },
-                        ]}
-                      />
-                      <Pressable
-                        onPress={() => selectZone(zone, true)}
-                        accessibilityRole="button"
-                        accessibilityLabel={zoneAccessibilityLabel}
-                        accessibilityState={{ selected }}
-                        style={local.zoneRowMain}
-                      >
-                        <Text
-                          numberOfLines={1}
-                          ellipsizeMode="tail"
-                          style={[
-                            local.zoneRowName,
-                            { color: theme.colors.ink },
-                          ]}
-                        >
-                          {zone.name}
-                        </Text>
-                        <View style={local.zoneRowMeta}>
-                          <Text style={theme.styles.muted}>
-                            {zone.has_seats
-                              ? "Reserved seating"
-                              : "General admission"}
-                          </Text>
-                          {zone.capacity ? (
-                            <Text style={theme.styles.muted}>
-                              · {zone.capacity} capacity
-                            </Text>
-                          ) : null}
-                        </View>
-                      </Pressable>
-                      <View style={local.zoneRowEnd}>
-                        <Text
-                          style={[
-                            local.zoneRowPrice,
-                            { color: theme.colors.ink },
-                          ]}
-                        >
-                          {formatMoney(zone.price, zone.currency)}
-                        </Text>
-                        {zone.has_seats ? (
-                          <ReservedZoneStatus
-                            zone={zone}
-                            selected={selected}
-                            color={color}
-                            pendingCount={
-                              selected ? effectiveSelectedSeats.length : 0
-                            }
-                            inCartCount={cartLine?.seatCount ?? 0}
-                            onPress={() => selectZone(zone, true)}
-                          />
-                        ) : (
-                          <GaZoneStepper
-                            quantity={gaQuantity}
-                            disabled={isCommitting}
-                            onIncrement={() => incrementGaDraft(zone)}
-                            onDecrement={() => decrementGaDraft(zone)}
-                          />
-                        )}
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            </Card>
+            <View style={local.section}>
+              <Collapsible
+                title={i18n.t("stadium.title")}
+                subtitle={i18n.t("stadium.subtitle")}
+                expanded={stadiumExpanded}
+                onToggle={() => setStadiumExpanded((value) => !value)}
+              >
+                <ZoneMap
+                  zones={zones}
+                  selectedZoneId={
+                    selectedZone?.has_seats
+                      ? selectedZone.id
+                      : stadiumFocusedZone?.matchId === routeMatchId
+                        ? stadiumFocusedZone.zoneId
+                        : null
+                  }
+                  mapImageUrl={mapImageUrl}
+                  width={mapWidth}
+                  height={mapHeight}
+                  viewHeight={mapViewHeight}
+                  onSelectZone={(zone) => selectZone(zone, true, true)}
+                />
+              </Collapsible>
+            </View>
           ) : null}
 
-          {selectedZone?.has_seats ? (
-            <Card>
-              <View style={theme.styles.row}>
-                <View style={{ flex: 1 }}>
-                  <Text style={theme.styles.h2}>Seat map</Text>
-                  <Text style={theme.styles.muted}>
-                    {selectedZone.name} -{" "}
-                    {formatMoney(selectedZone.price, selectedZone.currency)} per
-                    seat
-                  </Text>
-                </View>
-                <Text style={local.countText}>
-                  {effectiveSelectedSeats.length} selected
-                </Text>
-              </View>
-              {seatLoading ? (
-                <Text
-                  accessibilityRole="progressbar"
-                  accessibilityLabel="Loading seats"
-                  accessibilityLiveRegion="polite"
-                  style={theme.styles.muted}
+          <View
+            style={local.ticketSection}
+            onLayout={(event) => {
+              ticketSectionY.current = event.nativeEvent.layout.y;
+            }}
+          >
+            <SectionHeader
+              title={i18n.t("tickets.title")}
+              subtitle={
+                zones.length
+                  ? i18n.plural("tickets.options", zones.length)
+                  : undefined
+              }
+            />
+            {!zones.length ? (
+              <StatePanel
+                variant="empty"
+                title={i18n.t("tickets.empty.title")}
+                message={i18n.t("tickets.empty.message")}
+              />
+            ) : null}
+            {zones.map((zone) => {
+              const selected =
+                (zone.has_seats && selectedZone?.id === zone.id) ||
+                (stadiumFocusedZone?.matchId === routeMatchId &&
+                  stadiumFocusedZone.zoneId === zone.id);
+              const legendColor = zoneColor(zoneLegendIndex.get(zone.id) ?? 0);
+              const cartLine = cartByZone.get(zone.id);
+              const gaQuantity = !zone.has_seats
+                ? getDraftQuantity(zone.id)
+                : 0;
+              const price = formatMoney(zone.price, zone.currency);
+              const kindLabel = zone.has_seats
+                ? i18n.t("tickets.kind.reserved")
+                : i18n.t("tickets.kind.ga");
+              const unitLabel = zone.has_seats
+                ? i18n.t("tickets.perSeat")
+                : i18n.t("tickets.perTicket");
+              const gaSubtotal =
+                !zone.has_seats && gaQuantity > 0
+                  ? lineSubtotal(gaQuantity, zone.price)
+                  : null;
+              const inCartQuantity = zone.has_seats
+                ? (cartLine?.seatCount ?? 0)
+                : (cartLine?.quantity ?? 0);
+
+              return (
+                <View
+                  key={zone.id}
+                  onLayout={(event) =>
+                    zoneCardLayouts.current.set(
+                      zone.id,
+                      event.nativeEvent.layout.y,
+                    )
+                  }
                 >
-                  Loading seats...
-                </Text>
-              ) : null}
-              <SeatMap
-                seats={visibleSeats}
-                zoneName={selectedZone.name}
-                selectedIds={effectiveSelectedSeats}
-                cartSeatIds={cartSeatIds}
-                size={seatMapSize}
-                onToggleSeat={(seat) => {
-                  if (!isSeatAvailable(seat) || cartSeatIds.has(seat.id))
-                    return;
-                  setSelectedSeatsIdentity(activeZoneIdentity);
-                  setSelectedSeats((current) => {
-                    const actionable =
-                      selectedSeatsIdentity === activeZoneIdentity
-                        ? current.filter((seatId) => !cartSeatIds.has(seatId))
-                        : [];
-                    return actionable.includes(seat.id)
-                      ? actionable.filter((item) => item !== seat.id)
-                      : [...actionable, seat.id];
-                  });
-                }}
+                  <ZoneOptionCard
+                    name={zone.name}
+                    kindLabel={kindLabel}
+                    priceLabel={price}
+                    unitLabel={unitLabel}
+                    capacityLabel={
+                      zone.capacity
+                        ? i18n.t("tickets.capacity", {
+                            capacity: zone.capacity,
+                          })
+                        : null
+                    }
+                    legendColor={legendColor}
+                    selected={selected}
+                    pressTarget={zone.has_seats ? "card" : "details"}
+                    onPress={() => selectZone(zone)}
+                    accessibilityLabel={i18n.t("tickets.zone.a11y", {
+                      zone: zone.name,
+                      kind: kindLabel,
+                      price,
+                      unit: unitLabel,
+                    })}
+                    accessibilityHint={
+                      zone.has_seats
+                        ? i18n.t("tickets.zone.selectHint")
+                        : undefined
+                    }
+                    end={
+                      zone.has_seats ? (
+                        <ReservedZoneStatus
+                          selected={selected}
+                          pendingCount={
+                            selected ? seatDraft.actionableIds.length : 0
+                          }
+                          inCartCount={cartLine?.seatCount ?? 0}
+                        />
+                      ) : (
+                        <GaZoneStepper
+                          zoneName={zone.name}
+                          quantity={gaQuantity}
+                          disabled={isCommitting}
+                          onIncrement={() => incrementGaDraft(zone)}
+                          onDecrement={() => decrementGaDraft(zone)}
+                        />
+                      )
+                    }
+                    footer={
+                      !zone.has_seats && (inCartQuantity > 0 || gaSubtotal !== null) ? (
+                        <View style={local.cardFooter}>
+                          {inCartQuantity > 0 ? (
+                            <AppText variant="caption" tone="muted">
+                              {i18n.plural("tickets.inCart", inCartQuantity)}
+                            </AppText>
+                          ) : (
+                            <View />
+                          )}
+                          {gaSubtotal !== null ? (
+                            <AppText variant="label">
+                              {i18n.t("tickets.lineSubtotal", {
+                                quantity: gaQuantity,
+                                price,
+                                subtotal: formatMoney(gaSubtotal, zone.currency),
+                              })}
+                            </AppText>
+                          ) : null}
+                        </View>
+                      ) : null
+                    }
+                  />
+                </View>
+              );
+            })}
+          </View>
+
+          {selectedZone?.has_seats ? (
+            <View style={local.section}>
+              <SectionHeader
+                title={i18n.t("seats.title")}
+                subtitle={i18n.t("seats.subtitle", {
+                  zone: selectedZone.name,
+                  price: formatMoney(selectedZone.price, selectedZone.currency),
+                })}
               />
-              <SeatLegend />
-              {!seatLoading && !visibleSeats.length ? (
-                <Text style={theme.styles.muted}>
-                  No seat map is available. Choose another zone.
-                </Text>
-              ) : null}
-              <Button
-                title={
-                  cart.isLoading
-                    ? "Adding..."
-                    : `Add ${effectiveSelectedSeats.length} seat${effectiveSelectedSeats.length === 1 ? "" : "s"}`
-                }
-                disabled={!effectiveSelectedSeats.length || cart.isLoading}
-                onPress={() => void addSelectedSeatsToCart()}
-              />
-            </Card>
+              {visibleSeatError ? (
+                <StatePanel
+                  variant="error"
+                  title={i18n.t("seats.error.title")}
+                  message={ticketErrorMessage(i18n, "seats", visibleSeatError)}
+                  action={{
+                    label: i18n.t("common.retry"),
+                    onPress: () => setSeatRetryNonce((value) => value + 1),
+                  }}
+                />
+              ) : seatLoading || !seatSnapshotLoaded ? (
+                <SkeletonGroup label={i18n.t("seats.loading")}>
+                  <SkeletonBlock
+                    height={Math.round(seatMapSize * 0.6)}
+                    borderRadius={radius.lg}
+                  />
+                </SkeletonGroup>
+              ) : !visibleSeats.length ? (
+                <StatePanel
+                  variant="unavailable"
+                  title={i18n.t("seats.empty.title")}
+                  message={i18n.t("seats.empty.message")}
+                />
+              ) : (
+                <>
+                  <View style={local.seatToolbar}>
+                    <SeatLegend />
+                    <SeatZoomControls
+                      zoom={seatZoom}
+                      canZoomOut={seatZoom > SEAT_ZOOM_LEVELS[0]}
+                      canZoomIn={
+                        seatZoom < SEAT_ZOOM_LEVELS[SEAT_ZOOM_LEVELS.length - 1]
+                      }
+                      onZoomOut={() => setSeatZoom((value) => stepSeatZoom(value, -1))}
+                      onZoomIn={() => setSeatZoom((value) => stepSeatZoom(value, 1))}
+                    />
+                  </View>
+                  <SeatMap
+                    seats={visibleSeats}
+                    zoneName={selectedZone.name}
+                    selectedIds={seatDraft.actionableIds}
+                    cartSeatIds={cartSeatIds}
+                    size={seatMapSize}
+                    zoom={seatZoom}
+                    disabled={isCommitting}
+                    onToggleSeat={toggleSeat}
+                  />
+                  {seatDraft.droppedIds.length ? (
+                    <AppText
+                      variant="meta"
+                      tone="danger"
+                      accessibilityLiveRegion="polite"
+                    >
+                      {i18n.plural("seats.dropped", seatDraft.droppedIds.length)}
+                    </AppText>
+                  ) : null}
+                  <SeatSelectionSummary
+                    seats={summarySeats}
+                    count={seatDraft.actionableIds.length}
+                    zoneName={selectedZone.name}
+                    unitPriceLabel={formatMoney(
+                      selectedZone.price,
+                      selectedZone.currency,
+                    )}
+                    subtotalLabel={
+                      seatSubtotal !== null && seatDraft.actionableIds.length
+                        ? formatMoney(seatSubtotal, selectedZone.currency)
+                        : null
+                    }
+                    disabled={isCommitting}
+                    onRemove={removeDraftSeat}
+                    onClear={clearDraftSeats}
+                  />
+                </>
+              )}
+            </View>
           ) : null}
         </ScrollView>
       </View>
 
       {/* The one explicit confirmation action for this screen (see
-          commitSelections). Fixed/sticky so it stays reachable no matter
-          how long the zone list is; scroll content above reserves matching
-          bottom padding so the last card is never hidden under it. */}
-      {hasPendingSelection ? (
+          commitSelections). Presentation-only TransactionBar fed by the
+          screen's draft and CartContext; fixed so it stays reachable, with
+          matching scroll padding so the last card is never hidden. */}
+      {showTransactionBar ? (
         <View
-          style={[
-            local.actionBar,
-            {
-              paddingBottom: bottomBarPadding,
-              backgroundColor: theme.colors.bg,
-              borderTopColor: theme.colors.line,
-            },
-          ]}
+          style={local.actionBar}
+          onLayout={(event) =>
+            setTransactionBarHeight(event.nativeEvent.layout.height)
+          }
         >
-          <View
-            style={[local.actionBarRow, { width: responsive.contentWidth }]}
-          >
-            <Button
-              title={isCommitting ? "Adding..." : "Add to Cart"}
-              disabled={isCommitting}
-              onPress={() => void commitSelections()}
-            />
-          </View>
+          <TransactionBar
+            totalLabel={i18n.t("selection.total")}
+            totalValue={estimateValue}
+            countLabel={
+              estimate.tickets > 0
+                ? i18n.plural("transaction.ticketCount", estimate.tickets)
+                : undefined
+            }
+            accessory={
+              <AppText
+                variant="caption"
+                tone={needsCartReconcile ? "danger" : "muted"}
+                accessibilityLiveRegion="polite"
+              >
+                {barNotice}
+              </AppText>
+            }
+            primaryAction={{
+              label: actionLabel,
+              onPress: needsCartReconcile
+                ? () => void reconcileCart()
+                : () => void commitSelections(),
+              disabled: actionDisabled,
+              busy: isCommitting || isReconciling,
+              accessibilityHint: needsCartReconcile
+                ? i18n.t("selection.refreshHint")
+                : auth.isAuthenticated
+                  ? i18n.t("selection.addHint")
+                  : i18n.t("selection.signInHint"),
+            }}
+          />
         </View>
       ) : null}
     </Screen>
   );
 }
 
-/**
- * Inline "− quantity +" control for a general-admission zone card. Always
- * rendered as the stepper — there is no "Select" state for GA zones any
- * more, so the user immediately understands they're choosing a quantity,
- * starting at 0. Purely a presentation of `quantity`: both buttons call
- * straight back to the draft-quantity setters in the parent (no request,
- * no CartContext mutation — see commitSelections for the one place that
- * actually syncs this to the cart). The minus button disables at zero so
- * it can never go negative.
- */
-function GaZoneStepper({
-  quantity,
-  disabled,
-  onIncrement,
-  onDecrement,
-}: {
-  quantity: number;
-  disabled: boolean;
-  onIncrement: () => void;
-  onDecrement: () => void;
-}) {
-  const theme = useTheme();
-  const atZero = quantity <= 0;
-  const minusDisabled = disabled || atZero;
-
-  return (
-    <View style={local2.stepper}>
-      <Pressable
-        onPress={onDecrement}
-        disabled={minusDisabled}
-        accessibilityRole="button"
-        accessibilityLabel="Remove one ticket"
-        accessibilityState={{ disabled: minusDisabled }}
-        hitSlop={8}
-        style={[
-          local2.stepperButton,
-          {
-            borderColor: theme.colors.line,
-            backgroundColor: theme.colors.panel,
-          },
-          minusDisabled && local2.stepperDisabled,
-        ]}
-      >
-        <SymbolView name={{ ios: "minus", android: "remove", web: "remove" }} size={20} tintColor={theme.colors.primary} fallback={<View />} />
-      </Pressable>
-      <Text
-        style={[local2.stepperValue, { color: theme.colors.ink }]}
-        accessibilityLabel={`${quantity} selected`}
-      >
-        {quantity}
-      </Text>
-      <Pressable
-        onPress={onIncrement}
-        disabled={disabled}
-        accessibilityRole="button"
-        accessibilityLabel="Add one ticket"
-        accessibilityState={{ disabled }}
-        hitSlop={8}
-        style={[
-          local2.stepperButton,
-          {
-            borderColor: theme.colors.primary,
-            backgroundColor: theme.colors.primary,
-          },
-          disabled && local2.stepperDisabled,
-        ]}
-      >
-        <SymbolView name={{ ios: "plus", android: "add", web: "add" }} size={20} tintColor="#FFFFFF" fallback={<View />} />
-      </Pressable>
-    </View>
-  );
-}
-
-/** Reserved-seating zone card status: Select → pick seats below → confirm. */
-function ReservedZoneStatus({
-  zone,
-  selected,
-  color,
-  pendingCount,
-  inCartCount,
-  onPress,
-}: {
-  zone: ApiZone;
-  selected: boolean;
-  color: string;
-  pendingCount: number;
-  inCartCount: number;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-
-  if (pendingCount > 0) {
-    return (
-      <Text style={[local2.zoneRowCta, { color: theme.colors.primary }]}>
-        {pendingCount} pending
-      </Text>
-    );
+function errorFacts(error: unknown): TicketErrorFacts {
+  if (error instanceof ApiTransportError) {
+    return { status: null, transport: error.category };
   }
+  if (error instanceof ApiError) return { status: error.status, transport: null };
+  return { status: null, transport: null };
+}
 
-  if (inCartCount > 0) {
-    return (
-      <Text style={[local2.zoneRowCta, { color: theme.colors.green }]}>
-        {inCartCount} in cart
-      </Text>
-    );
+/** Catalog message for a classified failure; backend wording is never shown. */
+function ticketErrorMessage(
+  i18n: I18n,
+  context: TicketErrorContext,
+  kind: TicketErrorKind,
+) {
+  switch (kind) {
+    case "offline":
+      return i18n.t("ticketError.offline");
+    case "timeout":
+      return i18n.t("ticketError.timeout");
+    case "session":
+      return i18n.t("ticketError.session");
+    case "expired":
+      return i18n.t("ticketError.expired");
+    case "unavailable":
+      return i18n.t("ticketError.unavailable");
+    case "rejected":
+      return i18n.t("ticketError.rejected");
+    case "maintenance":
+      return i18n.t("ticketError.maintenance");
+    case "notFound":
+      return i18n.t("matchDetail.notFound.message");
+    default:
+      return context === "match"
+        ? i18n.t("ticketError.match")
+        : context === "seats"
+          ? i18n.t("ticketError.seats")
+          : i18n.t("ticketError.cart");
   }
-
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Select ${zone.name}`}
-      accessibilityState={{ selected }}
-      hitSlop={8}
-    >
-      <Text
-        style={[
-          local2.zoneRowCta,
-          { color: selected ? color : theme.colors.primary },
-        ]}
-      >
-        {selected ? "Choose seats" : "Select"}
-      </Text>
-    </Pressable>
-  );
-}
-
-const local2 = {
-  zoneRowCta: { fontSize: 12, fontWeight: "800" as const },
-  stepper: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 4,
-  },
-  // 36px square (well above the ~40px including hitSlop:8 touch-target
-  // guidance) so − / + stay easy to tap without visually bloating the row.
-  stepperButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  stepperGlyph: { fontSize: 18, fontWeight: "900" as const, lineHeight: 20 },
-  stepperValue: {
-    minWidth: 22,
-    textAlign: "center" as const,
-    fontSize: 16,
-    fontWeight: "900" as const,
-    fontVariant: ["tabular-nums" as const],
-  },
-  stepperDisabled: { opacity: 0.5 },
-};
-
-function MatchTeams({
-  match,
-  showNames,
-}: {
-  match: ApiMatch;
-  showNames: boolean;
-}) {
-  const local = useMatchStyles();
-  const theme = useTheme();
-  const home = match.home_team;
-  const away = match.away_team;
-  return (
-    <View
-      style={[local.matchTeams, !showNames && local.matchTeamsCompact]}
-      accessibilityLabel={matchTitle(match)}
-    >
-      <View style={[local.matchTeam, !showNames && local.matchTeamCompact]}>
-        <TeamLogo team={home} />
-        {showNames ? (
-          <Text
-            numberOfLines={2}
-            style={[local.matchTeamName, { color: theme.colors.ink }]}
-          >
-            {home?.name ?? "Home"}
-          </Text>
-        ) : null}
-      </View>
-      <View
-        style={[local.matchVersus, { backgroundColor: theme.colors.panelSoft }]}
-      >
-        <Text style={[local.matchVersusText, { color: theme.colors.muted }]}>
-          VS
-        </Text>
-      </View>
-      <View
-        style={[
-          local.matchTeam,
-          local.matchTeamAway,
-          !showNames && local.matchTeamCompact,
-        ]}
-      >
-        <TeamLogo team={away} />
-        {showNames ? (
-          <Text
-            numberOfLines={2}
-            style={[local.matchTeamName, { color: theme.colors.ink }]}
-          >
-            {away?.name ?? "Away"}
-          </Text>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
-function TeamLogo({ team }: { team?: ApiMatch["home_team"] }) {
-  const local = useMatchStyles();
-  const theme = useTheme();
-  return (
-    <View
-      style={[
-        local.matchTeamLogo,
-        {
-          backgroundColor: theme.colors.panelSoft,
-          borderColor: theme.colors.line,
-        },
-      ]}
-    >
-      {team?.logo ? (
-        <Image
-          source={{ uri: storageUrl(team.logo) }}
-          style={local.matchTeamImage}
-          resizeMode="contain"
-        />
-      ) : (
-        <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>
-          {team?.short_name?.slice(0, 3) ?? "LFA"}
-        </Text>
-      )}
-    </View>
-  );
 }
 
 function zoneColor(index: number) {
@@ -1301,13 +1232,13 @@ function useMapViewHeight(mapImageUrl: string | undefined, zones: ApiZone[]) {
 
 function NativeStadiumImage({ mapImageUrl }: { mapImageUrl?: string }) {
   const local = useMatchStyles();
-  const theme = useTheme();
+  const i18n = useI18n();
   const [imageFailed, setImageFailed] = useState(false);
 
   if (!mapImageUrl || imageFailed) {
     return (
       <View style={local.mapFallback}>
-        <Text style={theme.styles.muted}>Stadium map unavailable.</Text>
+        <AppText variant="meta" tone="muted">{i18n.t("stadium.unavailable")}</AppText>
       </View>
     );
   }
@@ -1341,6 +1272,7 @@ function ZoneMap({
 }) {
   const local = useMatchStyles();
   const theme = useTheme();
+  const i18n = useI18n();
   const imageRect = useMemo(
     () => getContainRect(width, height, MAP_VIEW_W, viewHeight),
     [height, viewHeight, width],
@@ -1350,13 +1282,16 @@ function ZoneMap({
     return createElement(
       "div",
       {
+        // Real stadium geometry: never mirrored in RTL.
+        dir: "ltr",
         style: {
           alignSelf: "center",
+          direction: "ltr",
           width,
           height,
           borderRadius: 18,
-          border: `1px solid ${theme.colors.line}`,
-          backgroundColor: theme.colors.panelSoft,
+          border: `1px solid ${theme.colors.border}`,
+          backgroundColor: theme.colors.surfaceSecondary,
           overflow: "hidden",
         },
       },
@@ -1371,6 +1306,8 @@ function ZoneMap({
             cursor: "pointer",
           },
           preserveAspectRatio: "xMidYMid meet",
+          // Pointer shortcut only; the ticket list is the accessible zone picker.
+          "aria-hidden": true,
         },
         mapImageUrl
           ? createElement("image", {
@@ -1389,9 +1326,9 @@ function ZoneMap({
                 textAnchor: "middle",
                 fontSize: 16,
                 fontWeight: 700,
-                fill: theme.colors.muted,
+                fill: theme.colors.textMuted,
               },
-              "Stadium map unavailable",
+              i18n.t("stadium.unavailable"),
             ),
         ...zones.map((zone, index) => {
           const points = getDisplayZonePoints(zone);
@@ -1445,8 +1382,8 @@ function ZoneMap({
         {
           width,
           height,
-          backgroundColor: theme.colors.panelSoft,
-          borderColor: theme.colors.line,
+          backgroundColor: theme.colors.surfaceSecondary,
+          borderColor: theme.colors.border,
         },
       ]}
     >
@@ -1516,8 +1453,8 @@ function ZoneMap({
       {zones.map((zone, index) => {
         const center = getZoneCentroid(zone, viewHeight);
         const compact = width < 420;
-        const markerWidth = compact ? 56 : 74;
-        const markerHeight = compact ? 22 : 24;
+        const markerWidth = compact ? 64 : 84;
+        const markerHeight = compact ? 26 : 28;
         const centerX =
           imageRect.offsetX + (center.x / MAP_VIEW_W) * imageRect.width;
         const centerY =
@@ -1538,6 +1475,8 @@ function ZoneMap({
             accessibilityRole="button"
             accessibilityLabel={zone.name}
             accessibilityState={{ selected: active }}
+            aria-selected={active}
+            hitSlop={6}
             style={[
               local.zoneMarker,
               {
@@ -1547,7 +1486,7 @@ function ZoneMap({
                 minHeight: markerHeight,
                 paddingHorizontal: compact ? 5 : 6,
                 borderColor: zoneColor(index),
-                backgroundColor: active ? zoneColor(index) : theme.colors.panel,
+                backgroundColor: active ? zoneColor(index) : theme.colors.surface,
               },
             ]}
           >
@@ -1563,7 +1502,7 @@ function ZoneMap({
               ellipsizeMode="tail"
               style={[
                 local.zoneMarkerText,
-                { color: theme.colors.ink },
+                { color: theme.colors.textStrong },
                 compact && local.zoneMarkerTextCompact,
                 active && local.zoneMarkerTextActive,
               ]}
@@ -1582,16 +1521,14 @@ function compactZoneName(value: string) {
   return withoutTeam || value;
 }
 
-function isSeatAvailable(seat: ApiSeat) {
-  return seat.status === "available";
-}
-
 function SeatMap({
   seats,
   zoneName,
   selectedIds,
   cartSeatIds,
   size,
+  zoom,
+  disabled,
   onToggleSeat,
 }: {
   seats: ApiSeat[];
@@ -1599,16 +1536,38 @@ function SeatMap({
   selectedIds: number[];
   cartSeatIds: Set<number>;
   size: number;
+  zoom: number;
+  disabled: boolean;
   onToggleSeat: (seat: ApiSeat) => void;
 }) {
   const local = useMatchStyles();
   const theme = useTheme();
+  const i18n = useI18n();
   const layout = useMemo(() => createSeatLayout(seats, size), [seats, size]);
+  // Zoom scales the real seat coordinates uniformly and centres the block
+  // with a pure translation, so relative seat positions stay faithful.
+  const seatSize = SEAT_SIZE * zoom;
+  const contentRight = layout.seats.length
+    ? Math.max(...layout.seats.map((seat) => seat.px)) + SEAT_SIZE + SEAT_LAYOUT_PADDING
+    : layout.width;
+  const scaledContentWidth = contentRight * zoom;
+  const frameWidth = Math.max(size, Math.ceil(scaledContentWidth));
+  const frameHeight = Math.ceil(layout.height * zoom);
+  const offsetX = Math.max(0, (frameWidth - scaledContentWidth) / 2);
+  // Invisible press target centred on each glyph: as large as the nearest
+  // neighbour allows (up to 48), so targets never overlap. Dense maps reach
+  // the 44px guidance by zooming; every seat is also a named button in the
+  // screen-reader order.
+  const target = useMemo(
+    () => seatTouchTarget(layout.seats, zoom, seatSize),
+    [layout.seats, seatSize, zoom],
+  );
 
   return (
+    <>
     <ScrollView
       horizontal
-      showsHorizontalScrollIndicator={false}
+      showsHorizontalScrollIndicator={frameWidth > size}
       style={local.seatMapScroll}
       contentContainerStyle={local.seatMapScroller}
     >
@@ -1616,74 +1575,73 @@ function SeatMap({
         style={[
           local.seatMapFrame,
           {
-            width: layout.width,
-            height: layout.height,
-            backgroundColor: theme.colors.panelSoft,
-            borderColor: theme.colors.line,
+            width: frameWidth,
+            height: frameHeight,
+            backgroundColor: theme.colors.surfaceSecondary,
+            borderColor: theme.colors.border,
           },
         ]}
       >
-        <View style={local.pitchLabel}>
-          <Text style={local.pitchLabelText}>Pitch / Field</Text>
+        <View
+          style={local.pitchLabel}
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+          accessibilityElementsHidden
+        >
+          <AppText variant="caption" style={{ color: theme.colors.tones.success.fg, fontWeight: "800" }}>
+            {i18n.t("seats.pitch")}
+          </AppText>
         </View>
         {layout.seats.map((seat) => {
-          const inCart = cartSeatIds.has(seat.id);
-          const active = selectedIds.includes(seat.id) && !inCart;
-          const available = isSeatAvailable(seat);
+          const state = seatVisualState(seat, selectedIds, cartSeatIds);
+          const inCart = state === "inCart";
           const accessibility = getSeatAccessibility({
             seat,
             zoneName,
-            selected: active,
+            selected: state === "selected",
             inCart,
           });
+          const inactive = accessibility.disabled || disabled;
           return (
             <Pressable
               key={seat.id}
-              disabled={!available || inCart}
+              disabled={inactive}
               onPress={() => onToggleSeat(seat)}
               accessibilityRole="button"
               accessibilityLabel={accessibility.label}
               accessibilityHint={accessibility.hint}
               accessibilityState={{
                 selected: accessibility.selected,
-                disabled: accessibility.disabled,
+                disabled: inactive,
               }}
+              aria-selected={accessibility.selected}
+              aria-disabled={inactive}
               style={[
-                local.seatDot,
-                { left: seat.px, top: seat.py },
-                inCart && local.seatDotInCart,
-                active && local.seatDotSelected,
-                !available && local.seatDotDisabled,
+                local.seat,
+                {
+                  width: target.size,
+                  height: target.size,
+                  left: offsetX + seat.px * zoom + (seatSize - target.size) / 2,
+                  top: seat.py * zoom + (seatSize - target.size) / 2,
+                  zIndex: state === "selected" ? 3 : inCart ? 2 : 1,
+                },
               ]}
-            />
+            >
+              <View
+                pointerEvents="none"
+                style={[local.seatGlyph, seatGlyphStyle(state, theme.colors, seatSize)]}
+              >
+                {state === "selected" ? <SelectedSeatMark seatSize={seatSize} /> : null}
+              </View>
+            </Pressable>
           );
         })}
       </View>
     </ScrollView>
-  );
-}
-
-function SeatLegend() {
-  const local = useMatchStyles();
-  const theme = useTheme();
-  return (
-    <View style={local.legend}>
-      <LegendDot color={theme.colors.green} label="Available" />
-      <LegendDot color={theme.colors.primary} label="Selected" />
-      <LegendDot color={theme.colors.gold} label="In cart" />
-      <LegendDot color="#98A2B3" label="Unavailable" />
-    </View>
-  );
-}
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  const local = useMatchStyles();
-  const theme = useTheme();
-  return (
-    <View style={local.legendItem}>
-      <View style={[local.legendDot, { backgroundColor: color }]} />
-      <Text style={theme.styles.muted}>{label}</Text>
-    </View>
+    {!target.meetsRecommended ? (
+      <AppText variant="caption" tone="muted">{i18n.t("seats.zoomHint")}</AppText>
+    ) : null}
+    </>
   );
 }
 
@@ -1695,69 +1653,45 @@ function useMatchStyles() {
 function createMatchStyles(colors: ThemeColors) {
   return {
     shell: { flex: 1, alignSelf: "center" as const },
-    // Fixed/sticky "Add to Cart" bar — same pattern as cart.tsx's Continue
-    // Shopping / Checkout bar. `paddingBottom` is filled in with the
-    // safe-area inset at render time.
+    column: {
+      width: "100%" as const,
+      maxWidth: COLUMN_MAX_WIDTH,
+      alignSelf: "center" as const,
+    },
+    centered: { flex: 1, justifyContent: "center" as const },
+    section: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: radius.lg,
+      padding: spacing.lg,
+      gap: spacing.md,
+    },
+    ticketSection: { gap: spacing.md },
+    cardFooter: {
+      flexDirection: "row" as const,
+      flexWrap: "wrap" as const,
+      alignItems: "center" as const,
+      justifyContent: "space-between" as const,
+      gap: spacing.sm,
+      paddingTop: spacing.sm,
+      borderTopWidth: 1,
+      borderTopColor: colors.divider,
+    },
+    seatToolbar: {
+      flexDirection: "row" as const,
+      flexWrap: "wrap" as const,
+      alignItems: "center" as const,
+      justifyContent: "space-between" as const,
+      gap: spacing.md,
+    },
+    // Fixed transaction area; TransactionBar supplies its own surface,
+    // border and safe-area padding.
     actionBar: {
       position: "absolute" as const,
       left: 0,
       right: 0,
       bottom: 0,
-      borderTopWidth: 1,
-      paddingTop: 12,
-      paddingHorizontal: 14,
-      alignItems: "center" as const,
-    },
-    actionBarRow: { width: "100%" as const },
-    matchTeams: {
-      width: "100%" as const,
-      flexDirection: "row" as const,
-      alignItems: "center" as const,
-      justifyContent: "center" as const,
-      gap: 0,
-      paddingVertical: 6,
-    },
-    matchTeamsCompact: { alignSelf: "center" as const },
-    matchTeam: {
-      flex: 1,
-      minWidth: 0,
-      flexDirection: "row" as const,
-      alignItems: "center" as const,
-      justifyContent: "center" as const,
-      gap: 12,
-    },
-    matchTeamAway: { flexDirection: "row-reverse" as const },
-    matchTeamCompact: { flex: 1 },
-    matchTeamLogo: {
-      width: 64,
-      height: 64,
-      borderRadius: 16,
-      borderWidth: 1,
-      alignItems: "center" as const,
-      justifyContent: "center" as const,
-      overflow: "hidden" as const,
-    },
-    matchTeamImage: { width: 50, height: 50 },
-    matchTeamName: {
-      flexShrink: 1,
-      fontSize: 17,
-      lineHeight: 22,
-      fontWeight: "900" as const,
-      textAlign: "center" as const,
-    },
-    matchVersus: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      alignItems: "center" as const,
-      justifyContent: "center" as const,
-    },
-    matchVersusText: { fontSize: 10, fontWeight: "900" as const },
-    countText: {
-      color: colors.muted,
-      fontSize: 12,
-      fontWeight: "900" as const,
-      textTransform: "uppercase" as const,
     },
     mapFrame: {
       // Real stadium geometry: never mirrored in RTL.
@@ -1765,8 +1699,8 @@ function createMatchStyles(colors: ThemeColors) {
       alignSelf: "center" as const,
       borderRadius: 18,
       borderWidth: 1,
-      borderColor: colors.line,
-      backgroundColor: colors.panelSoft,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceSecondary,
       overflow: "hidden" as const,
       position: "relative" as const,
     },
@@ -1788,7 +1722,7 @@ function createMatchStyles(colors: ThemeColors) {
       flexDirection: "row" as const,
       alignItems: "center" as const,
       gap: 4,
-      shadowColor: colors.ink,
+      shadowColor: colors.textStrong,
       shadowOpacity: 0.08,
       shadowRadius: 5,
       shadowOffset: { width: 0, height: 2 },
@@ -1803,59 +1737,20 @@ function createMatchStyles(colors: ThemeColors) {
     zoneMarkerText: {
       flex: 1,
       minWidth: 0,
-      color: colors.ink,
-      fontSize: 8,
-      fontWeight: "900" as const,
-    },
-    zoneMarkerTextCompact: { fontSize: 7 },
-    zoneMarkerTextActive: { color: "#FFFFFF" },
-    zoneChips: { gap: 8, paddingRight: 4 },
-    zoneList: { gap: 8 },
-    zoneRow: {
-      flexDirection: "row" as const,
-      alignItems: "center" as const,
-      gap: 12,
-      borderRadius: 14,
-      borderWidth: 1,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      overflow: "hidden" as const,
-    },
-    zoneRowStripe: { width: 4, alignSelf: "stretch" as const, borderRadius: 2 },
-    zoneRowMain: { flex: 1, minWidth: 0, gap: 2 },
-    zoneRowName: { fontSize: 15, fontWeight: "900" as const },
-    zoneRowMeta: {
-      flexDirection: "row" as const,
-      flexWrap: "wrap" as const,
-      gap: 4,
-    },
-    // flexShrink: 0 — the price/quantity column must never be squeezed off
-    // the edge by a long zone name; zoneRowMain (flex:1, minWidth:0) is
-    // what absorbs the extra width and truncates instead.
-    zoneRowEnd: { alignItems: "flex-end" as const, gap: 4, flexShrink: 0 },
-    zoneRowPrice: { fontSize: 15, fontWeight: "900" as const },
-    zoneChip: {
-      maxWidth: 240,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: colors.line,
-      backgroundColor: colors.panel,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-    },
-    zoneChipText: {
-      color: colors.ink,
-      fontSize: 12,
+      color: colors.textStrong,
+      fontSize: 10,
       fontWeight: "800" as const,
     },
+    zoneMarkerTextCompact: { fontSize: 9 },
+    zoneMarkerTextActive: { color: "#FFFFFF" },
     seatMapFrame: {
       // Real seat geometry: never mirrored in RTL.
       ...PHYSICAL_LAYOUT_STYLE,
       alignSelf: "center" as const,
       borderRadius: 18,
       borderWidth: 1,
-      borderColor: colors.line,
-      backgroundColor: colors.panelSoft,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceSecondary,
       position: "relative" as const,
       overflow: "hidden" as const,
     },
@@ -1871,49 +1766,18 @@ function createMatchStyles(colors: ThemeColors) {
       top: 10,
       height: 26,
       borderRadius: 999,
-      backgroundColor: "rgba(0,122,61,0.08)",
+      backgroundColor: colors.tones.success.bg,
       alignItems: "center" as const,
       justifyContent: "center" as const,
     },
-    pitchLabelText: {
-      color: colors.green,
-      fontSize: 11,
-      fontWeight: "900" as const,
-    },
-    seatDot: {
+    seat: {
       position: "absolute" as const,
-      width: 18,
-      height: 18,
-      borderRadius: 9,
       alignItems: "center" as const,
       justifyContent: "center" as const,
-      backgroundColor: colors.green,
-      borderWidth: 1,
-      borderColor: "#FFFFFF",
     },
-    seatDotSelected: {
-      backgroundColor: colors.primary,
-      borderWidth: 3,
-      borderColor: "#FFFFFF",
-      zIndex: 3,
-    },
-    seatDotInCart: {
-      backgroundColor: colors.gold,
-      borderWidth: 3,
-      borderColor: "#FFFFFF",
-      zIndex: 2,
-    },
-    seatDotDisabled: { backgroundColor: "#98A2B3", opacity: 0.65 },
-    legend: {
-      flexDirection: "row" as const,
-      flexWrap: "wrap" as const,
-      gap: 14,
-    },
-    legendItem: {
-      flexDirection: "row" as const,
+    seatGlyph: {
       alignItems: "center" as const,
-      gap: 6,
+      justifyContent: "center" as const,
     },
-    legendDot: { width: 10, height: 10, borderRadius: 5 },
   };
 }

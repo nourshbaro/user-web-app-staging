@@ -20,6 +20,11 @@ import {
   type CartSessionTicket,
 } from "@/lib/cartSessionAuthority";
 import { addWithSessionRecovery, createSingleFlight } from "@/lib/cartSessionRecovery";
+import {
+  confirmedPublication,
+  unconfirmedPublication,
+  type CartPublicationResult,
+} from "@/lib/cartPublication";
 import { storage } from "@/lib/storage";
 import { userFacingError } from "@/lib/userFacingError";
 import { ApiError } from "@/services/api";
@@ -27,6 +32,13 @@ import { cartService, getCartItems } from "@/services/cart";
 import type { AddCartRequest, CartItem } from "@/types";
 
 const SESSION_KEY = "lfa_cart_session_id";
+
+/**
+ * Resolved by addItem/updateItem/removeItem/refreshCart: whether the resulting
+ * cart was published for the current session (see `cartPublication.ts`).
+ * Callers that only need completion can ignore it.
+ */
+export type CartPublication = CartPublicationResult<CartItem>;
 
 type CartContextValue = {
   sessionId: string | null;
@@ -36,11 +48,11 @@ type CartContextValue = {
   secondsLeft: number;
   isLoading: boolean;
   cartRefreshError: string | null;
-  addItem: (payload: Omit<AddCartRequest, "checkout_session_id">) => Promise<void>;
-  removeItem: (lockKey: string) => Promise<void>;
+  addItem: (payload: Omit<AddCartRequest, "checkout_session_id">) => Promise<CartPublication>;
+  removeItem: (lockKey: string) => Promise<CartPublication>;
   removeItems: (lockKeys: string[]) => Promise<void>;
-  updateItem: (lockKey: string, quantity: number) => Promise<void>;
-  refreshCart: () => Promise<void>;
+  updateItem: (lockKey: string, quantity: number) => Promise<CartPublication>;
+  refreshCart: () => Promise<CartPublication>;
   clearCart: () => Promise<void>;
   captureCartSession: () => CartSessionTicket | null;
   isCartSessionCurrent: (ticket: CartSessionTicket) => boolean;
@@ -193,12 +205,12 @@ export function CartProvider({ children }: PropsWithChildren) {
     dismissEverythingAndGoHome();
   }, [resetCartDisplayState]);
 
-  const refreshCartForSession = useCallback(async (expected: CartSessionTicket) => {
+  const refreshCartForSession = useCallback(async (expected: CartSessionTicket): Promise<CartPublication> => {
     if (
       expected.sessionId === null
       || !mountedRef.current
       || !sessionAuthorityRef.current.isCurrent(expected)
-    ) return;
+    ) return unconfirmedPublication("session-changed");
 
     const requestId = refreshGuardRef.current.begin();
 
@@ -208,39 +220,49 @@ export function CartProvider({ children }: PropsWithChildren) {
         !mountedRef.current
         || !refreshGuardRef.current.isCurrent(requestId)
         || !sessionAuthorityRef.current.isCurrent(expected)
-      ) return;
+      ) return unconfirmedPublication("session-changed");
 
       const nextItems = getCartItems(response.cart);
       if (!nextItems.length) {
-        await clearCartIfSession(expected);
-        return;
+        // The backend reports an empty cart: clearing it is the published state.
+        const cleared = await clearCartIfSession(expected);
+        return cleared
+          ? confirmedPublication<CartItem>(null, [])
+          : unconfirmedPublication("session-changed");
       }
 
+      let applied = false;
       await publishCartResponseIfCurrent(expected, response, () => {
         if (!refreshGuardRef.current.isCurrent(requestId)) return;
         applyCart(response);
+        applied = true;
       });
+      return applied
+        ? confirmedPublication(expected.sessionId, nextItems)
+        : unconfirmedPublication("session-changed");
     } catch (error) {
       if (
         !mountedRef.current
         || !refreshGuardRef.current.isCurrent(requestId)
         || !sessionAuthorityRef.current.isCurrent(expected)
-      ) return;
+      ) return unconfirmedPublication("session-changed");
 
       const status = error instanceof ApiError ? error.status : null;
       const failure = classifyCartRefreshFailure(status);
       if (failure.shouldClearSession) {
         await clearCartIfSession(expected);
-        return;
+        return unconfirmedPublication("session-ended");
       }
 
       setCartRefreshError(userFacingError(error, "We couldn't refresh your cart. Your reservation reference was kept; please try again."));
+      return unconfirmedPublication("refresh-failed");
     }
   }, [applyCart, clearCartIfSession, publishCartResponseIfCurrent]);
 
-  const refreshCart = useCallback(() => {
+  const refreshCart = useCallback((): Promise<CartPublication> => {
     const expected = sessionAuthorityRef.current.capture();
-    if (!expected) return Promise.resolve();
+    // No session: the authoritative client cart is empty.
+    if (!expected) return Promise.resolve(confirmedPublication<CartItem>(null, []));
 
     return operationQueue.run(
       () => refreshCartForSession(expected),
@@ -314,16 +336,16 @@ export function CartProvider({ children }: PropsWithChildren) {
 
   const addItem = useCallback((
     payload: Omit<AddCartRequest, "checkout_session_id">,
-  ) => {
-    if (!auth.isReady || !auth.isAuthenticated) { router.push("/auth"); return Promise.resolve(); }
+  ): Promise<CartPublication> => {
+    if (!auth.isReady || !auth.isAuthenticated) { router.push("/auth"); return Promise.resolve(unconfirmedPublication("unauthenticated")); }
     const expected = sessionAuthorityRef.current.captureCurrent();
 
     return addMutationGuardRef.current.run(
-      () => operationQueue.run(async () => {
+      () => operationQueue.run(async (): Promise<CartPublication> => {
         if (
           !mountedRef.current
           || !sessionAuthorityRef.current.isCurrent(expected)
-        ) return;
+        ) return unconfirmedPublication("session-changed");
 
         const activeSessionId = expected.sessionId;
         const quantityToAdd = payload.quantity;
@@ -343,14 +365,16 @@ export function CartProvider({ children }: PropsWithChildren) {
             quantity: currentQuantity + quantityToAdd,
           });
 
-          await publishCartResponseIfCurrent(expected, response, () => {
+          const published = await publishCartResponseIfCurrent(expected, response, () => {
             if (response.checkout_session_id !== expected.sessionId) {
               sessionAuthorityRef.current.replace(response.checkout_session_id);
               setSessionId(response.checkout_session_id);
             }
             applyCart(response);
           });
-          return;
+          return published
+            ? confirmedPublication(response.checkout_session_id, getCartItems(response.cart))
+            : unconfirmedPublication("session-changed");
         }
 
         let publicationOwner: CartSessionTicket | null = expected;
@@ -387,37 +411,41 @@ export function CartProvider({ children }: PropsWithChildren) {
           },
         });
 
-        if (!publicationOwner) return;
+        if (!publicationOwner) return unconfirmedPublication("session-changed");
 
-        await publishCartResponseIfCurrent(publicationOwner, response, () => {
+        const published = await publishCartResponseIfCurrent(publicationOwner, response, () => {
           if (response.checkout_session_id !== publicationOwner?.sessionId) {
             sessionAuthorityRef.current.replace(response.checkout_session_id);
             setSessionId(response.checkout_session_id);
           }
           applyCart(response);
         });
+        return published
+          ? confirmedPublication(response.checkout_session_id, getCartItems(response.cart))
+          : unconfirmedPublication("session-changed");
       }),
     );
   }, [auth.isReady, auth.isAuthenticated, applyCart, items, operationQueue, publishCartResponseIfCurrent, resetCartState]);
 
-  const removeItem = useCallback((lockKey: string) => {
+  const removeItem = useCallback((lockKey: string): Promise<CartPublication> => {
     const expected = sessionAuthorityRef.current.capture();
-    if (!expected) return Promise.resolve();
+    if (!expected) return Promise.resolve(unconfirmedPublication("session-changed"));
 
-    return operationQueue.run(async () => {
+    return operationQueue.run(async (): Promise<CartPublication> => {
       if (
         !mountedRef.current
         || !sessionAuthorityRef.current.isCurrent(expected)
-      ) return;
+      ) return unconfirmedPublication("session-changed");
 
       await cartService.remove(lockKey);
 
       if (
         !mountedRef.current
         || !sessionAuthorityRef.current.isCurrent(expected)
-      ) return;
+      ) return unconfirmedPublication("session-changed");
 
-      await refreshCartForSession(expected);
+      // The delete is only confirmed by the refresh that publishes the resulting cart.
+      return refreshCartForSession(expected);
     });
   }, [operationQueue, refreshCartForSession]);
 
@@ -444,27 +472,30 @@ export function CartProvider({ children }: PropsWithChildren) {
     });
   }, [operationQueue, refreshCartForSession]);
 
-  const updateItem = useCallback((lockKey: string, quantity: number) => {
+  const updateItem = useCallback((lockKey: string, quantity: number): Promise<CartPublication> => {
     if (quantity < 1) return removeItem(lockKey);
 
     const expected = sessionAuthorityRef.current.capture();
-    if (!expected) return Promise.resolve();
+    if (!expected) return Promise.resolve(unconfirmedPublication("session-changed"));
 
-    return operationQueue.run(async () => {
+    return operationQueue.run(async (): Promise<CartPublication> => {
       if (
         !mountedRef.current
         || !sessionAuthorityRef.current.isCurrent(expected)
-      ) return;
+      ) return unconfirmedPublication("session-changed");
 
       const response = await cartService.update(lockKey, { quantity });
 
-      await publishCartResponseIfCurrent(expected, response, () => {
+      const published = await publishCartResponseIfCurrent(expected, response, () => {
         if (response.checkout_session_id !== expected.sessionId) {
           sessionAuthorityRef.current.replace(response.checkout_session_id);
           setSessionId(response.checkout_session_id);
         }
         applyCart(response);
       });
+      return published
+        ? confirmedPublication(response.checkout_session_id, getCartItems(response.cart))
+        : unconfirmedPublication("session-changed");
     });
   }, [applyCart, operationQueue, publishCartResponseIfCurrent, removeItem]);
 
