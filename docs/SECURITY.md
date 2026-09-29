@@ -67,6 +67,11 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   expiry, and only while authenticated.
 - All mutations are serialized and published only for the current cart session
   ticket. Expired or malformed persisted sessions are discarded.
+- A resolved mutation is not success: success requires a confirmed
+  publication for the current session. After an unknown outcome the shared,
+  session-scoped cart re-read gate (`CartContext` + `cartReconciliation.ts`)
+  blocks further mutations and every payment action until a confirmed
+  re-read; mutations are never replayed blindly.
 
 ### 2.5 Checkout transaction safety
 - BLUE submission is guarded by `submitInFlightRef`, `blueHandoffStartedRef`,
@@ -78,6 +83,29 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
 - Billing phone must be a valid canonical phone.
 - Card: the transient token is submitted once (`submittingRef`); the
   CyberSource component posts success at most once per mount (`completedRef`).
+- **One payment attempt per cart session, across methods and surfaces**
+  (`src/lib/paymentOutcomeLock.ts`, `docs/ARCHITECTURE.md` §10):
+  - a submission must first acquire the session's attempt (a synchronous
+    claim; any other Card or BLUE attempt for that session is refused) and
+    persist it (`lfa_payment_outcome_lock`: session id and method only — no
+    payment data) **before** anything is sent; if it cannot be persisted,
+    nothing is sent;
+  - immediately before `/checkout/mobile/submit` the owner re-checks the
+    cart owner's current state: session, **reservation expiry** (from
+    `expires_at`, not the last render or tick), cart re-read gate,
+    unknown-outcome lock, and competing attempt. Only the acquiring attempt
+    passes; a blocked attempt sends nothing and is settled;
+  - the Pay handler re-validates the same state before either handoff.
+- **Unknown outcomes never become payable again in the same session**:
+  - a transport failure, timeout or 5xx (except 503) on submit, a BLUE
+    success whose cart clear did not happen, or a card 2xx that the closed
+    card screen could not reconcile locks the session for every method;
+  - after a restart, a persisted unfinished attempt for the restored session
+    becomes that lock; an unreadable record or storage read failure locks the
+    restored session (fail closed);
+  - only a definite non-completion (4xx, 401/403, 503, BLUE failure redirect,
+    or a submit blocked before sending) releases the attempt;
+  - a lock or attempt never applies to a different cart session.
 
 ### 2.6 Payment completion authority and cart clearing
 - The cart is cleared **only** via `clearCartIfSession(ticket)` for the session
@@ -85,7 +113,11 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   - card: a 2xx `/checkout/mobile/submit` response, or
   - BLUE: a terminal success URL classified by `decideBlueNavigation`.
 - BLUE failure and user "Leave" keep the reservation active; expiry is left to
-  `CartContext`.
+  `CartContext`. "Leave" keeps the BLUE attempt held (§2.5), so Card cannot
+  start for that session meanwhile.
+- A provider success that could not be matched to a cleared cart for the same
+  session is never shown as success; it locks the session and points to
+  My Tickets.
 - Result screens never clear state.
 
 ### 2.7 BLUE URL and WebView policy (`src/lib/bluePaymentRedirect.ts`, `BluePaymentScreen.native.tsx`)
@@ -122,6 +154,11 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   `apiRequest` read the live token, so a logout during registration cannot
   send a stale bearer token.
 - Device tokens are not persisted by the app.
+- Expo Go is not an authoritative push environment: there,
+  `src/lib/notifications.ts` never loads `expo-notifications` or reaches
+  Firebase, and push degrades to "unavailable". Development and release builds
+  keep the full integration; push behavior is verified only in those builds
+  (`docs/ARCHITECTURE.md` §12).
 
 ### 2.11 Errors and logging
 - User-facing errors come from backend messages or fixed fallbacks; transport
@@ -217,6 +254,24 @@ Staging BLUE is HTTP. The Android cleartext policy for non-debug staging builds
 `google-services.json` and `GoogleService-Info.plist` are committed. These are
 client configs, not secrets, but they identify the Firebase project.
 Restrictions for those keys belong in the Firebase console.
+
+### 3.15 A locked payment session cannot be unlocked in-app — LOW (availability, backend-dependent)
+There is no API to look up a payment result and backend idempotency of
+`/checkout/mobile/submit` is not established, so after an unknown outcome the
+session stays blocked until a different cart session exists (in practice,
+until the reservation expires). The user is pointed to My Tickets. A backend
+status/idempotency contract would allow a narrower rule.
+
+### 3.16 Web BLUE returns to a locked session — NOTE (intentional)
+Web BLUE leaves the app by full-page redirect and has no in-app terminal
+handling, so the restored session is locked on return, including after a
+BLUE failure. Conservative by design; a user must start a new session to pay
+differently.
+
+### 3.17 A 503 on submit is treated as definite non-completion — LOW
+`paymentFailureKind` classifies 503 as maintenance, not unknown, so it does
+not lock the session. This assumes the gateway rejects before processing.
+Unverified; changing it is a product/backend decision.
 
 ---
 

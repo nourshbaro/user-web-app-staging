@@ -135,9 +135,13 @@ test("card payment is a dedicated route rather than a Checkout modal", async () 
   assert.match(cardProvider, /fullscreenFrame: \{ flex: 1, borderWidth: 0, borderRadius: 0 \}/);
   assert.match(cardProvider, /requestAnimationFrame\(\(\) => requestAnimationFrame\(markReady\)\)/);
   assert.match(cardProvider, /Unable to load payment\. Please try again\./);
-  assert.match(cardScreen, /Loading payment\.\.\./);
+  // Loading and retry copy now comes from the catalog (Phase 4); the states themselves are unchanged.
+  const catalog = await readFile(new URL("../i18n/messages/en.ts", import.meta.url), "utf8");
+  assert.match(catalog, /"payment\.card\.loading": "Loading payment\.\.\."/);
+  assert.match(catalog, /"payment\.retry": "Retry"/);
+  assert.match(cardScreen, /i18n\.t\("payment\.card\.loading"\)/);
   assert.match(cardScreen, /handoff\.prepareCaptureContext\(force\)/);
-  assert.match(cardScreen, /title="Retry"/);
+  assert.match(cardScreen, /action=\{\{ label: i18n\.t\("payment\.retry"\), onPress: \(\) => void preparePayment\(true\) \}\}/);
   assert.match(cardScreen, /router\.dismissTo\("\/checkout"\)/);
 });
 test("payment cancellation preserves cart and success owns conditional cleanup", async () => {

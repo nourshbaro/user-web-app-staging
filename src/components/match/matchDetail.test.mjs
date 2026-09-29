@@ -57,7 +57,11 @@ test("the only cart mutations go through the verified confirmation, via CartCont
   const mutations = route.match(/cart\.(addItem|updateItem|removeItem|removeItems)\(/g) ?? [];
   assert.deepEqual(mutations, ["cart.addItem(", "cart.updateItem(", "cart.removeItem(", "cart.addItem("]);
   const commit = section(route, "const commitSelections = async", "const reconcileCart");
-  assert.match(commit, /if \(!ensureAuthenticated\(\)\) return;\s*if \(isCommitting \|\| isReconciling \|\| needsCartReconcile\) return;\s*if \(!preflight\.canConfirm\) return;/);
+  // Phase 4 corrections: the gate is the shared CartContext one, read synchronously.
+  assert.match(commit, /if \(!ensureAuthenticated\(\)\) return;\s*if \(isCommitting \|\| isReconciling \|\| cart\.isCartReconciliationRequired\(\)\) return;\s*if \(!preflight\.canConfirm\) return;/);
+  assert.match(route, /const needsCartReconcile = reconciliationActive\(cart\.cartReconciliation, cart\.sessionId\);/);
+  assert.doesNotMatch(route, /const \[needsCartReconcile/, "no screen-local gate");
+  assert.doesNotMatch(route, /setNeedsCartReconcile/);
   assert.match(commit, /const outcome = await executeSelectionCommit\(plan, \{/);
   assert.match(commit, /stadium_zone_id: zoneId,\s*quantity,/);
   assert.match(commit, /setZone: \(lockKey, quantity\) => cart\.updateItem\(lockKey, quantity\)/);
@@ -76,13 +80,14 @@ test("drafts clear, success shows and Cart opens only on a confirmed outcome", (
   }
   const afterSuccess = commit.slice(commit.indexOf("return;", commit.indexOf("if (effects.success) {")));
   assert.doesNotMatch(afterSuccess, /setDraftQuantities|setSelectedSeats\(|selection\.done|router\./);
-  assert.match(afterSuccess, /if \(effects\.needsReconcile\) setNeedsCartReconcile\(true\)/);
+  assert.match(afterSuccess, /if \(effects\.needsReconcile\) cart\.requireCartReconciliation\("unconfirmed-mutation"\)/);
   assert.match(afterSuccess, /selection\.unconfirmed\.message/);
 });
 
 test("reconciliation re-reads the cart through its owner and only a confirmed read unblocks", () => {
   const reconcile = section(route, "const reconcileCart = async", "const toggleSeat");
-  assert.match(reconcile, /const result = await cart\.refreshCart\(\);\s*if \(result\.confirmed\) \{\s*setNeedsCartReconcile\(false\);/);
+  // The owner releases the shared gate itself, only for a confirmed read of that session.
+  assert.match(reconcile, /const result = await cart\.refreshCart\(\);\s*if \(result\.confirmed\) return;/);
   assert.doesNotMatch(reconcile, /cart\.(addItem|updateItem|removeItem)/);
 });
 

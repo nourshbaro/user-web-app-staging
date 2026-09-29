@@ -5,11 +5,14 @@ import test from "node:test";
 test("payment selection uses shared method artwork and no raw forward glyph", async () => {
   const checkout = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
   const sheet = await readFile(new URL("../components/PaymentMethodSheet.tsx", import.meta.url), "utf8");
+  const options = await readFile(new URL("../components/checkout/PaymentMethodOptions.tsx", import.meta.url), "utf8");
   await access(new URL("../../assets/images/blue-logo.png", import.meta.url));
 
-  assert.match(checkout, /<PaymentMethodIcon method=\{paymentMethod\}/);
-  assert.match(checkout, /chevron\.right/);
+  // Phase 4: selection is an inline radio group built on the shared method artwork.
+  assert.match(checkout, /<PaymentMethodOptions\s/);
+  assert.match(options, /<PaymentMethodIcon method=\{method\.id\}/);
   assert.doesNotMatch(checkout, /\{">"\}/);
+  assert.doesNotMatch(options, /\{">"\}/);
   assert.match(sheet, /blue-logo\.png/);
   assert.match(sheet, /onSelect\(option\.id\);\s*onClose\(\);/);
 });

@@ -1,3 +1,4 @@
+import { ReservationExpiryNotice } from "@/components/cart/ReservationExpiryNotice";
 import { ThemeProvider, useTheme } from "@/components/ui";
 import { AlertDialogProvider } from "@/context/AlertDialogContext";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -6,7 +7,6 @@ import { CartSheetProvider } from "@/context/CartSheetContext";
 import { I18nProvider, useI18n } from "@/i18n/I18nProvider";
 import { TicketHoldersProvider } from "@/context/TicketHoldersContext";
 import { ToastProvider } from "@/context/ToastContext";
-import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
@@ -16,9 +16,11 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import {
   configureNotificationChannel,
+  getInitialNotificationData,
   getNotificationPermissionStatus,
   requestNotificationPermission,
   subscribeToFcmTokenRefresh,
+  subscribeToNotificationResponses,
 } from "@/lib/notifications";
 
 import { MaintenanceGuard } from "@/components/maintenance/MaintenanceGuard";
@@ -104,15 +106,9 @@ function AppProviders() {
   useEffect(() => {
     const handleInitialNotification = async () => {
       try {
-        const response = await Notifications.getLastNotificationResponseAsync();
+        const data = await getInitialNotificationData();
 
-        if (!response) {
-          return;
-        }
-
-        const data = response.notification.request.content.data;
-
-        if (data && typeof data === "object") {
+        if (data) {
           handleNotificationNavigation(data);
         }
       } catch (error) {
@@ -122,18 +118,7 @@ function AppProviders() {
 
     void handleInitialNotification();
 
-    const responseSubscription =
-      Notifications.addNotificationResponseReceivedListener((response) => {
-        const data = response.notification.request.content.data;
-
-        if (data && typeof data === "object") {
-          handleNotificationNavigation(data);
-        }
-      });
-
-    return () => {
-      responseSubscription.remove();
-    };
+    return subscribeToNotificationResponses(handleNotificationNavigation);
   }, []);
 
   if (!isReady) {
@@ -153,6 +138,7 @@ function AppProviders() {
           <TicketHoldersProvider>
             <CartSheetProvider>
               <StatusBar style={theme.isDark ? "light" : "dark"} />
+              <ReservationExpiryNotice />
               <MaintenanceGuard>
                 <Stack
                   screenOptions={{

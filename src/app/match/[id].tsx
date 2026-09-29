@@ -53,6 +53,7 @@ import {
   createRequestAuthority,
   createRequestIdentity,
 } from "@/lib/requestAuthority";
+import { reconciliationActive } from "@/lib/cartReconciliation";
 import { getSeatAccessibility, getSeatIdentity } from "@/lib/seatAccessibility";
 import {
   SEAT_ZOOM_LEVELS,
@@ -159,10 +160,6 @@ export default function MatchDetail() {
     () => new Map(),
   );
   const [isCommitting, setIsCommitting] = useState(false);
-  // Set when a confirmation ended without a confirmed cart (outcome unknown).
-  // The next confirmation is blocked until the cart is re-read from its owner,
-  // so an already-applied change is never replayed.
-  const [needsCartReconcile, setNeedsCartReconcile] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
   const [stadiumExpanded, setStadiumExpanded] = useState(false);
   const [seatZoom, setSeatZoom] = useState<number>(SEAT_ZOOM_LEVELS[0]);
@@ -180,6 +177,10 @@ export default function MatchDetail() {
   const selectedZoneMatchIdRef = useRef<string | null>(null);
   const auth = useAuth();
   const cart = useCart();
+  // The shared CartContext gate (not screen-local): an unknown cart outcome on
+  // any surface blocks this confirmation until the owner has re-read the cart,
+  // so an already-applied change is never replayed.
+  const needsCartReconcile = reconciliationActive(cart.cartReconciliation, cart.sessionId);
   const toast = useToast();
   // Same grouping HeaderActions/Cart/Checkout already use for the cart
   // badge count — one shared cart authority, several presentations.
@@ -482,7 +483,7 @@ export default function MatchDetail() {
   // actually published, for the current session, to reflect every change.
   const commitSelections = async () => {
     if (!ensureAuthenticated()) return;
-    if (isCommitting || isReconciling || needsCartReconcile) return;
+    if (isCommitting || isReconciling || cart.isCartReconciliationRequired()) return;
     if (!preflight.canConfirm) return;
     const plan: CommitPlan = {
       matchId: routeMatchId,
@@ -533,7 +534,7 @@ export default function MatchDetail() {
       // Not confirmed: drafts stay. They are re-diffed against whatever the
       // cart authoritatively shows, and when the outcome is unknown the cart
       // must be re-read before another attempt.
-      if (effects.needsReconcile) setNeedsCartReconcile(true);
+      if (effects.needsReconcile) cart.requireCartReconciliation("unconfirmed-mutation");
       toast.showToast({
         variant: "error",
         title: effects.needsReconcile
@@ -554,11 +555,9 @@ export default function MatchDetail() {
     if (isReconciling || isCommitting) return;
     setIsReconciling(true);
     try {
+      // The owner releases the shared gate only for a confirmed read.
       const result = await cart.refreshCart();
-      if (result.confirmed) {
-        setNeedsCartReconcile(false);
-        return;
-      }
+      if (result.confirmed) return;
       toast.showToast({
         variant: "error",
         title: i18n.t("selection.unconfirmed.title"),

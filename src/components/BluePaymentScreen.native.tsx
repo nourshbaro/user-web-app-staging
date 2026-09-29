@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/AppHeader";
-import { Button, useTheme } from "@/components/ui";
+import { AppText, StatePanel } from "@/components/foundation";
+import { useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
 import { useAlertDialog } from "@/context/AlertDialogContext";
@@ -9,10 +10,13 @@ import {
   readBluePaymentHandoff,
 } from "@/lib/bluePaymentHandoff";
 import { blueResultDisplayParams, decideBlueNavigation } from "@/lib/bluePaymentRedirect";
+import { blueSuccessCompletion } from "@/lib/checkoutFlow";
 import { config } from "@/lib/config";
+import { markPaymentOutcomeUnknown, settlePaymentAttempt } from "@/lib/paymentOutcomeLock";
+import { useI18n } from "@/i18n/I18nProvider";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, BackHandler, Linking, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, BackHandler, Linking, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewNavigation } from "react-native-webview";
 
@@ -25,6 +29,7 @@ export default function BluePaymentScreen() {
   const cart = useCart();
   const toast = useToast();
   const alertDialog = useAlertDialog();
+  const i18n = useI18n();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ handoff?: string | string[] }>();
   const handoffId = firstParam(params.handoff) ?? "";
@@ -33,8 +38,10 @@ export default function BluePaymentScreen() {
   const terminalHandledRef = useRef(false);
   const activeRef = useRef(true);
   const [loading, setLoading] = useState(Boolean(paymentUrl));
+  // Recovery points to My Tickets when a payment may have gone through.
+  const [recoverToTickets, setRecoverToTickets] = useState(false);
   const [error, setError] = useState<string | null>(
-    paymentUrl ? null : "This payment session is no longer available.",
+    paymentUrl ? null : i18n.t("payment.card.sessionGone"),
   );
 
   // BLUE may be processing remotely when the user leaves, so confirm the
@@ -42,17 +49,17 @@ export default function BluePaymentScreen() {
   // trusted success callback or the CartContext expiry authority clears it.
   const confirmLeave = useCallback(() => {
     void alertDialog.showAlert({
-      title: "Leave payment?",
-      message: "Your reservation remains active until its timer expires. You can return to Checkout and try again.",
+      title: i18n.t("payment.blue.leave.title"),
+      message: i18n.t("payment.blue.leave.message"),
       variant: "confirm",
-      cancelLabel: "Stay",
-      confirmLabel: "Leave",
+      cancelLabel: i18n.t("payment.blue.leave.stay"),
+      confirmLabel: i18n.t("payment.blue.leave.confirm"),
     }).then((leave) => {
       if (!leave) return;
       clearBluePaymentHandoff(handoffId);
       router.dismissTo("/checkout");
     });
-  }, [alertDialog, handoffId]);
+  }, [alertDialog, handoffId, i18n]);
 
   useEffect(() => {
     activeRef.current = true;
@@ -72,19 +79,47 @@ export default function BluePaymentScreen() {
     terminalHandledRef.current = true;
     const displayParams = blueResultDisplayParams(terminalUrl);
     if (result === "failed") {
+      // The provider's failure redirect is the existing definite "not
+      // completed" answer (the reservation stays payable), so the attempt's
+      // restart record is settled; nothing else changes.
+      if (handoff) void settlePaymentAttempt(handoff.sessionId);
       clearBluePaymentHandoff(handoffId);
       toast.showToast({
         variant: "error",
-        title: "Payment was not completed",
-        message: "Your reservation is still active. You can try again before the timer expires.",
+        title: i18n.t("payment.blue.failedToast.title"),
+        message: i18n.t("payment.blue.failedToast.message"),
       });
       router.dismissTo("/checkout");
       return;
     }
     const ticket = cart.captureCartSession();
-    if (!handoff || !ticket || ticket.sessionId !== handoff.sessionId) return;
-    const cleared = await cart.clearCartIfSession(ticket);
-    if (!cleared || !activeRef.current) return;
+    // The clear is attempted at most once (terminalHandledRef) and only for
+    // the handoff's own session; a newer session is never cleared.
+    let clear: "cleared" | "notCleared" | "threw" | "notAttempted" = "notAttempted";
+    if (handoff && ticket && ticket.sessionId === handoff.sessionId) {
+      try {
+        clear = (await cart.clearCartIfSession(ticket)) ? "cleared" : "notCleared";
+      } catch {
+        clear = "threw";
+      }
+    }
+    const completion = blueSuccessCompletion({
+      handoffSessionId: handoff?.sessionId ?? null,
+      currentSessionId: ticket?.sessionId ?? null,
+      clear,
+    });
+    if (completion !== "success") {
+      // Never success, never an automatic retry: the payment may have gone
+      // through, so this session's payment stays locked and the user is sent
+      // to My Tickets.
+      if (completion === "unreconciled" && handoff) markPaymentOutcomeUnknown(handoff.sessionId, "blue");
+      if (activeRef.current) {
+        setRecoverToTickets(true);
+        setError(i18n.t(completion === "unreconciled" ? "payment.blue.unreconciled" : "payment.blue.unmatched"));
+      }
+      return;
+    }
+    if (!activeRef.current || !handoff) return;
     clearPendingBluePaymentAttempt(handoff.sessionId);
     clearBluePaymentHandoff(handoffId);
     const resetRouter = router as typeof router & { dismissAll?: () => void };
@@ -93,7 +128,7 @@ export default function BluePaymentScreen() {
       pathname: "/checkout/success",
       params: { provider: "blue", ...displayParams },
     });
-  }, [cart, handoff, handoffId, toast]);
+  }, [cart, handoff, handoffId, i18n, toast]);
 
   const handleNavigation = useCallback((request: WebViewNavigation) => {
     const navigationUrl = request.url;
@@ -109,17 +144,23 @@ export default function BluePaymentScreen() {
     }
 
     if (navigationDecision.action === "handle_terminal" && terminalResult) {
-      handleTerminal(navigationUrl, terminalResult);
+      void handleTerminal(navigationUrl, terminalResult).catch(() => {
+        // Defensive: any unexpected failure is a recovery state, never success.
+        if (activeRef.current) {
+          setRecoverToTickets(true);
+          setError(i18n.t("payment.blue.unreconciled"));
+        }
+      });
       return false;
     }
 
     if (navigationDecision.decision === "invalid_url") {
-      setError("The payment page tried to open an invalid address.");
+      setError(i18n.t("payment.blue.invalidAddress"));
       return false;
     }
 
     if (navigationDecision.decision === "blocked_credentials") {
-      setError("The payment page tried to open an unsafe address.");
+      setError(i18n.t("payment.blue.unsafeAddress"));
       return false;
     }
     if (navigationDecision.action === "allow_webview") {
@@ -136,19 +177,19 @@ export default function BluePaymentScreen() {
           return Linking.openURL(externalUrl.href);
         })
         .catch(() => {
-          setError("This external action is not available on this device.");
+          setError(i18n.t("payment.blue.externalUnavailable"));
         });
       return false;
     }
 
     if (navigationDecision.decision === "blocked_dangerous_scheme") {
-      setError("This payment-page action is not supported inside the app.");
+      setError(i18n.t("payment.blue.unsupportedAction"));
       return false;
     }
 
-    setError("The payment page requested an unsupported external application.");
+    setError(i18n.t("payment.blue.unsupportedApp"));
     return false;
-  }, [handleTerminal]);
+  }, [handleTerminal, i18n]);
 
   const handleShouldStart = useCallback(
     (request: WebViewNavigation) => handleNavigation(request),
@@ -181,7 +222,7 @@ export default function BluePaymentScreen() {
       />
 
       <View style={local.header}>
-        <AppHeader title="BLUE Payment" subtitle="Secure payment" hideCart showTimer onBack={confirmLeave} />
+        <AppHeader title={i18n.t("payment.blue.title")} subtitle={i18n.t("payment.secure")} hideCart showTimer onBack={confirmLeave} />
       </View>
 
       <View style={local.paymentArea}>
@@ -196,33 +237,67 @@ export default function BluePaymentScreen() {
           onShouldStartLoadWithRequest={handleShouldStart}
           onLoadStart={() => setLoading(true)}
           onLoadEnd={() => setLoading(false)}
-          onError={() => showUnavailable("The Blue payment page could not be loaded.")}
+          onError={() => showUnavailable(i18n.t("payment.blue.pageFailed"))}
           onHttpError={(event) => {
             if (event.nativeEvent.statusCode >= 400) {
-              showUnavailable("The Blue payment page returned an error.");
+              showUnavailable(i18n.t("payment.blue.pageError"));
             }
           }}
-          onRenderProcessGone={() => showUnavailable("The Android payment renderer stopped.")}
-          onContentProcessDidTerminate={() => showUnavailable("The iOS payment process stopped.")}
+          onRenderProcessGone={() => showUnavailable(i18n.t("payment.blue.rendererStopped"))}
+          onContentProcessDidTerminate={() => showUnavailable(i18n.t("payment.blue.rendererStopped"))}
           style={local.webView}
           />
         ) : null}
 
         {loading && !error ? (
-          <View style={[local.overlay, { backgroundColor: theme.colors.panel }]}>
-          <ActivityIndicator color={theme.colors.primary} />
-          <Text style={[local.loadingTitle, { color: theme.colors.ink }]}>Opening Blue Wallet</Text>
-          <Text style={[local.message, { color: theme.colors.muted }]}>Please wait while the payment page loads.</Text>
+          <View
+            style={[local.overlay, { backgroundColor: theme.colors.surface }]}
+            accessible
+            accessibilityRole="progressbar"
+            accessibilityLabel={`${i18n.t("payment.blue.loading.title")}. ${i18n.t("payment.blue.loading.message")}`}
+            aria-busy
+          >
+            <ActivityIndicator color={theme.colors.actionPrimary} />
+            <AppText variant="cardTitle" align="center" style={local.loadingTitle}>{i18n.t("payment.blue.loading.title")}</AppText>
+            <AppText variant="meta" tone="muted" align="center">{i18n.t("payment.blue.loading.message")}</AppText>
           </View>
         ) : null}
 
         {error ? (
-          <View style={[local.overlay, { backgroundColor: theme.colors.panel }]}>
-          <Text accessibilityRole="alert" style={[local.errorTitle, { color: theme.colors.ink }]}>Payment unavailable</Text>
-          <Text style={[local.message, { color: theme.colors.muted }]}>
-            {error} Your reservation remains available while its timer is active.
-          </Text>
-          <Button title="Return to Checkout" onPress={() => { clearBluePaymentHandoff(handoffId); router.dismissTo("/checkout"); }} />
+          <View style={[local.overlay, { backgroundColor: theme.colors.bg }]}>
+            <StatePanel
+              variant={recoverToTickets ? "info" : "error"}
+              title={recoverToTickets ? i18n.t("payment.unknown.title") : i18n.t("payment.unavailable.title")}
+              message={recoverToTickets ? error : `${error} ${i18n.t("payment.blue.reservationNote")}`}
+              action={
+                recoverToTickets
+                  ? {
+                      label: i18n.t("payment.viewTickets"),
+                      onPress: () => {
+                        clearBluePaymentHandoff(handoffId);
+                        router.replace("/tickets");
+                      },
+                    }
+                  : {
+                      label: i18n.t("payment.blue.return"),
+                      onPress: () => {
+                        clearBluePaymentHandoff(handoffId);
+                        router.dismissTo("/checkout");
+                      },
+                    }
+              }
+              secondaryAction={
+                recoverToTickets
+                  ? {
+                      label: i18n.t("payment.blue.return"),
+                      onPress: () => {
+                        clearBluePaymentHandoff(handoffId);
+                        router.dismissTo("/checkout");
+                      },
+                    }
+                  : undefined
+              }
+            />
           </View>
         ) : null}
       </View>
@@ -236,7 +311,5 @@ const local = StyleSheet.create({
   paymentArea: { flex: 1 },
   webView: { flex: 1, backgroundColor: "#FFFFFF" },
   overlay: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, padding: 28, alignItems: "center", justifyContent: "center" },
-  loadingTitle: { marginTop: 14, fontSize: 17, lineHeight: 23, fontWeight: "900", textAlign: "center" },
-  errorTitle: { fontSize: 20, lineHeight: 27, fontWeight: "900", textAlign: "center" },
-  message: { maxWidth: 420, marginTop: 7, fontSize: 13, lineHeight: 19, textAlign: "center" },
+  loadingTitle: { marginTop: 14 },
 });

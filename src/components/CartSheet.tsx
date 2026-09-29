@@ -1,45 +1,43 @@
 import { BottomSheetModal } from "@/components/BottomSheetModal";
-import { Button, Card, Empty, useResponsive, useTheme } from "@/components/ui";
+import { CartLineItem } from "@/components/cart/CartLineItem";
+import { CartNotice } from "@/components/cart/CartNotice";
+import { ReservationStatus } from "@/components/cart/ReservationStatus";
+import { AppText, SkeletonBlock, SkeletonGroup, StatePanel } from "@/components/foundation";
+import { Button, useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
-import { useToast } from "@/context/ToastContext";
+import { useCartLineActions } from "@/hooks/useCartLineActions";
+import { useI18n } from "@/i18n/I18nProvider";
 import { groupCartItems } from "@/lib/cartDisplay";
+import { cartViewState, ticketCount } from "@/lib/cartPresentation";
+import { radius, spacing } from "@/lib/designTokens";
 import { formatMoney } from "@/lib/format";
-import { userFacingError } from "@/lib/userFacingError";
 import { router } from "expo-router";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 type CartSheetProps = {
   visible: boolean;
   onClose: () => void;
 };
 
+/**
+ * Quick cart opened from the header cart button. Same owner, same line
+ * actions and the same presentation rules as the Cart screen.
+ */
 export function CartSheet({ visible, onClose }: CartSheetProps) {
   const cart = useCart();
-  const responsive = useResponsive();
   const theme = useTheme();
-  const toast = useToast();
+  const i18n = useI18n();
+  const actions = useCartLineActions();
   const groupedItems = groupCartItems(cart.items);
-  const isWide = responsive.width >= 860;
-
-  const removeItems = async (lockKeys: string[]) => {
-    try {
-      await cart.removeItems(lockKeys);
-      toast.showToast({
-        variant: "success",
-        title: "Removed from cart",
-        message: "The ticket reservation was removed.",
-      });
-    } catch (err) {
-      toast.showToast({
-        variant: "error",
-        title: "Could not remove item",
-        message: userFacingError(
-          err,
-          "Could not update your cart. Please try again.",
-        ),
-      });
-    }
-  };
+  const tickets = ticketCount(groupedItems);
+  const viewState = cartViewState({
+    sessionId: cart.sessionId,
+    itemCount: groupedItems.length,
+    refreshError: cart.cartRefreshError,
+    secondsLeft: cart.secondsLeft,
+  });
+  const hasItems = viewState === "active" || viewState === "expired";
+  const blocked = viewState !== "active" || actions.busy || actions.needsCartCheck || cart.isLoading;
 
   const viewCart = () => {
     onClose();
@@ -47,6 +45,7 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
   };
 
   const checkout = () => {
+    if (blocked) return;
     onClose();
     router.navigate("/checkout/ticket-holders");
   };
@@ -55,179 +54,95 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
     <BottomSheetModal
       visible={visible}
       onClose={onClose}
-      title="Your cart"
-      subtitle={
-        groupedItems.length
-          ? `${groupedItems.length} item${groupedItems.length > 1 ? "s" : ""} reserved`
-          : "No active reservation"
-      }
+      title={i18n.t("cart.title")}
+      subtitle={hasItems ? i18n.plural("cart.subtitle", tickets) : i18n.t("cart.noReservation")}
       scrollable
       contentContainerStyle={local.content}
     >
-      {groupedItems.length ? (
-          <View style={[local.cartLayout, isWide && local.cartLayoutWide]}>
-            <View style={[local.itemsColumn, isWide && local.itemsColumnWide]}>
-              {/* <Card>
-                <View style={theme.styles.row}>
-                  <Text style={theme.styles.h2}>Reservation</Text>
-                  <CartTimerPill seconds={cart.secondsLeft} />
-                </View>
-                <Text style={theme.styles.muted}>Checkout before the timer ends to keep these tickets.</Text>
-              </Card> */}
+      {viewState === "loading" ? (
+        <SkeletonGroup label={i18n.t("cart.loading")}>
+          <SkeletonBlock height={120} borderRadius={radius.lg} />
+        </SkeletonGroup>
+      ) : viewState === "refreshFailed" ? (
+        <StatePanel
+          variant="error"
+          title={i18n.t("cart.refreshFailed.title")}
+          message={i18n.t("cart.refreshFailed.message")}
+          action={{ label: i18n.t("common.retry"), onPress: () => void actions.checkCart() }}
+        />
+      ) : viewState === "empty" ? (
+        <StatePanel variant="empty" title={i18n.t("cart.empty.title")} message={i18n.t("cart.empty.message")} />
+      ) : (
+        <>
+          <ReservationStatus secondsLeft={cart.secondsLeft} />
+          {viewState === "expired" ? (
+            <StatePanel variant="unavailable" title={i18n.t("cart.expired.title")} message={i18n.t("cart.expired.message")} />
+          ) : null}
+          {actions.needsCartCheck ? (
+            <CartNotice
+              message={i18n.t("cart.unconfirmed.message")}
+              action={{ label: i18n.t("cart.check.action"), busy: actions.checkingCart, onPress: () => void actions.checkCart() }}
+            />
+          ) : cart.cartRefreshError ? (
+            <CartNotice
+              message={i18n.t("cart.refreshWarning")}
+              action={{ label: i18n.t("common.retry"), busy: actions.checkingCart, onPress: () => void actions.checkCart() }}
+            />
+          ) : null}
 
-              {groupedItems.map((item) => (
-                <Card key={item.key}>
-                  <View style={theme.styles.row}>
-                    <View style={local.itemMain}>
-                      <Text style={theme.styles.h2}>
-                        {item.zone_name ?? "Ticket"}
-                      </Text>
-                      <Text style={theme.styles.muted}>
-                        {item.match_title ?? `Match ${item.match_id}`}
-                      </Text>
-                      <Text style={theme.styles.muted}>
-                        {item.seats.length
-                          ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}`
-                          : `Qty: ${item.quantity}`}
-                      </Text>
-                    </View>
-                    <Text
-                      style={[local.itemPrice, { color: theme.colors.primary }]}
-                    >
-                      {formatMoney(item.subtotal, item.currency)}
-                    </Text>
-                  </View>
-                  <View style={theme.styles.row}>
-                    <Text style={theme.styles.muted}>
-                      {formatMoney(item.unit_price, item.currency)} / ticket
-                    </Text>
-                    <Button
-                      title="Remove"
-                      variant="danger"
-                      onPress={() => void removeItems(item.lockKeys)}
-                    />
-                  </View>
-                </Card>
-              ))}
+          {groupedItems.map((line) => {
+            const zone = line.zone_name ?? i18n.t("cart.zoneFallback");
+            return (
+              <CartLineItem
+                key={line.key}
+                line={line}
+                showMatch
+                busy={actions.pendingLineKey === line.key}
+                disabled={blocked}
+                onChangeQuantity={(quantity) => void actions.setQuantity(line, quantity)}
+                onRemove={() => void actions.removeLine(line, zone)}
+              />
+            );
+          })}
+
+          <View
+            style={[local.total, { borderTopColor: theme.colors.border }]}
+            accessible
+            accessibilityLabel={`${i18n.t("cart.total")}, ${formatMoney(cart.total, cart.currency)}`}
+          >
+            <AppText variant="sectionTitle">{i18n.t("cart.total")}</AppText>
+            <AppText variant="numeric">{formatMoney(cart.total, cart.currency)}</AppText>
+          </View>
+
+          <View style={local.actionsRow}>
+            <View style={local.action}>
+              <Button title={i18n.t("cart.viewCart")} variant="secondary" onPress={viewCart} />
             </View>
-
-            <View
-              style={[local.summaryColumn, isWide && local.summaryColumnWide]}
-            >
-              {/* <Card>
-                <Text style={theme.styles.h2}>Order summary</Text>
-                <Text style={theme.styles.muted}>
-                  {groupedItems.length} item
-                  {groupedItems.length === 1 ? "" : "s"} reserved
-                </Text>
-                {groupedItems.map((item) => (
-                  <View
-                    key={item.key}
-                    style={[
-                      local.summaryItem,
-                      { borderTopColor: theme.colors.line },
-                    ]}
-                  >
-                    <View style={local.summaryMain}>
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          local.summaryTitle,
-                          { color: theme.colors.ink },
-                        ]}
-                      >
-                        {item.zone_name ?? "Ticket"}
-                      </Text>
-                      <Text numberOfLines={1} style={theme.styles.muted}>
-                        {item.match_title ?? `Match ${item.match_id}`}
-                      </Text>
-                      <Text style={theme.styles.muted}>
-                        {item.seats.length
-                          ? `Seats: ${item.seats.map((seat) => seat.label ?? `${seat.row}${seat.number}`).join(", ")}`
-                          : `Qty: ${item.quantity}`}
-                      </Text>
-                    </View>
-                    <Text
-                      style={[local.summaryPrice, { color: theme.colors.ink }]}
-                    >
-                      {formatMoney(item.subtotal, item.currency)}
-                    </Text>
-                  </View>
-                ))}
-                <View
-                  style={[
-                    local.summaryTotal,
-                    { borderTopColor: theme.colors.line },
-                  ]}
-                >
-                  <Text style={theme.styles.h2}>Total</Text>
-                  <Text style={theme.styles.h2}>
-                    {formatMoney(cart.total, cart.currency)}
-                  </Text>
-                </View>
-              </Card> */}
-
-              <View style={local.actionsRow}>
-                <View style={{ flex: 1 }}>
-                  <Button
-                    title="View Cart"
-                    variant="secondary"
-                    onPress={viewCart}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Button title="Checkout" onPress={checkout} />
-                </View>
-              </View>
+            <View style={local.action}>
+              <Button
+                title={i18n.t("cart.checkout")}
+                onPress={checkout}
+                disabled={blocked}
+                accessibilityHint={i18n.t("cart.checkoutHint")}
+              />
             </View>
           </View>
-        ) : cart.cartRefreshError ? (
-          <Card>
-            <Empty
-              title="Unable to load your cart"
-              detail={cart.cartRefreshError}
-            />
-            <Button title="Retry" onPress={() => void cart.refreshCart()} />
-          </Card>
-        ) : (
-          <Empty
-            title="Your cart is empty"
-            detail="Pick a match and reserve tickets to start checkout."
-          />
-        )}
+        </>
+      )}
     </BottomSheetModal>
   );
 }
 
 const local = {
-  content: { gap: 12, paddingTop: 12, paddingBottom: 12 },
-  cartLayout: { gap: 12 },
-  cartLayoutWide: {
-    flexDirection: "row" as const,
-    alignItems: "flex-start" as const,
-  },
-  itemsColumn: { gap: 12 },
-  itemsColumnWide: { flex: 1, minWidth: 0 },
-  summaryColumn: { gap: 12 },
-  summaryColumnWide: { width: 320 },
-  summaryItem: {
-    flexDirection: "row" as const,
-    alignItems: "flex-start" as const,
-    gap: 10,
-    borderTopWidth: 1,
-    paddingTop: 10,
-  },
-  summaryMain: { flex: 1, minWidth: 0 },
-  summaryTitle: { fontSize: 14, fontWeight: "900" as const },
-  summaryPrice: { fontSize: 13, fontWeight: "900" as const },
-  summaryTotal: {
+  content: { gap: spacing.md, paddingTop: spacing.md, paddingBottom: spacing.md },
+  total: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
     justifyContent: "space-between" as const,
+    gap: spacing.md,
     borderTopWidth: 1,
-    paddingTop: 12,
+    paddingTop: spacing.md,
   },
-  itemMain: { flex: 1, gap: 4 },
-  itemPrice: { fontSize: 16, fontWeight: "900" as const },
-  actionsRow: { flexDirection: "row" as const, gap: 10 },
+  actionsRow: { flexDirection: "row" as const, gap: spacing.sm },
+  action: { flex: 1 },
 };

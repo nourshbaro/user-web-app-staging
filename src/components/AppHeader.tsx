@@ -4,6 +4,7 @@ import { useTheme } from "@/components/ui";
 import { HeaderActions } from "@/components/HeaderActions";
 import { CartTimerPill } from "@/components/CartTimer";
 import { useCart } from "@/context/CartContext";
+import { useI18n } from "@/i18n/I18nProvider";
 
 export function AppHeader({
   title,
@@ -13,6 +14,7 @@ export function AppHeader({
   onBack,
   showTimer = false,
   showCartWithTimer = false,
+  backDisabled = false,
 }: {
   title: string;
   subtitle?: string;
@@ -21,10 +23,14 @@ export function AppHeader({
   onBack?: () => void;
   showTimer?: boolean;
   showCartWithTimer?: boolean;
+  /** Back is temporarily unavailable (e.g. a payment is being submitted). */
+  backDisabled?: boolean;
 }) {
   const theme = useTheme();
   const cart = useCart();
+  const { t } = useI18n();
   const handleBack = () => {
+    if (backDisabled) return;
     if (onBack) {
       onBack();
       return;
@@ -40,7 +46,7 @@ export function AppHeader({
     <View style={local.header}>
       <View style={local.left}>
         {showBack ? (
-          <Pressable onPress={handleBack} style={[local.iconButton, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+          <Pressable onPress={handleBack} disabled={backDisabled} accessibilityRole="button" accessibilityLabel={t("common.back")} accessibilityState={{ disabled: backDisabled }} aria-disabled={backDisabled} hitSlop={4} style={[local.iconButton, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }, backDisabled && { opacity: 0.4 }]}>
             <View style={[local.backChevron, { borderColor: theme.colors.ink }]} />
           </Pressable>
         ) : null}

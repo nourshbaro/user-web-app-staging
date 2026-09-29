@@ -14,6 +14,17 @@ export type CartDisplayItem = {
   subtotal: number;
 };
 
+/**
+ * Display amount from the backend value. A missing or non-numeric price stays
+ * NaN (formatMoney shows "Price unavailable") and poisons any sum; it is never
+ * coerced to 0, which would look like a genuine free ticket.
+ */
+function displayAmount(value: unknown) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "") return Number(value);
+  return Number.NaN;
+}
+
 function itemQuantity(item: CartItem) {
   const seatCount = item.seats?.length ?? 0;
   return Number(item.quantity ?? (seatCount || 0));
@@ -37,7 +48,7 @@ export function groupCartItems(items: CartItem[]): CartDisplayItem[] {
       current.lockKeys.push(item.lock_key);
       current.quantity += itemQuantity(item);
       current.seats.push(...seats);
-      current.subtotal += Number(item.subtotal ?? 0);
+      current.subtotal += displayAmount(item.subtotal);
       return;
     }
 
@@ -50,9 +61,9 @@ export function groupCartItems(items: CartItem[]): CartDisplayItem[] {
       match_title: item.match_title,
       quantity: itemQuantity(item),
       seats: [...seats],
-      unit_price: Number(item.unit_price ?? 0),
+      unit_price: displayAmount(item.unit_price),
       currency: item.currency,
-      subtotal: Number(item.subtotal ?? 0),
+      subtotal: displayAmount(item.subtotal),
     });
   });
 

@@ -1,6 +1,7 @@
 import Constants from "expo-constants";
 import * as Device from "expo-device";
-import * as Notifications from "expo-notifications";
+import { isRunningInExpoGo } from "expo";
+import type * as NotificationsModule from "expo-notifications";
 import { Platform } from "react-native";
 import {
   getMessaging,
@@ -8,7 +9,25 @@ import {
   onTokenRefresh,
 } from "@react-native-firebase/messaging";
 
-Notifications.setNotificationHandler({
+/**
+ * Push is available in development and release builds. It is not in Expo Go:
+ * since SDK 53, `expo-notifications` throws *while being imported* on Android
+ * Expo Go (its auto-registration side effect calls `addPushTokenListener`,
+ * which throws there), and Expo Go ships no React Native Firebase native
+ * module, so `getMessaging()` throws on every platform. In Expo Go this module
+ * therefore never loads `expo-notifications` and never touches Firebase; every
+ * helper degrades to "no push". Builds behave exactly as before.
+ */
+export const pushRuntimeSupported = !isRunningInExpoGo();
+
+// Loaded eagerly (same timing as the former static import) wherever push is
+// supported; a conditional require keeps Expo Go from evaluating the package.
+const Notifications: typeof NotificationsModule | null = pushRuntimeSupported
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  ? (require("expo-notifications") as typeof NotificationsModule)
+  : null;
+
+Notifications?.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
     shouldShowList: true,
@@ -22,8 +41,31 @@ export type NotificationPermissionState =
   | "denied"
   | "undetermined";
 
+export type NotificationData = Record<string, unknown>;
+
+function notificationData(response: NotificationsModule.NotificationResponse | null): NotificationData | null {
+  const data = response?.notification.request.content.data;
+  return data && typeof data === "object" ? (data as NotificationData) : null;
+}
+
+/** Data of the notification that launched the app, if any. */
+export async function getInitialNotificationData(): Promise<NotificationData | null> {
+  if (!Notifications) return null;
+  return notificationData(await Notifications.getLastNotificationResponseAsync());
+}
+
+/** Subscribes to notification taps; returns the unsubscribe function. */
+export function subscribeToNotificationResponses(onData: (data: NotificationData) => void): () => void {
+  if (!Notifications) return () => {};
+  const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    const data = notificationData(response);
+    if (data) onData(data);
+  });
+  return () => subscription.remove();
+}
+
 export async function configureNotificationChannel() {
-  if (Platform.OS !== "android") {
+  if (Platform.OS !== "android" || !Notifications) {
     return;
   }
 
@@ -34,6 +76,9 @@ export async function configureNotificationChannel() {
 }
 
 export async function getNotificationPermissionStatus(): Promise<NotificationPermissionState> {
+  // No push runtime: report "denied" so nothing prompts or registers.
+  if (!Notifications) return "denied";
+
   const settings = await Notifications.getPermissionsAsync();
 
   if (settings.status === Notifications.PermissionStatus.GRANTED) {
@@ -47,7 +92,9 @@ export async function getNotificationPermissionStatus(): Promise<NotificationPer
   return "undetermined";
 }
 
-export async function requestNotificationPermission() {
+export async function requestNotificationPermission(): Promise<NotificationPermissionState> {
+  if (!Notifications) return "denied";
+
   const requested =
     await Notifications.requestPermissionsAsync();
 
@@ -69,7 +116,7 @@ export async function requestNotificationPermission() {
 }
 
 export async function getDevicePushToken(): Promise<string | null> {
-  if (!Device.isDevice) {
+  if (!Device.isDevice || !Notifications) {
     return null;
   }
 
@@ -87,7 +134,7 @@ export async function getDevicePushToken(): Promise<string | null> {
 }
 
 export async function getFcmDeviceToken(): Promise<string | null> {
-  if (!Device.isDevice) {
+  if (!Device.isDevice || !pushRuntimeSupported) {
     return null;
   }
 
@@ -108,12 +155,16 @@ export function subscribeToFcmTokenRefresh(
   if (Platform.OS !== "android" && Platform.OS !== "ios") {
     return () => {};
   }
+  // Expo Go has no React Native Firebase native module.
+  if (!pushRuntimeSupported) {
+    return () => {};
+  }
 
   return onTokenRefresh(getMessaging(), onRefresh);
 }
 
 export async function getExpoPushToken(): Promise<string | null> {
-  if (!Device.isDevice) {
+  if (!Device.isDevice || !Notifications) {
     return null;
   }
 

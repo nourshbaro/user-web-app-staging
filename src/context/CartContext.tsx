@@ -25,6 +25,23 @@ import {
   unconfirmedPublication,
   type CartPublicationResult,
 } from "@/lib/cartPublication";
+import {
+  NO_RECONCILIATION,
+  dropIfSessionEnded,
+  failureIsAmbiguous,
+  raiseReconciliation,
+  reconciliationActive,
+  releaseAfterRead,
+  runGroupedRemoval,
+  type CartReconciliation,
+  type CartReconciliationReason,
+} from "@/lib/cartReconciliation";
+import { errorFacts } from "@/lib/apiErrorFacts";
+import {
+  configurePaymentOutcomeStore,
+  discardPaymentOutcomeUnlessSession,
+  restorePaymentOutcomeLock,
+} from "@/lib/paymentOutcomeLock";
 import { storage } from "@/lib/storage";
 import { userFacingError } from "@/lib/userFacingError";
 import { ApiError } from "@/services/api";
@@ -32,6 +49,15 @@ import { cartService, getCartItems } from "@/services/cart";
 import type { AddCartRequest, CartItem } from "@/types";
 
 const SESSION_KEY = "lfa_cart_session_id";
+const PAYMENT_OUTCOME_KEY = "lfa_payment_outcome_lock";
+
+// The unknown-payment lock is keyed by this owner's session id and restored
+// with it (see paymentOutcomeLock.ts); it holds no payment status itself.
+configurePaymentOutcomeStore({
+  get: () => storage.get(PAYMENT_OUTCOME_KEY),
+  set: (value) => storage.set(PAYMENT_OUTCOME_KEY, value),
+  remove: () => storage.remove(PAYMENT_OUTCOME_KEY),
+});
 
 /**
  * Resolved by addItem/updateItem/removeItem/refreshCart: whether the resulting
@@ -39,6 +65,32 @@ const SESSION_KEY = "lfa_cart_session_id";
  * Callers that only need completion can ignore it.
  */
 export type CartPublication = CartPublicationResult<CartItem>;
+
+/**
+ * Result of a grouped removal (`removeItems`). Like CartPublication, a
+ * resolved promise is not success on its own:
+ * - notPerformed: no delete was sent;
+ * - confirmed: every delete succeeded and the resulting cart was published
+ *   for the same session;
+ * - sessionEnded: the session ended (expiry/clear) during the removal, so the
+ *   empty cart proves nothing about the requested delete;
+ * - ambiguous: some deletes may have been applied (partial or unconfirmed);
+ *   the shared reconciliation gate is raised.
+ * A definite rejection of every delete (nothing applied) throws, as before.
+ */
+export type CartRemovalResult =
+  | { status: "notPerformed"; reason: "no-session" | "session-changed" | "reconciliation-required" }
+  | { status: "confirmed"; publication: CartPublication }
+  | { status: "sessionEnded"; applied: string[]; failed: string[] }
+  | { status: "ambiguous"; applied: string[]; failed: string[] };
+
+/** Owner state read synchronously at the moment of a payment action. */
+export type CartGuardState = {
+  sessionId: string | null;
+  itemCount: number;
+  expired: boolean;
+  reconciliationRequired: boolean;
+};
 
 type CartContextValue = {
   sessionId: string | null;
@@ -50,9 +102,15 @@ type CartContextValue = {
   cartRefreshError: string | null;
   addItem: (payload: Omit<AddCartRequest, "checkout_session_id">) => Promise<CartPublication>;
   removeItem: (lockKey: string) => Promise<CartPublication>;
-  removeItems: (lockKeys: string[]) => Promise<void>;
+  removeItems: (lockKeys: string[]) => Promise<CartRemovalResult>;
   updateItem: (lockKey: string, quantity: number) => Promise<CartPublication>;
   refreshCart: () => Promise<CartPublication>;
+  /** Shared "re-read the cart first" gate (see `cartReconciliation.ts`). */
+  cartReconciliation: CartReconciliation;
+  /** True while the gate applies to the current session; read synchronously. */
+  isCartReconciliationRequired: () => boolean;
+  requireCartReconciliation: (reason: CartReconciliationReason) => void;
+  readCartGuardState: () => CartGuardState;
   clearCart: () => Promise<void>;
   captureCartSession: () => CartSessionTicket | null;
   isCartSessionCurrent: (ticket: CartSessionTicket) => boolean;
@@ -78,6 +136,10 @@ export function CartProvider({ children }: PropsWithChildren) {
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [isLoading, setLoading] = useState(false);
   const [cartRefreshError, setCartRefreshError] = useState<string | null>(null);
+  const [cartReconciliation, setCartReconciliationState] = useState<CartReconciliation>(NO_RECONCILIATION);
+  const reconciliationRef = useRef<CartReconciliation>(NO_RECONCILIATION);
+  const itemsRef = useRef<CartItem[]>([]);
+  const expiresAtRef = useRef<Date | null>(null);
   const expiryHandledRef = useRef(false);
   const refreshGuardRef = useRef(createCartRefreshGuard());
   const addMutationGuardRef = useRef(createSingleFlight());
@@ -118,10 +180,72 @@ export function CartProvider({ children }: PropsWithChildren) {
     setCurrency("USD");
     setSecondsLeft(0);
     setCartRefreshError(null);
+    // The owner ended this session: its gate (if any) no longer applies.
+    reconciliationRef.current = dropIfSessionEnded(reconciliationRef.current, null);
+    setCartReconciliationState(reconciliationRef.current);
   }, []);
 
   useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    expiresAtRef.current = expiresAt;
+  }, [expiresAt]);
+
+  const setReconciliation = useCallback((next: CartReconciliation) => {
+    if (next === reconciliationRef.current) return;
+    reconciliationRef.current = next;
+    setCartReconciliationState(next);
+  }, []);
+
+  const raiseGate = useCallback((sessionId: string | null, reason: CartReconciliationReason) => {
+    setReconciliation(raiseReconciliation(reconciliationRef.current, sessionId, reason));
+  }, [setReconciliation]);
+
+  const requireCartReconciliation = useCallback((reason: CartReconciliationReason) => {
+    raiseGate(sessionAuthorityRef.current.currentSessionId(), reason);
+  }, [raiseGate]);
+
+  const isCartReconciliationRequired = useCallback(
+    () => reconciliationActive(reconciliationRef.current, sessionAuthorityRef.current.currentSessionId()),
+    [],
+  );
+
+  const readCartGuardState = useCallback((): CartGuardState => {
+    const currentSessionId = sessionAuthorityRef.current.currentSessionId();
+    return {
+      sessionId: currentSessionId,
+      itemCount: itemsRef.current.length,
+      expired: isCartExpiryReached(expiresAtRef.current, Date.now()),
+      reconciliationRequired: reconciliationActive(reconciliationRef.current, currentSessionId),
+    };
+  }, []);
+
+  /**
+   * Runs one mutation and raises the shared gate when its outcome is unknown:
+   * an ambiguous failure (transport or server error), or an applied change
+   * whose refresh could not be published.
+   */
+  const trackOutcome = useCallback(async (
+    sessionId: string | null,
+    run: () => Promise<CartPublication>,
+  ): Promise<CartPublication> => {
+    try {
+      const result = await run();
+      if (!result.confirmed && result.reason === "refresh-failed") raiseGate(sessionId, "unconfirmed-mutation");
+      return result;
+    } catch (error) {
+      if (failureIsAmbiguous(errorFacts(error))) raiseGate(sessionId, "unconfirmed-mutation");
+      throw error;
+    }
+  }, [raiseGate]);
+
+  useEffect(() => {
     invalidatePendingBluePaymentAttemptUnlessSession(sessionId);
+    // A different, current session never inherits another session's lock.
+    // A null session is not "different": it may be a restore in progress.
+    if (sessionId !== null) void discardPaymentOutcomeUnlessSession(sessionId);
   }, [sessionId]);
 
   const resetCartState = useCallback(() => {
@@ -262,13 +386,23 @@ export function CartProvider({ children }: PropsWithChildren) {
   const refreshCart = useCallback((): Promise<CartPublication> => {
     const expected = sessionAuthorityRef.current.capture();
     // No session: the authoritative client cart is empty.
-    if (!expected) return Promise.resolve(confirmedPublication<CartItem>(null, []));
+    if (!expected) {
+      setReconciliation(releaseAfterRead(reconciliationRef.current, { confirmed: true, readSessionId: null }));
+      return Promise.resolve(confirmedPublication<CartItem>(null, []));
+    }
 
     return operationQueue.run(
       () => refreshCartForSession(expected),
       { trackLoading: false },
-    );
-  }, [operationQueue, refreshCartForSession]);
+    ).then((result) => {
+      // Only a confirmed read of the gated session releases the shared gate.
+      setReconciliation(releaseAfterRead(reconciliationRef.current, {
+        confirmed: result.confirmed,
+        readSessionId: expected.sessionId,
+      }));
+      return result;
+    });
+  }, [operationQueue, refreshCartForSession, setReconciliation]);
 
   useEffect(() => {
     const refreshGuard = refreshGuardRef.current;
@@ -276,6 +410,7 @@ export function CartProvider({ children }: PropsWithChildren) {
     void sessionAuthorityRef.current.enqueuePersistence(async () => {
       if (!auth.isReady || !auth.isAuthenticated) {
         await storage.remove(SESSION_KEY);
+        await restorePaymentOutcomeLock(null);
         return;
       }
       const stored = await storage.get(SESSION_KEY);
@@ -286,11 +421,21 @@ export function CartProvider({ children }: PropsWithChildren) {
       if (persisted.kind === "malformed" || persisted.kind === "expired") {
         refreshGuard.invalidate();
         await storage.remove(SESSION_KEY);
+        await restorePaymentOutcomeLock(null);
         if (mountedRef.current) resetCartState();
         return;
       }
 
+      if (persisted.kind === "none") {
+        await restorePaymentOutcomeLock(null);
+        return;
+      }
+
       if (persisted.kind === "active" || persisted.kind === "legacy") {
+        // Restore this session's unknown-payment lock *before* publishing the
+        // session, so no screen can see it payable in between.
+        await restorePaymentOutcomeLock(persisted.sessionId);
+        if (!mountedRef.current) return;
         sessionAuthorityRef.current.replace(persisted.sessionId);
         setSessionId(persisted.sessionId);
         if (persisted.kind === "active") setExpiresAt(new Date(persisted.expiresAt));
@@ -338,14 +483,16 @@ export function CartProvider({ children }: PropsWithChildren) {
     payload: Omit<AddCartRequest, "checkout_session_id">,
   ): Promise<CartPublication> => {
     if (!auth.isReady || !auth.isAuthenticated) { router.push("/auth"); return Promise.resolve(unconfirmedPublication("unauthenticated")); }
+    if (isCartReconciliationRequired()) return Promise.resolve(unconfirmedPublication("reconciliation-required"));
     const expected = sessionAuthorityRef.current.captureCurrent();
 
     return addMutationGuardRef.current.run(
-      () => operationQueue.run(async (): Promise<CartPublication> => {
+      () => operationQueue.run(() => trackOutcome(expected.sessionId, async (): Promise<CartPublication> => {
         if (
           !mountedRef.current
           || !sessionAuthorityRef.current.isCurrent(expected)
         ) return unconfirmedPublication("session-changed");
+        if (isCartReconciliationRequired()) return unconfirmedPublication("reconciliation-required");
 
         const activeSessionId = expected.sessionId;
         const quantityToAdd = payload.quantity;
@@ -423,19 +570,21 @@ export function CartProvider({ children }: PropsWithChildren) {
         return published
           ? confirmedPublication(response.checkout_session_id, getCartItems(response.cart))
           : unconfirmedPublication("session-changed");
-      }),
+      })),
     );
-  }, [auth.isReady, auth.isAuthenticated, applyCart, items, operationQueue, publishCartResponseIfCurrent, resetCartState]);
+  }, [auth.isReady, auth.isAuthenticated, applyCart, isCartReconciliationRequired, items, operationQueue, publishCartResponseIfCurrent, resetCartState, trackOutcome]);
 
   const removeItem = useCallback((lockKey: string): Promise<CartPublication> => {
     const expected = sessionAuthorityRef.current.capture();
     if (!expected) return Promise.resolve(unconfirmedPublication("session-changed"));
+    if (isCartReconciliationRequired()) return Promise.resolve(unconfirmedPublication("reconciliation-required"));
 
-    return operationQueue.run(async (): Promise<CartPublication> => {
+    return operationQueue.run(() => trackOutcome(expected.sessionId, async (): Promise<CartPublication> => {
       if (
         !mountedRef.current
         || !sessionAuthorityRef.current.isCurrent(expected)
       ) return unconfirmedPublication("session-changed");
+      if (isCartReconciliationRequired()) return unconfirmedPublication("reconciliation-required");
 
       await cartService.remove(lockKey);
 
@@ -446,43 +595,43 @@ export function CartProvider({ children }: PropsWithChildren) {
 
       // The delete is only confirmed by the refresh that publishes the resulting cart.
       return refreshCartForSession(expected);
-    });
-  }, [operationQueue, refreshCartForSession]);
+    }));
+  }, [isCartReconciliationRequired, operationQueue, refreshCartForSession, trackOutcome]);
 
-  const removeItems = useCallback((lockKeys: string[]) => {
+  const removeItems = useCallback((lockKeys: string[]): Promise<CartRemovalResult> => {
     const expected = sessionAuthorityRef.current.capture();
-    if (!expected || !lockKeys.length) return Promise.resolve();
+    if (!expected || !lockKeys.length) return Promise.resolve({ status: "notPerformed", reason: "no-session" });
+    if (isCartReconciliationRequired()) {
+      return Promise.resolve({ status: "notPerformed", reason: "reconciliation-required" });
+    }
 
-    return operationQueue.run(async () => {
-      if (
-        !mountedRef.current
-        || !sessionAuthorityRef.current.isCurrent(expected)
-      ) return;
-
-      await Promise.all(
-        lockKeys.map((lockKey) => cartService.remove(lockKey)),
-      );
-
-      if (
-        !mountedRef.current
-        || !sessionAuthorityRef.current.isCurrent(expected)
-      ) return;
-
-      await refreshCartForSession(expected);
-    });
-  }, [operationQueue, refreshCartForSession]);
+    // The sequence lives in cartReconciliation.ts (runGroupedRemoval) so each
+    // outcome can be tested deterministically; it runs inside the same queue.
+    return operationQueue.run(() => runGroupedRemoval({
+      lockKeys,
+      sessionId: expected.sessionId,
+      isSessionCurrent: () => mountedRef.current && sessionAuthorityRef.current.isCurrent(expected),
+      isGateActive: isCartReconciliationRequired,
+      remove: (lockKey) => cartService.remove(lockKey),
+      refresh: () => refreshCartForSession(expected),
+      raiseGate,
+      factsOf: errorFacts,
+    }));
+  }, [isCartReconciliationRequired, operationQueue, raiseGate, refreshCartForSession]);
 
   const updateItem = useCallback((lockKey: string, quantity: number): Promise<CartPublication> => {
     if (quantity < 1) return removeItem(lockKey);
 
     const expected = sessionAuthorityRef.current.capture();
     if (!expected) return Promise.resolve(unconfirmedPublication("session-changed"));
+    if (isCartReconciliationRequired()) return Promise.resolve(unconfirmedPublication("reconciliation-required"));
 
-    return operationQueue.run(async (): Promise<CartPublication> => {
+    return operationQueue.run(() => trackOutcome(expected.sessionId, async (): Promise<CartPublication> => {
       if (
         !mountedRef.current
         || !sessionAuthorityRef.current.isCurrent(expected)
       ) return unconfirmedPublication("session-changed");
+      if (isCartReconciliationRequired()) return unconfirmedPublication("reconciliation-required");
 
       const response = await cartService.update(lockKey, { quantity });
 
@@ -496,8 +645,8 @@ export function CartProvider({ children }: PropsWithChildren) {
       return published
         ? confirmedPublication(response.checkout_session_id, getCartItems(response.cart))
         : unconfirmedPublication("session-changed");
-    });
-  }, [applyCart, operationQueue, publishCartResponseIfCurrent, removeItem]);
+    }));
+  }, [applyCart, isCartReconciliationRequired, operationQueue, publishCartResponseIfCurrent, removeItem, trackOutcome]);
 
   const value = useMemo(() => ({
     sessionId,
@@ -512,6 +661,10 @@ export function CartProvider({ children }: PropsWithChildren) {
     removeItems,
     updateItem,
     refreshCart,
+    cartReconciliation,
+    isCartReconciliationRequired,
+    requireCartReconciliation,
+    readCartGuardState,
     clearCart,
     captureCartSession,
     isCartSessionCurrent,
@@ -519,9 +672,13 @@ export function CartProvider({ children }: PropsWithChildren) {
   }), [
     addItem,
     captureCartSession,
+    cartReconciliation,
     cartRefreshError,
     clearCart,
     clearCartIfSession,
+    isCartReconciliationRequired,
+    readCartGuardState,
+    requireCartReconciliation,
     currency,
     isCartSessionCurrent,
     isLoading,

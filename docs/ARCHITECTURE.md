@@ -56,6 +56,7 @@ GestureHandlerRootView
             └─ CartProvider key={userCacheKey | "authenticated" | "guest"}
                └─ TicketHoldersProvider
                   └─ CartSheetProvider  (renders <CartSheet>)
+                     ├─ ReservationExpiryNotice  (observes expiry; renders nothing)
                      └─ MaintenanceGuard
                         └─ <Stack> (all routes)
 ```
@@ -69,7 +70,8 @@ cart and holder state from scratch. Do not remove or move this key.
 
 `AppProviders` also owns notification bootstrap: Android channel setup,
 permission request, initial push registration, the FCM token-refresh
-subscription, and notification-tap navigation.
+subscription, and notification-tap navigation. It reaches `expo-notifications`
+only through `src/lib/notifications.ts` (§12).
 
 ---
 
@@ -147,6 +149,9 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | Current user | `AuthContext` (`user`, `userCacheKey`, `isAuthenticated`, `isReady`) | `lfa_portal_user` in AsyncStorage / `localStorage` |
 | User-scoped caches | `src/lib/userScopedCache.ts` (`clearUserScopedCaches`, generation) | memory |
 | Cart / reservation | `CartContext` + `cartSessionAuthority` | `lfa_cart_session_id` = `{version, sessionId, expiresAt}` |
+| Cart re-read ("reconciliation") gate, shared by every cart and payment surface | `CartContext` over `src/lib/cartReconciliation.ts` | memory |
+| Payment gate per cart session: the one in-progress attempt, and the unknown-outcome lock | `src/lib/paymentOutcomeLock.ts` (storage injected by `CartContext`) | `lfa_payment_outcome_lock` = `{version, sessionId, method}` |
+| Cart-line busy state (Cart screen, cart sheet) | `useCartLineActions` — busy line only, never cart data | memory |
 | Ticket-holder names | `TicketHoldersContext` (slots derived from cart items) | memory only |
 | Cart sheet visibility | `CartSheetContext` | memory |
 | Checkout submission / capture context | `src/app/checkout.tsx` local state + `createCheckoutSubmissionAuthority` + `createRequestAuthority` | memory |
@@ -160,7 +165,7 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | Match list/detail/seat data | `src/services/matches.ts` module cache (5-min TTL) | memory |
 | Scheduled-match screen state (Home, Matches) | `useScheduledMatches`, one instance per screen (filter-tagged snapshot, loading, refresh, retry) | memory |
 | Match filter values | `MatchesList` (composition-level `useState`) | memory |
-| Ticket-selection drafts (GA quantities, reserved-seat picks, cart re-read gate) | `src/app/match/[id].tsx` local state — transient, never a cart authority | memory only |
+| Ticket-selection drafts (GA quantities, reserved-seat picks) | `src/app/match/[id].tsx` local state — transient, never a cart authority | memory only |
 | Toasts / dialogs | `ToastContext`, `AlertDialogContext` | memory |
 
 Not used by any route (do not assume they own anything):
@@ -319,8 +324,9 @@ Not used by any route (do not assume they own anything):
   - otherwise drafts are kept and re-diffed against the published cart, so an
     applied change is not resent;
   - an unknown outcome (unconfirmed publication, network, timeout, server
-    error) switches the action to "Refresh cart"; only a confirmed
-    `refreshCart()` re-enables confirming;
+    error) raises the shared cart re-read gate (§8) and switches the action to
+    "Refresh cart"; only a confirmed `refreshCart()` of that session
+    re-enables confirming;
   - a definite rejection (409/410/422/401) can be retried directly.
 - **Reserved-seat validity:**
   - A drafted seat is actionable only against the **current successful seat
@@ -376,12 +382,34 @@ Not used by any route (do not assume they own anything):
     existing session guards and were actually published into `CartContext`
     (an empty cart that was cleared is confirmed with `sessionId: null`);
   - **unconfirmed** carries a reason: `unauthenticated`, `session-changed`,
-    `session-ended` or `refresh-failed`. It does **not** mean the backend did
-    or did not apply the mutation; the outcome is unknown, deliberately;
+    `session-ended`, `refresh-failed`, or `reconciliation-required` (refused
+    by the shared gate below; nothing was sent). It does **not** mean the
+    backend did or did not apply the mutation; the outcome is unknown,
+    deliberately;
   - a delete is confirmed only by the refresh that publishes the resulting
     cart;
-  - `removeItems` still resolves `void`. The queue, single-flight, session
-    guards and expiry are unchanged by the contract.
+  - `removeItems` (grouped removal of one display line's lock keys) resolves
+    a `CartRemovalResult`: `notPerformed`, `confirmed` (with the publication),
+    `sessionEnded` (expiry/clear during the removal: never reported as
+    removed), or `ambiguous` (partial or unpublished). Every delete settles
+    individually (`runGroupedRemoval` in `src/lib/cartReconciliation.ts`); if
+    all are definitely rejected, the first rejection is thrown.
+- **Shared cart re-read gate** (`cartReconciliation`, owned by `CartContext`):
+  - raised by `CartContext` itself for an ambiguous mutation failure
+    (transport or 5xx) or an applied change whose refresh could not be
+    published, by a partial grouped removal, and by screens through
+    `requireCartReconciliation` when a published cart does not show the
+    intended change;
+  - scoped to the session it was raised in; dropped when that session ends;
+  - while active, `addItem`/`updateItem`/`removeItem`/`removeItems` refuse
+    without sending, and every transaction surface (Match Details, Cart, cart
+    sheet, Checkout, card payment) blocks;
+  - only a **confirmed** `refreshCart()` of the gated session releases it.
+- **Synchronous guard state:** `readCartGuardState()` returns the current
+  session id, item count, whether `expires_at` has been reached (computed from
+  the clock, not from the 1-second tick), and whether the gate is active.
+  Payment handlers read it at the moment of an action rather than trusting
+  the last render.
 - **Confirmation invariant.** A resolved mutation promise is **not**
   authoritative success. Transaction-facing screens decide success from a
   confirmed `CartPublication` for the owner's current session whose snapshot
@@ -390,7 +418,18 @@ Not used by any route (do not assume they own anything):
   Details applies this (§7).
 - **Expiry**: a 1-second tick computes `secondsLeft`; at zero, or when the app
   returns to foreground past expiry, the session is cleared and the stack is
-  reset to `/`.
+  reset to `/`. `ReservationExpiryNotice` observes that transition and shows a
+  toast; it never changes cart state.
+- **Restore**: on mount the persisted session is parsed; before a restored
+  session is published, its payment gate is restored (§10). Signed-out,
+  missing, malformed or expired sessions clear the persisted payment record.
+- **Presentation** (`/cart`, `CartSheet`, `src/components/cart/*`,
+  `src/lib/cartPresentation.ts`, `useCartLineActions`): lines grouped by
+  match; GA quantity changes judged by `quantityChangeConfirmed` and removals
+  by `removalConfirmed` against the published cart; the displayed total is
+  always the owner's `cart.total` (group subtotals are display-only and
+  missing prices show "Price unavailable", never 0); Cart and the sheet never
+  clear the cart.
 - Unauthenticated `addItem` routes to `/auth`. Signed-out mount removes any
   persisted session ID.
 - Consumers use `captureCartSession`, `isCartSessionCurrent`, and
@@ -402,9 +441,12 @@ Not used by any route (do not assume they own anything):
 
 `TicketHoldersContext` derives one slot per physical ticket from cart items
 (`deriveTicketSlots`: `${lock_key}_seat_${id}` / `${lock_key}_ticket_${i}`).
-`/checkout/ticket-holders` collects names (first slot pre-filled from the
-profile name once). `/checkout` redirects back there if any slot lacks a name.
-Names are sent as `tickets_by_match` at submission.
+`/checkout/ticket-holders` collects names grouped by match and zone (first
+slot pre-filled from the profile name once); Continue focuses the first
+incomplete field. The only rule is a non-blank name (`isHolderNameValid` in
+`src/lib/checkoutFlow.ts`). `/checkout` redirects back there if any slot lacks
+a name. Names are sent as `tickets_by_match`, built by the one shared
+`buildTicketsByMatch` for both payment methods.
 `resetHolderNames` exists but is not called; names reset only when
 `CartProvider` remounts.
 
@@ -418,6 +460,53 @@ from the authenticated profile (name, email, canonical phone, country `LB`); a
 valid phone is required. `refreshUser()` runs on focus. Duplicate submission
 is blocked by `submitInFlightRef` + `checkoutSubmissionAuthority`, and results
 are ignored if the cart session changed.
+- **Readiness** (`checkoutReadiness`, `src/lib/checkoutFlow.ts`) blocks Pay
+  for, in order: no items, reservation expired, cart re-read gate, unknown
+  payment outcome, another attempt in progress, busy, missing holders, no
+  method, incomplete profile, invalid phone. The first blocker is shown.
+- **Pay handler** (`handleContinue`) re-validates with `submissionGuard`
+  against `readCartGuardState()` and the payment gate at the moment of the
+  press, before either handoff; the rendered session must still be current.
+
+**Payment gate** (`src/lib/paymentOutcomeLock.ts`) — the single per-session
+authority for "may a payment start?", shared by Card and BLUE. It stores no
+payment status; the backend and portal remain the authority.
+- **Attempt.** Every submission first calls `acquirePaymentAttempt(session,
+  method)`. The claim is synchronous (a second caller from any surface or
+  method is refused as `blocked`), then persisted as
+  `lfa_payment_outcome_lock`; only after the write succeeds may the caller
+  submit (`notRecorded` → nothing is sent). Each acquisition has an id: the
+  owner passes it to its own final guard (`isPaymentAttemptHeldByOther`),
+  every other surface passes none and is refused.
+- **Final guard.** Immediately before `/checkout/mobile/submit`, with nothing
+  awaited in between, each method runs `paymentSubmitBlocker` against
+  `readCartGuardState()`: changed/empty session, reservation expired, cart
+  re-read gate, unknown-outcome lock, or another attempt → nothing is sent and
+  the attempt is settled.
+- **Outcomes.**
+  - definite non-completion (4xx, 401/403, 503, BLUE failure redirect, or a
+    submit blocked before sending) → `settlePaymentAttempt` releases the
+    attempt and removes the record (existing retry behavior);
+  - unknown outcome (transport failure, timeout, 5xx other than 503, an
+    unreconciled BLUE success, or a card 2xx that the closed card screen could
+    not reconcile) → `markPaymentOutcomeUnknown`: the session is locked for
+    every method; Checkout and the card screen point to My Tickets;
+  - trusted success → the cart session is cleared (`clearCartIfSession`),
+    which ends the session and its gate.
+- **Release.** A lock is released only by a materially different cart session
+  (`discardPaymentOutcomeUnlessSession` when `CartContext` publishes a new
+  session id). There is no API to look up a payment result, so there is no
+  in-app "unlock".
+- **Restart.** `CartContext` calls `restorePaymentOutcomeLock` before
+  publishing a restored session: a persisted record for that session becomes
+  the lock (an unfinished attempt after a restart is an unknown outcome); a
+  record for any other session is removed. An unreadable record or a storage
+  read failure locks the session being restored (fail closed). In the same
+  process, a live attempt for the restored session stays an attempt.
+- **Continuing BLUE.** While a BLUE attempt holds the session, the only
+  allowed action is reopening its own validated payment URL (the pending
+  attempt, `checkoutAttemptBlocks`); Card and a fresh BLUE submit are blocked.
+  Reopening after a BLUE failure redirect re-acquires the gate first.
 
 **CyberSource (card)**
 1. Selecting "Card" requests a capture context
@@ -426,14 +515,18 @@ are ignored if the cart session changed.
 3. `CybersourceUnifiedCheckout` mounts Unified Checkout (native: WebView with
    inline HTML loading the configured SDK script; web: script tag +
    `src/lib/cybersourceWebLifecycle.ts`) and yields a transient token.
-4. `CardPaymentScreen` submits `POST /checkout/mobile/submit` with
-   `payment.transient_token`. Only a successful response for the still-current
-   cart session clears the cart (`clearCartIfSession`) and routes to
-   `/checkout/success`.
+4. `CardPaymentScreen` checks the owner state when the token returns
+   (the reservation can expire while the form is open), acquires the payment
+   attempt, runs the final guard, and submits `POST /checkout/mobile/submit`
+   with `payment.transient_token`. Only a successful response for the
+   still-current cart session clears the cart (`clearCartIfSession`) and
+   routes to `/checkout/success`. Back is refused synchronously while the
+   submit is in flight (`canLeavePayment`).
 
 **BLUE (wallet)**
-1. `submitBlue` posts `/checkout/mobile/submit` with `payment_method: "blue"`,
-   validates `payment.payment_url` against the configured BLUE origin and a
+1. `submitBlue` acquires the payment attempt, runs the final guard, posts
+   `/checkout/mobile/submit` with `payment_method: "blue"`, validates
+   `payment.payment_url` against the configured BLUE origin and a
    `/payment/<id>` path (`validateBluePaymentUrl`), and stores a pending
    attempt for the session (reused on retry instead of resubmitting).
 2. Native: navigates to `/checkout/blue/payment`, which loads the URL in a
@@ -441,9 +534,18 @@ are ignored if the cart session changed.
    (`src/lib/bluePaymentRedirect.ts`).
 3. A terminal success URL (configured redirect origin `/payment/success` or
    `lfa-app://checkout/success?provider=blue`) clears the cart for the
-   matching session and routes to `/checkout/success`. A failure URL returns
-   to `/checkout` with the reservation intact.
-4. Web: `window.location.assign(paymentUrl)`; the in-app BLUE route redirects to `/`.
+   matching session and routes to `/checkout/success`; a success whose clear
+   did not happen is `unreconciled` (`blueSuccessCompletion`) and locks the
+   session. A failure URL settles the attempt and returns to `/checkout` with
+   the reservation intact. "Leave" keeps the attempt held.
+4. Web: `window.location.assign(paymentUrl)`; the in-app BLUE route redirects
+   to `/`. The page reload drops in-memory state, so on return the persisted
+   record locks the restored session (conservative; see `docs/SECURITY.md`
+   §3.16).
+
+Payment failures are classified from HTTP facts only (`paymentFailureKind`)
+and shown with catalog copy; an unknown outcome is never presented as
+"not charged".
 
 **Result screens** (`CheckoutPaymentResult`) are display-only. Route params
 are sanitized by `src/lib/checkoutResultParams.ts`; they do not mutate cart or
@@ -481,7 +583,23 @@ order state.
   authenticated token (`AuthContext`), and every FCM token refresh.
 - Notification taps with a `match_id` push `/match/[id]`
   (`src/lib/notificationNavigation.ts`). No other payload routing exists.
+  `_layout.tsx` reads them through `getInitialNotificationData` /
+  `subscribeToNotificationResponses`.
 - Native only; web skips registration.
+- **Expo Go is not a push environment.** `src/lib/notifications.ts` is the
+  only runtime importer of `expo-notifications`, loaded with a conditional
+  `require` guarded by `pushRuntimeSupported = !isRunningInExpoGo()`:
+  - since SDK 53, importing `expo-notifications` **throws** on Android Expo Go
+    (its auto-registration side effect calls `addPushTokenListener`), which
+    previously made every route that imports `_layout`/`AuthContext` fail to
+    evaluate and surface as "missing default export";
+  - Expo Go has no React Native Firebase native module, so `getMessaging()`
+    is never reached there;
+  - in Expo Go every helper degrades to "no push" (permission reads as
+    `denied`, no token, no-op subscriptions).
+  Development and release builds load the module eagerly exactly as before.
+  Push, FCM registration and notification taps must be verified in a
+  development or release build, never in Expo Go.
 
 ---
 
@@ -530,8 +648,10 @@ retry, so recovery requires an app restart.
   - `PhysicalLayout`, `DirectionalChevron`.
   - Consumers so far: `tournament.tsx` (`StatePanel`); Home, Matches and
     `src/components/match/*` (`AppText`, `StatusBadge`, `SectionHeader`,
-    `StatePanel`, skeletons, `DirectionalChevron`). `TransactionBar` and the
-    ticket primitives are ready for Phases 3–5.
+    `StatePanel`, skeletons, `DirectionalChevron`); Match Detail, Cart and
+    Checkout (`TransactionBar`, plus `src/components/cart/*` and
+    `src/components/checkout/PaymentMethodOptions`). The ticket primitives
+    are ready for the tickets redesign.
 - Responsive: `useResponsive()` → `isNarrow` (<390), `isTablet` (≥768),
   `isDesktop` (≥1024), `contentWidth` (≤1180). Safe-area insets are applied in
   `Screen`, headers, and payment screens.
@@ -576,9 +696,10 @@ enabled.** No third-party i18n library is used.
 - **Catalog** — `src/i18n/messages/en.ts`:
   - flat keys (`area.purpose`), `{name}` interpolation, and plural families
     (`.one`/`.other`, and other CLDR categories where a language needs them);
-  - only foundation, navigation, Tournament and direction-restart strings so
-    far; other screens still hold inline English and move to the catalog as
-    they are redesigned.
+  - foundation, navigation, Tournament and direction-restart strings, plus
+    the screens redesigned in Phases 2–4 (Home, Matches, Match Detail, Cart,
+    ticket holders, Checkout, payment screens); other screens still hold
+    inline English and move to the catalog as they are redesigned.
 - **Translator** — `src/i18n/translate.ts`, pure:
   - lookup falls back from locale → English → the key itself;
   - the explicit plural `count` is authoritative, and a conflicting
@@ -641,6 +762,10 @@ enabled.** No third-party i18n library is used.
 15. Unknown or invalid kickoffs are never fabricated into a time, featured, or listed as upcoming.
 16. A resolved cart mutation is not success: success requires a confirmed `CartPublication` for the current session that reflects the intended change; an unknown outcome requires a cart re-read before any retry (§8).
 17. Ticket-selection drafts stay transient screen state; a reserved-seat draft is confirmable only against the current successful seat snapshot, and the preflight runs before the first cart mutation (§7).
+18. The cart re-read gate is shared and owned by `CartContext`; no surface keeps its own copy, and only a confirmed re-read of the gated session releases it (§8).
+19. Every payment submission acquires the session's single payment attempt and persists it before sending, and runs the final owner guard (expiry included) immediately before `/checkout/mobile/submit`; only the acquiring attempt passes it (§10).
+20. An unknown payment outcome, or an unfinished attempt found after a restart, locks that cart session for every payment method until a different session exists; a stale lock or attempt never applies to another session (§10).
+21. `expo-notifications` is imported at runtime only by `src/lib/notifications.ts`, behind the Expo Go guard (§12).
 
 ---
 
@@ -664,7 +789,7 @@ enabled.** No third-party i18n library is used.
 
 The Phase 1 foundations described in §14–§15 now exist. Still planned, per the
 roadmap (`docs/WORKFLOW.md` §4) and subject to per-phase approval:
-- screen redesigns that consume these foundations (Phases 4–6; Phases 2–3 are delivered, see §7);
+- screen redesigns that consume these foundations (Phases 5–6; Phases 2–4 are delivered, see §7–§10);
 - an Arabic catalog and enabling `ar` (plus the Arabic numerals decision);
 - RTL-aware tab swipe and entrance motion;
 - migrating legacy colors and `accessibilityState` usage.

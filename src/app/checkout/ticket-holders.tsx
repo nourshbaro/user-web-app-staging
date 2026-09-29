@@ -1,29 +1,60 @@
 import { AppHeader } from "@/components/AppHeader";
-import { useResponsive, useTheme } from "@/components/ui";
+import { AppText, SectionHeader } from "@/components/foundation";
+import { Button, useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
 import { useTicketHolders } from "@/context/TicketHoldersContext";
-import { useToast } from "@/context/ToastContext";
-import { useReducedMotion } from "@/hooks/useReducedMotion";
-import { SymbolView } from "expo-symbols";
+import { useI18n } from "@/i18n/I18nProvider";
+import {
+  groupHolderSlots,
+  holderCompleteness,
+  isHolderNameValid,
+} from "@/lib/checkoutFlow";
+import { radius, size, spacing } from "@/lib/designTokens";
+import type { TicketSlot } from "@/lib/ticketHolders";
 import { router, Stack, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, BackHandler, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { SymbolView } from "expo-symbols";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  BackHandler,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-function firstParam(value: string | string[] | undefined) { return Array.isArray(value) ? value[0] : value; }
+function firstParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
 
+// Readable single column on tablets and web.
+const COLUMN_MAX_WIDTH = 640;
+
+/**
+ * Ticket-holder names, one field per ticket, grouped by match and zone.
+ * Names are owned by `TicketHoldersContext`; this screen only edits them.
+ * The rule is unchanged: every ticket needs a non-blank holder name before
+ * Checkout (which also re-checks and sends them as `tickets_by_match`).
+ */
 function TicketHoldersScreen() {
   const { ticketSlots, holderNames, setHolderName, initializeFirstHolder } = useTicketHolders();
   const auth = useAuth();
-  const toast = useToast();
   const theme = useTheme();
+  const i18n = useI18n();
   const responsive = useResponsive();
   const insets = useSafeAreaInsets();
-  const reducedMotion = useReducedMotion();
   const params = useLocalSearchParams<{ edit?: string | string[] }>();
   const isEditMode = firstParam(params.edit) === "1";
+  const [showErrors, setShowErrors] = useState(false);
+  const [touched, setTouched] = useState<Record<string, true>>({});
+  const inputRefs = useRef(new Map<string, TextInput>());
+  const completeness = holderCompleteness(ticketSlots, holderNames);
+  const groups = groupHolderSlots(ticketSlots);
+
   const returnToParent = useCallback(() => {
     if (isEditMode) {
       router.dismissTo("/checkout");
@@ -31,17 +62,11 @@ function TicketHoldersScreen() {
     }
     router.replace("/cart");
   }, [isEditMode]);
-  const [stepIndex, setStepIndex] = useState(0);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const [contentMotion] = useState(() => new Animated.Value(1));
-  const [progressMotion] = useState(() => new Animated.Value(0));
-  const [direction, setDirection] = useState(1);
-  const [showNameError, setShowNameError] = useState(false);
-  const [inputFocused, setInputFocused] = useState(false);
-  const inputRef = useRef<TextInput>(null);
-  const stepsRef = useRef<ScrollView>(null);
 
-  useEffect(() => { if (!ticketSlots.length) router.replace("/cart"); }, [ticketSlots.length]);
+  useEffect(() => {
+    if (!ticketSlots.length) router.replace("/cart");
+  }, [ticketSlots.length]);
+
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       returnToParent();
@@ -49,153 +74,109 @@ function TicketHoldersScreen() {
     });
     return () => subscription.remove();
   }, [returnToParent]);
-  useEffect(() => {
-    const show = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", () => setKeyboardVisible(true));
-    const hide = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", () => setKeyboardVisible(false));
-    return () => { show.remove(); hide.remove(); };
-  }, []);
 
-  const clampedIndex = Math.min(stepIndex, Math.max(0, ticketSlots.length - 1));
-  const slot = ticketSlots[clampedIndex];
-  const total = ticketSlots.length;
-  const isFirst = clampedIndex === 0;
-  const isLast = clampedIndex === total - 1;
-  const currentValue = slot ? holderNames[slot.key] ?? "" : "";
-  const isCurrentComplete = Boolean(currentValue.trim());
-  const progress = total ? (clampedIndex + 1) / total : 0;
-  const firstInvalidIndex = useMemo(() => ticketSlots.findIndex((item) => !holderNames[item.key]?.trim()), [holderNames, ticketSlots]);
-
+  // The first holder is pre-filled once from the profile name (unchanged rule).
   useEffect(() => {
     const firstSlot = ticketSlots[0];
     const profileName = auth.user?.name?.trim();
     if (!isEditMode && firstSlot && profileName) initializeFirstHolder(firstSlot.key, profileName);
   }, [auth.user?.name, initializeFirstHolder, isEditMode, ticketSlots]);
 
-  useEffect(() => {
-    if (reducedMotion) { contentMotion.setValue(1); progressMotion.setValue(progress); return; }
-    contentMotion.setValue(0);
-    Animated.parallel([
-      Animated.timing(contentMotion, { toValue: 1, duration: 210, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(progressMotion, { toValue: progress, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-    ]).start();
-  }, [clampedIndex, contentMotion, progress, progressMotion, reducedMotion]);
+  const focusSlot = (key: string | null | undefined) => {
+    if (!key) return;
+    requestAnimationFrame(() => inputRefs.current.get(key)?.focus());
+  };
 
-  const transitionTo = useCallback((next: number) => {
-    const target = Math.max(0, Math.min(next, total - 1));
-    const movement = target >= clampedIndex ? 1 : -1;
-    if (reducedMotion) {
-      setDirection(movement);
-      setShowNameError(false);
-      setStepIndex(target);
+  const finish = () => {
+    if (completeness.firstIncompleteKey) {
+      setShowErrors(true);
+      AccessibilityInfo.announceForAccessibility(
+        i18n.plural("holders.missing", completeness.missingKeys.length),
+      );
+      focusSlot(completeness.firstIncompleteKey);
       return;
     }
-    setDirection(-movement);
-    Animated.timing(contentMotion, { toValue: 0, duration: 90, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
-      if (!finished) return;
-      setDirection(movement);
-      setShowNameError(false);
-      setStepIndex(target);
-    });
-  }, [clampedIndex, contentMotion, reducedMotion, total]);
-  const showValidation = useCallback((invalidIndex: number) => {
-    toast.showToast({ variant: "warning", title: "Ticket holder required", message: `Enter the holder name for ticket ${invalidIndex + 1}.` });
-    if (invalidIndex === clampedIndex) {
-      setShowNameError(true);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    } else {
-      transitionTo(invalidIndex);
-    }
-  }, [clampedIndex, toast, transitionTo]);
-  const goToHolder = useCallback((requestedIndex: number) => {
-    const target = Math.max(0, Math.min(requestedIndex, total - 1));
-    if (target === clampedIndex) return true;
-    if (target < clampedIndex) { transitionTo(target); return true; }
-    const invalidIndex = ticketSlots.slice(0, target).findIndex((item) => !holderNames[item.key]?.trim());
-    if (invalidIndex !== -1) { showValidation(invalidIndex); return false; }
-    transitionTo(target);
-    return true;
-  }, [clampedIndex, holderNames, showValidation, ticketSlots, total, transitionTo]);
-  const finishOrAdvance = useCallback(() => {
-    if (!isLast) { goToHolder(clampedIndex + 1); return; }
-    if (!currentValue.trim()) { showValidation(clampedIndex); return; }
-    if (firstInvalidIndex !== -1) { showValidation(firstInvalidIndex); return; }
-    if (isEditMode) router.dismissTo("/checkout"); else router.replace("/checkout");
-  }, [clampedIndex, currentValue, firstInvalidIndex, goToHolder, isEditMode, isLast, showValidation]);
-  const swipeGesture = useMemo(() => Gesture.Pan()
-    .enabled(!inputFocused)
-    .activeOffsetX([-24, 24])
-    .failOffsetY([-18, 18])
-    .cancelsTouchesInView(false)
-    .runOnJS(true)
-    // RNGH retains this callback; it does not read a React ref during render.
-    // eslint-disable-next-line react-hooks/refs
-    .onEnd((event) => {
-      if (Math.abs(event.translationX) < 54 && Math.abs(event.velocityX) < 420) return;
-      goToHolder(clampedIndex + (event.translationX < 0 ? 1 : -1));
-    }), [clampedIndex, goToHolder, inputFocused]);
+    if (isEditMode) router.dismissTo("/checkout");
+    else router.replace("/checkout");
+  };
 
-  useEffect(() => {
-    if (total < 2) return;
-    const circleStride = 43;
-    const visibleWidth = Math.max(120, responsive.contentWidth - 100);
-    stepsRef.current?.scrollTo({ x: Math.max(0, clampedIndex * circleStride - visibleWidth / 2 + 17), animated: !reducedMotion });
-  }, [clampedIndex, reducedMotion, responsive.contentWidth, total]);
-
-  if (!slot) return null;
-  const translateX = contentMotion.interpolate({ inputRange: [0, 1], outputRange: [18 * direction, 0] });
+  if (!ticketSlots.length) return null;
 
   return (
     <View style={[local.screen, { backgroundColor: theme.colors.bg, paddingTop: Math.max(insets.top, 12) }]}>
       <Stack.Screen options={{ headerShown: false, gestureEnabled: false }} />
-      <KeyboardAvoidingView style={local.keyboardView} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView
+        style={local.keyboardView}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
         <View style={[local.shell, { width: responsive.contentWidth }]}>
-          <AppHeader title={isEditMode ? "Edit Ticket Holders" : "Ticket Holder Info"} hideCart showTimer onBack={returnToParent} />
-
-          <GestureDetector gesture={swipeGesture}>
-            <View style={local.gestureArea}>
-              <View style={local.statusRow}>
-                <Text style={[local.statusLabel, { color: theme.colors.muted }]}>Ticket Holder {clampedIndex + 1}/{total}</Text>
-                <Animated.Text style={[local.status, { color: isCurrentComplete ? theme.colors.green : theme.colors.muted, opacity: contentMotion }]}>{isCurrentComplete ? "Complete" : "Incomplete"}</Animated.Text>
-              </View>
-              <View style={[local.progressTrack, { backgroundColor: theme.colors.line }]}> 
-                <Animated.View style={[local.progressFill, { backgroundColor: theme.colors.primary, width: progressMotion.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) }]} />
-              </View>
-
-              <View style={local.stepperRow}>
-                <Pressable disabled={isFirst} onPress={() => goToHolder(clampedIndex - 1)} accessibilityRole="button" accessibilityLabel="Previous ticket" accessibilityState={{ disabled: isFirst }} style={local.arrowButton}><SymbolView name={{ ios: "chevron.left", android: "chevron_left", web: "chevron_left" }} size={25} tintColor={isFirst ? theme.colors.line : theme.colors.ink} fallback={<View />} /></Pressable>
-                <ScrollView ref={stepsRef} horizontal showsHorizontalScrollIndicator={false} scrollEnabled={total > 1} style={local.stepsScroll} contentContainerStyle={[local.steps, total === 1 && local.stepsSingle]}>
-                  {ticketSlots.map((item, index) => {
-                    const active = index === clampedIndex;
-                    const complete = Boolean(holderNames[item.key]?.trim());
-                    return <Pressable key={item.key} onPress={() => goToHolder(index)} accessibilityLabel={`Ticket ${index + 1}${complete ? ", complete" : ""}`} style={[local.stepCircle, { backgroundColor: active ? theme.colors.primary : complete ? `${theme.colors.green}28` : theme.colors.panelSoft, borderColor: active ? theme.colors.primary : complete ? theme.colors.green : theme.colors.line }]}><Text style={[local.stepNumber, { color: active ? "#FFFFFF" : complete ? theme.colors.green : theme.colors.muted }]}>{index + 1}</Text></Pressable>;
-                  })}
-                </ScrollView>
-                <Pressable disabled={isLast} onPress={() => goToHolder(clampedIndex + 1)} accessibilityRole="button" accessibilityLabel="Next ticket" accessibilityState={{ disabled: isLast }} style={local.arrowButton}><SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={25} tintColor={isLast ? theme.colors.line : theme.colors.ink} fallback={<View />} /></Pressable>
-              </View>
-
-              <ScrollView style={local.body} contentContainerStyle={local.bodyContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                <Animated.View style={[local.card, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line, opacity: contentMotion, transform: [{ translateX }] }]}> 
-              <View style={local.cardTitleRow}>
-                <View style={[local.iconWrap, { backgroundColor: `${theme.colors.primary}16` }]}><SymbolView name={{ ios: "person.fill", android: "person", web: "person" }} size={18} tintColor={theme.colors.primary} /></View>
-                <View style={local.ticketCopy}>
-                  <Text style={[local.ticketTitle, { color: theme.colors.ink }]}>Ticket #{clampedIndex + 1}</Text>
-                  <Text numberOfLines={1} style={[local.zone, { color: theme.colors.muted }]}>{slot.zoneName}</Text>
-                </View>
-              </View>
-              {slot.matchTitle ? <Text numberOfLines={1} style={[local.match, { color: theme.colors.muted }]}>{slot.matchTitle}</Text> : null}
-              <View style={[local.inputSurface, { backgroundColor: theme.colors.panelSoft, borderColor: showNameError ? theme.colors.danger : theme.colors.line }]}>
-                <TextInput ref={inputRef} value={currentValue} onFocus={() => setInputFocused(true)} onBlur={() => setInputFocused(false)} onChangeText={(value) => { setHolderName(slot.key, value); if (value.trim()) setShowNameError(false); }} placeholder="Holder Name" placeholderTextColor={theme.colors.muted} autoCapitalize="words" autoCorrect={false} autoFocus style={[local.input, { color: theme.colors.ink }]} returnKeyType={isLast ? "done" : "next"} onSubmitEditing={finishOrAdvance} />
-                {currentValue ? <Pressable onPress={() => setHolderName(slot.key, "")} accessibilityRole="button" accessibilityLabel="Clear holder name" hitSlop={8} style={local.clearButton}><SymbolView name={{ ios: "xmark.circle.fill", android: "cancel", web: "cancel" }} size={22} tintColor={theme.colors.muted} fallback={<View />} /></Pressable> : null}
-              </View>
-              {showNameError ? <Text accessibilityRole="alert" style={[local.validationText, { color: theme.colors.danger }]}>Ticket holder name is required.</Text> : null}
-                </Animated.View>
-              </ScrollView>
+          <AppHeader
+            title={isEditMode ? i18n.t("holders.editTitle") : i18n.t("holders.title")}
+            hideCart
+            showTimer
+            onBack={returnToParent}
+          />
+          <ScrollView
+            style={local.body}
+            contentContainerStyle={local.bodyContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={local.intro}>
+              <AppText variant="body" tone="muted">{i18n.t("holders.intro")}</AppText>
+              <Progress complete={completeness.complete} total={completeness.total} />
             </View>
-          </GestureDetector>
 
-          <View style={[local.footer, { backgroundColor: theme.colors.bg, borderTopColor: theme.colors.line, paddingBottom: keyboardVisible ? 10 : Math.max(insets.bottom, 10) }]}>
-            <Pressable accessibilityRole="button" accessibilityLabel="Previous ticket" accessibilityState={{ disabled: isFirst }} disabled={isFirst} onPress={() => goToHolder(clampedIndex - 1)} style={({ pressed }) => [local.footerButton, local.previousButton, { backgroundColor: theme.isDark ? "#24262A" : "#31343A", opacity: isFirst ? 0.45 : pressed ? 0.78 : 1 }]}><SymbolView name={{ ios: "chevron.left", android: "chevron_left", web: "chevron_left" }} size={18} tintColor={isFirst ? theme.colors.muted : "#FFFFFF"} fallback={<View />} /><Text style={[local.footerButtonText, { color: isFirst ? theme.colors.muted : "#FFFFFF" }]}>Previous</Text></Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel={isLast ? (isEditMode ? "Save ticket holders" : "Continue to checkout") : "Next ticket"} onPress={finishOrAdvance} style={({ pressed }) => [local.footerButton, local.nextButton, { backgroundColor: theme.colors.primary, opacity: pressed ? 0.82 : 1 }]}><Text style={local.footerButtonText}>{isLast ? (isEditMode ? "Save" : "Checkout") : "Next Ticket"}</Text><SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={18} tintColor="#FFFFFF" fallback={<View />} /></Pressable>
+            {groups.map((group) => (
+              <View key={group.matchId} style={local.group}>
+                <SectionHeader title={group.matchTitle ?? i18n.t("cart.matchFallback", { id: group.matchId })} />
+                {group.zones.map((zone) => (
+                  <View key={zone.zoneName} style={local.zone}>
+                    <AppText variant="label" tone="muted">{zone.zoneName}</AppText>
+                    {zone.entries.map(({ slot, index }) => {
+                      const nextKey = ticketSlots[index + 1]?.key;
+                      return (
+                        <HolderField
+                          key={slot.key}
+                          slot={slot}
+                          value={holderNames[slot.key] ?? ""}
+                          showError={(showErrors || Boolean(touched[slot.key])) && !isHolderNameValid(holderNames[slot.key])}
+                          isLast={!nextKey}
+                          inputRef={(input) => {
+                            if (input) inputRefs.current.set(slot.key, input);
+                            else inputRefs.current.delete(slot.key);
+                          }}
+                          onChange={(value) => setHolderName(slot.key, value)}
+                          onBlur={() => setTouched((current) => (current[slot.key] ? current : { ...current, [slot.key]: true }))}
+                          onSubmit={() => (nextKey ? focusSlot(nextKey) : finish())}
+                        />
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
+
+          <View
+            style={[
+              local.footer,
+              {
+                backgroundColor: theme.colors.surface,
+                borderTopColor: theme.colors.border,
+                paddingBottom: Math.max(insets.bottom, spacing.md),
+              },
+            ]}
+          >
+            {completeness.missingKeys.length ? (
+              <AppText variant="caption" tone={showErrors ? "danger" : "muted"} accessibilityLiveRegion="polite">
+                {i18n.plural("holders.missing", completeness.missingKeys.length)}
+              </AppText>
+            ) : null}
+            <Button
+              title={isEditMode ? i18n.t("holders.save") : i18n.t("holders.continue")}
+              onPress={finish}
+            />
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -203,16 +184,187 @@ function TicketHoldersScreen() {
   );
 }
 
+function Progress({ complete, total }: { complete: number; total: number }) {
+  const theme = useTheme();
+  const i18n = useI18n();
+  const ratio = total ? complete / total : 0;
+  const label = i18n.t("holders.progress", { complete, total });
+  return (
+    <View
+      style={local.progress}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={label}
+      accessibilityValue={{ min: 0, max: total, now: complete }}
+    >
+      <AppText variant="label">{label}</AppText>
+      <View style={[local.track, { backgroundColor: theme.colors.surfaceSecondary }]}>
+        <View
+          style={[
+            local.fill,
+            { width: `${Math.round(ratio * 100)}%`, backgroundColor: theme.colors.tones.success.fg },
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+function HolderField({
+  slot,
+  value,
+  showError,
+  isLast,
+  inputRef,
+  onChange,
+  onBlur,
+  onSubmit,
+}: {
+  slot: TicketSlot;
+  value: string;
+  showError: boolean;
+  isLast: boolean;
+  inputRef: (input: TextInput | null) => void;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  onSubmit: () => void;
+}) {
+  const theme = useTheme();
+  const i18n = useI18n();
+  const complete = isHolderNameValid(value);
+  const danger = theme.colors.tones.danger;
+  const success = theme.colors.tones.success;
+
+  return (
+    <View
+      style={[
+        local.field,
+        {
+          backgroundColor: theme.colors.surface,
+          borderColor: showError ? danger.fg : theme.colors.border,
+          borderWidth: showError ? 2 : 1,
+        },
+      ]}
+    >
+      <View style={local.fieldHeader}>
+        <AppText variant="bodyStrong" numberOfLines={2} style={local.fieldTitle}>{slot.label}</AppText>
+        {/* Status is text + icon, never colour alone. */}
+        <View style={local.status}>
+          <SymbolView
+            name={(complete
+              ? { ios: "checkmark.circle.fill", android: "check_circle", web: "check_circle" }
+              : { ios: "exclamationmark.circle", android: "error_outline", web: "error_outline" }) as never}
+            size={size.iconSm}
+            tintColor={complete ? success.fg : theme.colors.textMuted}
+            fallback={<View />}
+          />
+          <AppText variant="caption" style={{ color: complete ? success.fg : theme.colors.textMuted }}>
+            {complete ? i18n.t("holders.field.complete") : i18n.t("holders.field.needed")}
+          </AppText>
+        </View>
+      </View>
+      <AppText variant="label" tone="muted" nativeID={`${slot.key}-label`}>{i18n.t("holders.field.label")}</AppText>
+      <View
+        style={[
+          local.inputSurface,
+          { backgroundColor: theme.colors.surfaceSecondary, borderColor: showError ? danger.fg : theme.colors.border },
+        ]}
+      >
+        <TextInput
+          ref={inputRef}
+          value={value}
+          onChangeText={onChange}
+          onBlur={onBlur}
+          placeholder={i18n.t("holders.field.placeholder")}
+          placeholderTextColor={theme.colors.textMuted}
+          autoCapitalize="words"
+          autoCorrect={false}
+          autoComplete="name"
+          textContentType="name"
+          returnKeyType={isLast ? "done" : "next"}
+          submitBehavior={isLast ? "blurAndSubmit" : "submit"}
+          onSubmitEditing={onSubmit}
+          accessibilityLabel={i18n.t("holders.field.a11y", { ticket: slot.label })}
+          accessibilityHint={showError ? i18n.t("holders.field.error") : undefined}
+          aria-invalid={showError}
+          style={[local.input, { color: theme.colors.textStrong }]}
+        />
+        {value ? (
+          <Pressable
+            onPress={() => onChange("")}
+            accessibilityRole="button"
+            accessibilityLabel={i18n.t("holders.clear", { ticket: slot.label })}
+            style={local.clear}
+          >
+            <SymbolView
+              name={{ ios: "xmark.circle.fill", android: "cancel", web: "cancel" }}
+              size={size.iconMd}
+              tintColor={theme.colors.textMuted}
+              fallback={<View />}
+            />
+          </Pressable>
+        ) : null}
+      </View>
+      {showError ? (
+        <View style={local.error}>
+          <SymbolView
+            name={{ ios: "exclamationmark.triangle.fill", android: "warning", web: "warning" } as never}
+            size={size.iconSm}
+            tintColor={danger.fg}
+            fallback={<View />}
+          />
+          <AppText variant="caption" tone="danger">{i18n.t("holders.field.error")}</AppText>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 const local = {
-  screen: { flex: 1, alignItems: "center" as const }, keyboardView: { flex: 1, width: "100%" as const, alignItems: "center" as const }, shell: { flex: 1, alignSelf: "center" as const, paddingHorizontal: 14 }, gestureArea: { flex: 1 },
-  statusRow: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "center" as const, marginTop: 10 }, statusLabel: { fontSize: 14, fontWeight: "700" as const }, status: { fontSize: 13, fontWeight: "800" as const },
-  progressTrack: { height: 6, borderRadius: 3, overflow: "hidden" as const, marginTop: 6 }, progressFill: { height: "100%" as const, borderRadius: 3 },
-  stepperRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8, marginVertical: 14 }, stepsScroll: { flex: 1 }, steps: { flexGrow: 1, alignItems: "center" as const, gap: 9, paddingHorizontal: 4 }, stepsSingle: { justifyContent: "center" as const }, stepCircle: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: "center" as const, justifyContent: "center" as const }, stepNumber: { fontSize: 13, fontWeight: "900" as const }, arrowButton: { width: 44, height: 44, alignItems: "center" as const, justifyContent: "center" as const },
-  body: { flex: 1 }, bodyContent: { flexGrow: 1, paddingBottom: 12 }, card: { borderRadius: 22, borderWidth: 1, padding: 18, gap: 12, shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
-  cardTitleRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 12 }, iconWrap: { width: 42, height: 42, borderRadius: 21, alignItems: "center" as const, justifyContent: "center" as const }, ticketCopy: { flex: 1, minWidth: 0 }, ticketTitle: { fontSize: 20, fontWeight: "900" as const }, zone: { fontSize: 13, marginTop: 2 }, match: { fontSize: 13 },
-  inputSurface: { minHeight: 58, borderRadius: 13, borderWidth: 1, flexDirection: "row" as const, alignItems: "center" as const, paddingHorizontal: 14 }, input: { flex: 1, minWidth: 0, fontSize: 17, paddingVertical: 12 }, clearButton: { width: 44, height: 44, alignItems: "center" as const, justifyContent: "center" as const },
-  validationText: { fontSize: 12, fontWeight: "700" as const, marginTop: -4 },
-  footer: { marginHorizontal: -14, paddingHorizontal: 14, paddingTop: 11, flexDirection: "row" as const, gap: 10, borderTopWidth: 1 }, footerButton: { minHeight: 48, borderRadius: 14, alignItems: "center" as const, justifyContent: "center" as const, flexDirection: "row" as const, gap: 5, paddingHorizontal: 10 }, footerButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" as const }, previousButton: { flex: 0.8 }, nextButton: { flex: 1.35 },
+  screen: { flex: 1, alignItems: "center" as const },
+  keyboardView: { flex: 1, width: "100%" as const, alignItems: "center" as const },
+  shell: { flex: 1, alignSelf: "center" as const, paddingHorizontal: spacing.md },
+  body: { flex: 1 },
+  bodyContent: {
+    width: "100%" as const,
+    maxWidth: COLUMN_MAX_WIDTH,
+    alignSelf: "center" as const,
+    gap: spacing.xl,
+    paddingBottom: spacing.xl,
+  },
+  intro: { gap: spacing.md },
+  progress: { gap: spacing.xs },
+  track: { height: 6, borderRadius: radius.pill, overflow: "hidden" as const },
+  fill: { height: "100%" as const, borderRadius: radius.pill },
+  group: { gap: spacing.md },
+  zone: { gap: spacing.sm },
+  field: { borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm },
+  fieldHeader: { flexDirection: "row" as const, alignItems: "flex-start" as const, gap: spacing.sm },
+  fieldTitle: { flex: 1, minWidth: 0 },
+  status: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.xs, flexShrink: 0 },
+  inputSurface: {
+    minHeight: size.controlHeight,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    paddingStart: spacing.md,
+  },
+  input: { flex: 1, minWidth: 0, fontSize: 16, paddingVertical: spacing.md },
+  clear: {
+    width: size.touchTargetMin,
+    height: size.touchTargetMin,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
+  error: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.xs },
+  footer: {
+    marginHorizontal: -spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    gap: spacing.sm,
+  },
 };
 
 export default withAuthRequired(TicketHoldersScreen);

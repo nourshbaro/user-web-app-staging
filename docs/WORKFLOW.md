@@ -120,13 +120,16 @@ below). Delivered as described in `docs/ARCHITECTURE.md` §14–§15.
 ### Phase 2 — Navigation + Home + Match Discovery ✅ complete
 Delivered as described in `docs/ARCHITECTURE.md` §3 and §7.
 
-### Phase 3 — Matches + Match Detail + Ticket Selection ✅ complete (pending commit)
+### Phase 3 — Matches + Match Detail + Ticket Selection ✅ complete
 Delivered as described in `docs/ARCHITECTURE.md` §7 and §8. It introduced
 the `CartPublication` return contract and the confirmation invariant. The
 reserved-seat runtime still needs a seated staging fixture.
 
-### Phase 4 — Cart + Checkout ← **NEXT**
-Presentation redesign around the existing owners. Must preserve:
+### Phase 4 — Cart + Checkout ✅ complete (pending commit)
+Delivered as described in `docs/ARCHITECTURE.md` §8–§10. It added the shared
+cart re-read gate and the per-session payment gate (one attempt across Card
+and BLUE, restart-safe unknown-outcome lock). Presentation redesign around
+the existing owners. It preserved:
 - `CartContext` as the cart/reservation authority (no second store);
 - `CartPublication` semantics:
   - success only from a confirmed publication for the current session;
@@ -154,7 +157,14 @@ polish.
 
 ## 5. Using the generated reference project
 
-Location: `C:\Users\noorsh\Documents\BLUE\claude gen AI lfa ui` (outside this repo, not under Git).
+**Primary visual reference (approved by the user after Phase 4 planning):**
+the v2 Claude Design export (`LFA Screen v2.dc.html`, `LFA Tickets v2.dc.html`,
+`lfa2.css` and assets), outside this repo. The earlier generated project below
+is secondary. The rules in this section apply to both: presentation ideas
+only, never mock data, fake flows, generated QR codes or fixed delays. The
+older "Grid / Poster / Terrace" direction (`LFA Screen.dc.html`) is rejected.
+
+Secondary reference location: `C:\Users\noorsh\Documents\BLUE\claude gen AI lfa ui` (outside this repo, not under Git).
 
 For each idea you adopt:
 

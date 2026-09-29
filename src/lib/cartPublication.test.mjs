@@ -45,9 +45,36 @@ test("a delete is confirmed only by the refresh that publishes the resulting car
   assert.match(refresh, /return applied\s*\? confirmedPublication\(expected\.sessionId, nextItems\)/);
 });
 
-test("the change is a return contract only: queue, guards and removeItems are untouched", () => {
+test("the change is a return contract only: queue and guards are untouched", () => {
   assert.equal((cart.match(/operationQueue\.run\(/g) ?? []).length, 5);
   assert.match(cart, /addMutationGuardRef\.current\.run\(/);
-  assert.match(cart, /removeItems: \(lockKeys: string\[\]\) => Promise<void>;/);
+  // Phase 4 corrections: grouped removal reports what it actually did.
+  assert.match(cart, /removeItems: \(lockKeys: string\[\]\) => Promise<CartRemovalResult>;/);
   assert.match(cart, /refreshCart: \(\) => Promise<CartPublication>;/);
+});
+
+test("grouped removal proves its own deletes and never reads expiry as removal", () => {
+  const removeItems = section("const removeItems = useCallback(", "const updateItem = useCallback(");
+  // The sequence (behaviour-tested in cartReconciliation.test.mjs) runs inside the owner's queue,
+  // bound to the session captured when the removal was requested.
+  assert.match(removeItems, /return operationQueue\.run\(\(\) => runGroupedRemoval\(\{/);
+  assert.match(removeItems, /isSessionCurrent: \(\) => mountedRef\.current && sessionAuthorityRef\.current\.isCurrent\(expected\),/);
+  assert.match(removeItems, /refresh: \(\) => refreshCartForSession\(expected\),/);
+  assert.match(removeItems, /if \(isCartReconciliationRequired\(\)\) \{\s*return Promise\.resolve\(\{ status: "notPerformed", reason: "reconciliation-required" \}\);/);
+  assert.doesNotMatch(removeItems, /Promise\.all\(/);
+});
+
+test("the shared gate lives in CartContext: mutations refuse while it is active, only an explicit read releases it", () => {
+  for (const name of ["addItem", "removeItem", "updateItem"]) {
+    const start = cart.indexOf(`const ${name} = useCallback(`);
+    const body = cart.slice(start, cart.indexOf("}, [", start));
+    assert.match(body, /if \(isCartReconciliationRequired\(\)\) return (Promise\.resolve\()?unconfirmedPublication\("reconciliation-required"\)/, name);
+    assert.match(body, /trackOutcome\(expected\.sessionId,/, `${name} raises the gate on unknown outcomes`);
+  }
+  const refreshCart = section("const refreshCart = useCallback(", "useEffect(");
+  assert.match(refreshCart, /releaseAfterRead\(reconciliationRef\.current, \{\s*confirmed: result\.confirmed,\s*readSessionId: expected\.sessionId,/);
+  // The internal post-mutation refresh never releases it.
+  const refreshForSession = section("const refreshCartForSession = useCallback(", "const refreshCart = useCallback(");
+  assert.doesNotMatch(refreshForSession, /releaseAfterRead|setReconciliation/);
+  assert.match(cart, /reconciliationRef\.current = dropIfSessionEnded\(reconciliationRef\.current, null\);/);
 });

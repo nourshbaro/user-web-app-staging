@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-09-28 · Phase 3 final documentation sync
+**As of:** 2026-09-28 · Phase 4 closure (documentation sync)
 
 ---
 
@@ -14,91 +14,95 @@
 - ✅ Phase 0 — Baseline / redesign readiness (`e64a150`).
 - ✅ Phase 1 — Design Foundations (`3863673`).
 - ✅ Phase 2 — Navigation + Home + Match Discovery (`125ee2f`).
-- ✅ **Phase 3 — Match Details + Ticket Selection: COMPLETE, pending
-  commit.** It was independently reviewed and the focused corrections are
-  applied. The changes are uncommitted on `125ee2f`.
-- ▶ **Next: Phase 4 — Cart + Checkout** (`docs/WORKFLOW.md` §4).
+- ✅ Phase 3 — Match Details + Ticket Selection (`cf987f3`).
+- ✅ **Phase 4 — Cart + Checkout: code-complete, pending commit.** Reviewed
+  independently; the confirmed findings (payment lock across restart, expiry
+  during the card handoff, same-session Card/BLUE concurrency) are fixed. The
+  changes are uncommitted on `cf987f3`.
+- ▶ **Next:** the redesign plan against the approved v2 design reference,
+  starting with its first batch once approved (`docs/WORKFLOW.md` §4–§5).
 
 ---
 
-## Validation (current working tree)
+## Validation (Phase 4 working tree)
 
 | Check | Result |
 | ----- | ------ |
 | `npx tsc --noEmit` | PASS |
 | `npx expo lint` | 0 errors, 5 existing unused-variable warnings |
-| Tests (`AGENTS.md` §13 command) | 61 files, **605 / 605 pass** |
-| `expo-doctor` | 21/21 |
-| `npx expo install --check` | Dependencies up to date |
-| Android + iOS Metro export | PASS |
-| Web export (server output, incl. `/api`) | PASS |
-| Android runtime, GA (EAS dev build `4e8937cd`, Pixel_9a emulator, staging data) | PASS: GA add, update (set 2 → 3) and zero-removal each shown as successful only after the published cart confirmed them; offline Update → "Cart not confirmed", draft kept, Refresh gate → online Refresh → removal completed; staging cart left clean |
-| Android runtime, Match Detail (Phase 3 first round) | PASS: open from Home and Matches, hero, map zone → card focus, back with a draft leaves the cart unchanged, 360 dp layout |
-| Web runtime (Phase 3 first round) | PASS: Match Detail at 820 and 1280 px, dark theme |
-| Reserved-seat runtime | NOT VERIFIED: staging has no seated zone (pure and source tests only) |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | 66 files, **686 / 686 pass** |
+| `git diff --check` | clean |
+| Android / iOS / web exports | NOT RUN in the Phase 4 closure round |
+| Phase 4 runtime (Android, web) | NOT VERIFIED — see below |
 | iOS runtime | NOT VERIFIED (Windows environment) |
 
-Exports and runtime come from the Phase 3 correction round. Only docs changed
-afterwards.
+Runtime checks still owed for Phase 4:
+- Android dev build: kill the app during a card submit and while the BLUE page
+  is open, relaunch, confirm Checkout shows the unknown-payment state and
+  cannot pay.
+- Leave the BLUE page without a result, choose Card: blocked.
+- A reservation expiring while the card form is open: nothing is submitted.
+- Web BLUE return lands on a locked session.
+- Android Expo Go starts without the notification import failure; push still
+  registers and a match notification routes correctly in a dev build.
+- Reserved seats: still no seated staging fixture.
 
 ---
 
-## Phase 3 outcome
+## Phase 4 outcome
 
-- **Match Detail:**
-  - a dark hero built from real backend data, reusing the shared match labels
-    (strict kickoff, neutral unknown status);
-  - skeletons and inline error / not-found states with Retry.
-- **Ticket selection:**
-  - zone cards that separate GA from reserved seating;
-  - a GA stepper;
-  - a reserved-seat map with non-colour seat states, zoom, and a selection
-    summary;
-  - **one confirmation action** (`TransactionBar`).
-- **Transactions:**
-  - GA add / set / remove / no-op, with the zero-removal path now reachable;
-  - success only after a confirmed `CartPublication` (the new `CartContext`
-    return contract);
-  - honest partial outcomes, and a cart re-read gate after unknown outcomes;
-  - reserved seats revalidated against the current seat snapshot, with a
-    preflight before any mutation.
-- **Accessibility:** seat press targets are sized to neighbour spacing without
-  changing geometry.
+- **Cart** (`/cart`, `CartSheet`, `src/components/cart/*`):
+  - lines grouped by match, the owner's total, countdown with thresholded
+    announcements, and an expiry notice;
+  - quantity/removal judged by the published cart; grouped removal with
+    `confirmed` / `sessionEnded` / `ambiguous` results;
+  - a **shared, session-scoped cart re-read gate** in `CartContext` used by
+    Match Details, Cart, the sheet, Checkout and card payment.
+- **Ticket holders:** grouped form, first-invalid focus, one shared payload
+  builder.
+- **Checkout:** readiness with the first blocker explained, Pay-handler
+  re-validation against the owner's current state, radio payment options
+  (Card via CyberSource, BLUE Wallet only).
+- **Payment safety** (`src/lib/paymentOutcomeLock.ts`, `docs/ARCHITECTURE.md`
+  §10):
+  - one payment attempt per cart session across Card and BLUE, acquired and
+    persisted before any submit; only the acquiring attempt passes its final
+    guard;
+  - expiry, session, gate and lock re-checked immediately before
+    `/checkout/mobile/submit`;
+  - unknown outcomes and unfinished attempts found after a restart lock the
+    session; definite non-completion releases it; a different session never
+    inherits it.
+- **Payment screens:** catalog copy, unknown outcomes never shown as failures,
+  synchronous back refusal while a card submit is in flight.
+- **Expo Go:** `expo-notifications` is loaded only outside Expo Go, fixing the
+  Android Expo Go import crash and its downstream "missing default export"
+  route warnings. Expo Go is not a push test environment.
 
 ---
 
 ## Deferred (non-blocking) findings
 
-- **Reserved seats:** the runtime path still needs a real seated staging
-  fixture before it counts as verified.
-- **Seat cache:** the 5-minute cache can age before another user books; the
-  backend add stays authoritative.
-- **Backend contracts:**
-  - the kickoff timezone is unresolved (read as local wall-clock time);
-  - there are no structured error codes, so rejections such as ticket limits
-    get general messages;
-  - live data, results, standings, competitions, favourites and availability
-    all need backend support.
-- **Arabic / RTL:** no Arabic translation, and `ar` is not enabled. RTL visuals
-  and the native direction-transition reload are not runtime-tested.
-- **Platforms:**
-  - iOS runtime is unverified;
-  - a debug dev client can fail on a very slow cold Metro bundle; pre-warming
-    the bundle avoids it (tooling only).
-- **Checkout accessibility:** a pre-existing concern about nested interactive
-  controls (raised in the Phase 3 review; Phase 4 scope).
-- **Web (dev):** a "Failed to handle initial notification" toast appears on
-  every page in a headless browser. It predates Phase 3.
-- **Android (observation):** during the first runtime add of the correction
-  round, the JS runtime reloaded in-process once:
-  - the reservation itself completed;
-  - no JS error was logged;
-  - unrelated emulator rotations appeared in the log;
-  - it did not recur in any later run, so it is not confirmed as an app
-    defect.
+- **Payments** (`docs/SECURITY.md` §3.15–§3.17):
+  - a locked session cannot be unlocked in-app (no status/idempotency API);
+  - web BLUE returns to a locked session (intentional);
+  - a 503 on submit counts as definite non-completion.
+- **BLUE retry:** after a failure redirect, retrying reopens the same stored
+  payment URL (pre-existing behavior).
+- **Expiry during a submit or the BLUE page:** the client clears and returns
+  home; the backend stays authoritative for anything it accepted.
+- **Reserved seats:** the runtime path still needs a seated staging fixture;
+  the 5-minute seat cache can age (the backend add stays authoritative).
+- **Backend contracts:** kickoff timezone unresolved; no structured error
+  codes; no live data, results, favourites or availability in the APIs used;
+  competitions/standings endpoints are not integrated yet.
+- **Arabic / RTL:** no Arabic translation, and `ar` is not enabled.
+- **Platforms:** iOS runtime unverified; a debug dev client can fail on a very
+  slow cold Metro bundle (tooling only).
+- **Web (dev):** a "Failed to handle initial notification" toast appears in a
+  headless browser (pre-existing).
 - **Legacy screens:** screens not yet redesigned still use the old `muted`
-  colour and the `accessibilityState` object; they are migrated as they are
-  redesigned.
+  colour and the `accessibilityState` object.
 - **Unused modules:** keep until a scoped cleanup (`CardPaymentPreparationContext`,
   `ProfileDetailModal`, `bluePaymentDiagnostics`, unused push-token helpers,
   `profileService.orders()`).

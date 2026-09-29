@@ -21,7 +21,9 @@ export type CartPublicationUnconfirmedReason =
   | "unauthenticated"
   | "session-changed"
   | "session-ended"
-  | "refresh-failed";
+  | "refresh-failed"
+  /** Refused: the shared cart gate requires a confirmed re-read first (nothing was sent). */
+  | "reconciliation-required";
 
 export type CartPublicationResult<Item> =
   | { confirmed: true; snapshot: CartPublicationSnapshot<Item> }
