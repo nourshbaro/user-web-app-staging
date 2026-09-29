@@ -35,18 +35,23 @@ function findScreenDeclaration(routeName) {
 test("bottom navigation ignores the active root and replaces a different root", () => {
   const bottomNavigation = extractBottomNavigation();
 
-  for (const [labelKey, href] of [
+  const tabs = [
     ["nav.home", "/"],
-    ["nav.tournament", "/tournament"],
     ["nav.matches", "/matches"],
     ["nav.tickets", "/tickets"],
+    ["nav.competitions", "/competitions"],
     ["nav.profile", "/profile"],
-  ]) {
+  ];
+  for (const [labelKey, href] of tabs) {
     assert.match(
       bottomNavigation,
       new RegExp(`labelKey: "${labelKey.replace(".", "\\.")}", href: "${href.replace("/", "\\/")}"`),
     );
   }
+  // Rendered in the v3 order (the same order as PRIMARY_TAB_ROUTES and the swipe).
+  const positions = tabs.map(([labelKey]) => bottomNavigation.indexOf(`labelKey: "${labelKey}"`));
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions);
+  assert.doesNotMatch(bottomNavigation, /nav\.tournament|href: "\/tournament"/);
   assert.match(
     bottomNavigation,
     /const active = tab\.href === "\/" \? pathname === "\/" : pathname\.startsWith\(tab\.href\);/,
@@ -63,8 +68,8 @@ test("bottom navigation ignores the active root and replaces a different root", 
   assert.doesNotMatch(navigateToTab, /router\.push\(/);
 });
 
-test("all four primary root screens disable stack animation", () => {
-  for (const routeName of ["index", "matches", "tournament", "profile"]) {
+test("all primary root screens (and the legacy redirect) disable stack animation", () => {
+  for (const routeName of ["index", "matches", "tickets", "competitions", "tournament", "profile"]) {
     const declaration = findScreenDeclaration(routeName);
 
     assert.match(declaration, /headerShown:\s*false/);

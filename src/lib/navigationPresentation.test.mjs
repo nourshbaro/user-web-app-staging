@@ -2,18 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { adjacentPrimaryTab, shouldShowBottomNavigation } from "./navigationPresentation.ts";
 
-test("bottom navigation is limited to primary destinations", () => {
-  for (const route of ["/", "/tournament", "/matches", "/tickets", "/profile"]) {
+test("bottom navigation is limited to primary destinations, in the v3 order", async () => {
+  const { PRIMARY_TAB_ROUTES } = await import("./navigationPresentation.ts");
+  assert.deepEqual([...PRIMARY_TAB_ROUTES], ["/", "/matches", "/tickets", "/competitions", "/profile"]);
+  for (const route of PRIMARY_TAB_ROUTES) {
     assert.equal(shouldShowBottomNavigation(route), true, route);
   }
+  // The legacy route only redirects; it is not a tab of its own.
+  assert.equal(shouldShowBottomNavigation("/tournament"), false);
 });
 
 test("primary tabs page to adjacent siblings without wrapping or stacking", () => {
-  assert.equal(adjacentPrimaryTab("/", 1), "/tournament");
-  assert.equal(adjacentPrimaryTab("/tournament", -1), "/");
-  assert.equal(adjacentPrimaryTab("/tickets", 1), "/profile");
+  assert.equal(adjacentPrimaryTab("/", -1), null);
+  assert.equal(adjacentPrimaryTab("/", 1), "/matches");
+  assert.equal(adjacentPrimaryTab("/matches", 1), "/tickets");
+  assert.equal(adjacentPrimaryTab("/tickets", 1), "/competitions");
+  assert.equal(adjacentPrimaryTab("/competitions", -1), "/tickets");
+  assert.equal(adjacentPrimaryTab("/competitions", 1), "/profile");
   assert.equal(adjacentPrimaryTab("/profile", 1), null);
   assert.equal(adjacentPrimaryTab("/match/42", 1), null);
+  assert.equal(adjacentPrimaryTab("/tournament", 1), null);
 });
 
 test("child and workflow routes hide bottom navigation", () => {

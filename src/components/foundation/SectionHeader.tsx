@@ -8,15 +8,17 @@ type Props = {
   title: string;
   subtitle?: string;
   action?: { label: string; onPress: () => void; accessibilityHint?: string };
+  /** Match-day display title (condensed, uppercase in Latin) instead of the standard section title. */
+  display?: boolean;
 };
 
 /** Section title with optional supporting text and one trailing text action. */
-export function SectionHeader({ title, subtitle, action }: Props) {
+export function SectionHeader({ title, subtitle, action, display = false }: Props) {
   const theme = useTheme();
   return (
     <View style={local.row}>
       <View style={local.copy}>
-        <AppText variant="sectionTitle" accessibilityRole="header">{title}</AppText>
+        <AppText variant={display ? "displaySection" : "sectionTitle"} accessibilityRole="header">{title}</AppText>
         {subtitle ? <AppText variant="meta" tone="muted">{subtitle}</AppText> : null}
       </View>
       {action ? (

@@ -58,7 +58,10 @@ GestureHandlerRootView
                   └─ CartSheetProvider  (renders <CartSheet>)
                      ├─ ReservationExpiryNotice  (observes expiry; renders nothing)
                      └─ MaintenanceGuard
-                        └─ <Stack> (all routes)
+                        └─ AppChrome        (src/components/AppChrome.tsx)
+                           ├─ ReservationHoldBar  (global reservation indicator, §8)
+                           ├─ <Stack> (all routes)
+                           └─ OnboardingFlow      (first-run overlay, §2.1)
 ```
 
 Because `I18nProvider` withholds its children until ready, auth restore and the
@@ -69,9 +72,43 @@ the authenticated identity**, so a login, logout, or account switch remounts the
 cart and holder state from scratch. Do not remove or move this key.
 
 `AppProviders` also owns notification bootstrap: Android channel setup,
-permission request, initial push registration, the FCM token-refresh
-subscription, and notification-tap navigation. It reaches `expo-notifications`
-only through `src/lib/notifications.ts` (§12).
+initial push registration **only when permission is already granted** (it
+never prompts), the FCM token-refresh subscription, and notification-tap
+navigation. It reaches `expo-notifications` only through
+`src/lib/notifications.ts` (§12).
+
+`AppProviders` additionally waits for the custom fonts to settle
+(`useAppFonts`, §14) before rendering, and keeps the native splash up until
+the onboarding gate has decided (§2.1).
+
+### 2.1 First-run onboarding
+
+- **Owner:** `useOnboardingGate` (`src/hooks/useOnboardingGate.ts`) over the
+  pure rules in `src/lib/onboarding.ts`; UI in
+  `src/components/onboarding/OnboardingFlow.tsx`.
+- **Flow:** splash → three product pages → notification pre-prompt → app. No
+  favourite-team step (no backend contract).
+- **Persistence:** `lfa_onboarding_v1` = `"completed"`. Written on finish, and
+  for a signed-in (existing) user at startup so they are never sent through it.
+- **Offered only when:** native platform, flag absent, not signed in, and the
+  **resolved** initial destination is Home. The decision
+  (`decideLaunchOnboarding`) never uses the early pathname, which reads `/`
+  on an Android cold start before the initial link resolves. It waits for
+  the navigation container's `ready` event (`useNavigationContainerRef`,
+  read-only) and reads the focused route from it. It also resolves the
+  launch notification (`notificationMatchId`, the same rule the tap router
+  uses); a notification that opens a match is a direct entry. Any direct
+  entry (deep link, auth return, payment result, notification tap) skips it
+  for that launch, with no overlay at any point. The native splash stays up
+  while this resolves (released anyway if maintenance replaces the
+  navigator). While visible, any navigation away from `/` makes it step
+  aside without being marked completed.
+- **No navigation or data:** it overlays Home (the app beneath is hidden from
+  assistive tech) and never routes, fetches or touches the cart.
+- **Notifications:** the pre-prompt is offered only while the OS can still ask
+  (`undetermined`, push runtime present). "Turn on notifications" calls
+  `optInToPushNotifications` (native prompt, then the same registration);
+  "Not now" continues without prompting.
 
 ---
 
@@ -81,9 +118,10 @@ All routes are plain `Stack` screens; there is no Expo Router `Tabs` layout.
 
 | Route | File | Auth | Notes |
 | ----- | ---- | ---- | ----- |
-| `/` | `index.tsx` | public | Home: `MainHeader` + `HomeFeed` (banner, featured match, upcoming) |
-| `/tournament` | `tournament.tsx` | public | Static "Coming Soon" placeholder |
-| `/matches` | `matches.tsx` | public | `MainHeader` + `MatchesList` (filters, full scheduled list) |
+| `/` | `index.tsx` | public | Home: `HomeFeed` (brand header, featured match, ads banner, My Tickets shortcut, upcoming) |
+| `/matches` | `matches.tsx` | public | `MatchesList` (tab header, date strip, filters, date-grouped scheduled list) |
+| `/competitions` | `competitions.tsx` | public | Navigation shell (honest "on the way" state); full screen in a later batch |
+| `/tournament` | `tournament.tsx` | public | Legacy route: `<Redirect href="/competitions" />` (kept for old links/allowlists) |
 | `/match/[id]` | `match/[id].tsx` | public view; auth to add | Match hero, zones, stadium map, GA quantities, seat selection, one confirmation action |
 | `/tickets` | `tickets.tsx` | `withAuthRequired` | Portal matches → tickets, QR, order/payment details, PDF |
 | `/profile` | `profile.tsx` | `withAuthRequired` | Account hub, contact links |
@@ -102,8 +140,9 @@ All routes are plain `Stack` screens; there is no Expo Router `Tabs` layout.
 
 **Primary navigation** is a custom bottom bar rendered by `Screen` in
 `src/components/ui.tsx` when the pathname is one of `PRIMARY_TAB_ROUTES`
-(`src/lib/navigationPresentation.ts`): Home, Tournament, Matches, My Tickets,
-Profile.
+(`src/lib/navigationPresentation.ts`): Home, Matches, My Tickets,
+Competitions, Profile (the v3 order). `/tournament` is not a tab; it redirects
+to `/competitions`, and both stay in the auth-return and ad-link allowlists.
 - **Presentation** (owned by `Screen` / `BottomNavigation`): each tab shows its
   icon and a visible catalog label. The selected tab gets an indicator pill,
   heavier weight and brand colour. Semantics are `tablist` / `tab` with
@@ -159,6 +198,9 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | Card handoff | `src/lib/cardPaymentHandoff.ts` (module singleton) | memory |
 | Maintenance flag | `src/services/api.ts` (`activateMaintenance`, `useSyncExternalStore` in `MaintenanceGuard`) | memory |
 | Theme mode | `ThemeProvider` (`system`/`light`/`dark`) | `lfa_theme` |
+| First-run onboarding seen | `useOnboardingGate` over `src/lib/onboarding.ts` | `lfa_onboarding_v1` |
+| Custom fonts registered | `useAppFonts` → `setCustomFontsLoaded` (`src/lib/fontFamilies.ts`) | memory |
+| Global reservation indicator | derived in `AppChrome` from `CartContext` (`src/lib/reservationIndicator.ts`); holds no state | — |
 | App language | `I18nProvider` (resolved against `ENABLED_LOCALES`) | `lfa_locale` |
 | Direction-transition marker | `I18nProvider` + `src/i18n/directionTransition.ts` | `lfa_direction_transition` = `{desired, attempts}` |
 | Format locale | `src/lib/format.ts` (`setFormatLocale`, set by `I18nProvider`) | memory |
@@ -234,9 +276,11 @@ Not used by any route (do not assume they own anything):
   - unknown kickoffs sort last and can never be featured or upcoming;
   - times are read as local wall-clock time, because the backend timezone
     contract is unresolved (`docs/API_INTEGRATION.md` §14).
-- **Home** (`src/components/HomeFeed.tsx`):
-  - ads banner, then the featured-match hero, then an "Upcoming matches"
-    section with "All matches" (tab-replace to `/matches`);
+- **Home** (`src/components/HomeFeed.tsx`, v3 hierarchy):
+  - brand header (with the cart action), the featured-match hero, the ads
+    banner, a My Tickets shortcut (a tab switch; it loads nothing), then an
+    "Upcoming" section with "See all" (tab-replace to `/matches`);
+  - no live, results or score sections: the API used has no such data;
   - the featured match is **presentation-derived**, not backend metadata: the
     earliest valid kickoff not yet passed (`selectHomeMatches`);
   - Upcoming holds only further valid, not-yet-passed kickoffs, so Home shows
@@ -252,16 +296,23 @@ Not used by any route (do not assume they own anything):
     to the existing backend parameters;
   - every change goes through `changeFilters`, which calls `invalidate`
     before setting state;
-  - UI: a filter bar (Filters button with active count, removable chips,
-    Clear) and a filter sheet (`BottomSheetModal`) with radio-style
-    team/venue options and an inline calendar;
+  - UI: a compact date strip (All + today and the next 13 days + "More
+    dates"; each chip is the existing `date` filter, never device-side
+    filtering), a filter bar (result summary, Clear, Filters with active
+    count, removable team/venue chips) and a filter sheet
+    (`BottomSheetModal`) with radio-style team/venue options and an inline
+    calendar;
   - filters apply immediately, and "Done" only closes the sheet;
   - states: skeletons, error with Retry, global empty vs filtered empty (with
-    Clear), and results sorted by kickoff;
+    Clear), and results sorted by kickoff and grouped under their backend
+    `match_date` (`groupMatchesByDate`; undated fixtures last, never re-dated);
+  - no Live/Results views and no competition filter (`/matches/scheduled`
+    supports neither);
   - opening a card still pushes `/match/[id]`.
-- **Match presentation** (`src/components/match/*`: `MatchCard`,
-  `FeaturedMatchCard`, `TeamCrest`, `matchLabels`, the skeletons, and the
-  filter bar/sheet):
+- **Match presentation** (`src/components/match/*`: `MatchCard` (a row in a
+  grouped `MatchGroup` card), `FeaturedMatchCard`, `PitchArt` (decorative),
+  `TeamCrest`, `matchLabels`, the skeletons, the date strip and the filter
+  bar/sheet):
   - they render team names and logos (with an initials fallback), date and
     kickoff, stadium, a status (only a backend `scheduled` shows as Scheduled;
     blank is neutral "Status unavailable"; others use the backend's own word),
@@ -420,6 +471,15 @@ Not used by any route (do not assume they own anything):
   returns to foreground past expiry, the session is cleared and the stack is
   reset to `/`. `ReservationExpiryNotice` observes that transition and shows a
   toast; it never changes cart state.
+- **Global reservation indicator** (`ReservationHoldBar`, mounted once in
+  `AppChrome`): "Reservation held · mm:ss · View" while the owner reports a
+  session with items and `secondsLeft > 0`. It shows `CartContext.secondsLeft`
+  only (no second timestamp or timer), opens `/cart`, and announces nothing
+  per second. It sits in the layout flow above the screen (the screens below
+  receive a zero top inset), and is not shown on routes that already present
+  the countdown or a transaction surface: `/cart`, `/checkout/*`,
+  `/match/[id]` (`src/lib/reservationIndicator.ts`). The header cart action
+  no longer repeats the countdown.
 - **Restore**: on mount the persisted session is parsed; before a restored
   session is published, its payment gate is restored (§10). Signed-out,
   missing, malformed or expired sessions clear the persisted payment record.
@@ -579,8 +639,13 @@ order state.
 - `src/lib/registerPushDevice.ts`: decides anonymous vs authenticated
   registration at send time; the authenticated request lets `apiRequest`
   resolve the live token.
-- Registration triggers: app start (after permission), every change to an
-  authenticated token (`AuthContext`), and every FCM token refresh.
+- **Permission is never requested at startup.** The native prompt appears
+  only after an explicit user action: onboarding's "Turn on notifications"
+  (`optInToPushNotifications`) or the Settings action.
+- Registration triggers: app start **when permission is already granted**
+  (`registerPushDeviceIfPermitted`), an explicit opt-in that grants it, every
+  change to an authenticated token (`AuthContext`; `getFcmDeviceToken`
+  returns nothing without permission), and every FCM token refresh.
 - Notification taps with a `match_id` push `/match/[id]`
   (`src/lib/notificationNavigation.ts`). No other payload routing exists.
   `_layout.tsx` reads them through `getInitialNotificationData` /
@@ -625,11 +690,30 @@ retry, so recovery requires an app restart.
     (`src/lib/themeContrast.test.mjs`). The legacy `muted` does not.
   - Tones are presentation vocabulary; mapping a backend status to a tone
     belongs to the screen that owns the data.
+  - Match-day roles (v3, additive; existing values unchanged): `heroRaised`,
+    `heroHairline`, `onHeroUrgent`, `brandSurface`/`onBrandSurface`,
+    `segment`, `hairline`, `shadow`. The dark theme keeps its existing navy
+    surfaces (a neutral-black migration would change untouched screens).
 - **Scales** — `src/lib/designTokens.ts` (pure, theme-independent): `spacing`,
-  `radius`, `size` (touch target 48 / 44 minimum, control height 48),
-  `breakpoints` (mirroring `useResponsive`), `layout`/`pageGutter`, and
-  `typography` (12 variants; system fonts; letter-spacing never used because
-  it breaks Arabic joining; tabular digits for prices and totals).
+  `radius` (incl. `xl` 20 / `xxl` 24 for grouped cards and heroes), `motion`
+  durations and `PRESSED_SCALE`, `size` (touch target 48 / 44 minimum,
+  control height 48), `breakpoints` (mirroring `useResponsive`),
+  `layout`/`pageGutter`, and `typography` (letter-spacing never used because
+  it breaks Arabic joining; tabular digits for prices, totals and timers).
+- **Typography families** — `src/lib/fontFamilies.ts`:
+  - `text` role → IBM Plex Sans (all UI/body text); `display` role → Barlow
+    Condensed, used selectively by the `display*` variants (tab titles,
+    section titles, kickoff times, date numerals, countdown);
+  - screens never name a family: they pick a variant, and `AppText`,
+    `StatusBadge`, `Button` and the tab bar resolve it with `fontStyleFor`;
+  - Arabic resolves to the platform font for both roles until an
+    Arabic-capable family is chosen (Barlow is never the Arabic dependency);
+    display titles are uppercase in Latin only;
+  - files load at runtime through `expo-font` (`useAppFonts`, the 7 used
+    weights of `@expo-google-fonts/ibm-plex-sans` and `barlow-condensed`); a
+    load failure falls back to the platform font and never blocks the app;
+  - legacy screens that do not use these primitives still render the
+    platform font until they are redesigned.
 - **Shared primitives** (`src/components/ui.tsx`): `Screen`, `Card`, `Button`,
   `Input`, `Empty`, `Loading`, `BottomNavigation` (see accessibility below).
   `createStyles` still carries legacy per-screen styles.
@@ -646,7 +730,9 @@ retry, so recovery requires an app restart.
   - Ticket primitives (`TicketCardShell`, `TicketCardSection`,
     `TicketPerforation`, `TicketQrFrame`) — layout only; no QR generation.
   - `PhysicalLayout`, `DirectionalChevron`.
-  - Consumers so far: `tournament.tsx` (`StatePanel`); Home, Matches and
+  - `usePressFeedback` — instant pressed scale (opacity under reduced
+    motion); `SectionHeader` also has a `display` title variant.
+  - Consumers so far: `competitions.tsx` (`StatePanel`); Home, Matches and
     `src/components/match/*` (`AppText`, `StatusBadge`, `SectionHeader`,
     `StatePanel`, skeletons, `DirectionalChevron`); Match Detail, Cart and
     Checkout (`TransactionBar`, plus `src/components/cart/*` and
@@ -696,9 +782,10 @@ enabled.** No third-party i18n library is used.
 - **Catalog** — `src/i18n/messages/en.ts`:
   - flat keys (`area.purpose`), `{name}` interpolation, and plural families
     (`.one`/`.other`, and other CLDR categories where a language needs them);
-  - foundation, navigation, Tournament and direction-restart strings, plus
-    the screens redesigned in Phases 2–4 (Home, Matches, Match Detail, Cart,
-    ticket holders, Checkout, payment screens); other screens still hold
+  - foundation, navigation, Competitions shell, onboarding, reservation
+    indicator and direction-restart strings, plus the screens redesigned so
+    far (Home, Matches, Match Detail, Cart, ticket holders, Checkout, payment
+    screens); other screens still hold
     inline English and move to the catalog as they are redesigned.
 - **Translator** — `src/i18n/translate.ts`, pure:
   - lookup falls back from locale → English → the key itself;
@@ -766,6 +853,10 @@ enabled.** No third-party i18n library is used.
 19. Every payment submission acquires the session's single payment attempt and persists it before sending, and runs the final owner guard (expiry included) immediately before `/checkout/mobile/submit`; only the acquiring attempt passes it (§10).
 20. An unknown payment outcome, or an unfinished attempt found after a restart, locks that cart session for every payment method until a different session exists; a stale lock or attempt never applies to another session (§10).
 21. `expo-notifications` is imported at runtime only by `src/lib/notifications.ts`, behind the Expo Go guard (§12).
+22. Notification permission is never requested at startup; the native prompt follows only an explicit user action, and an already granted permission keeps registering as before (§12).
+23. The global reservation indicator is presentation only: it shows `CartContext.secondsLeft` and has no clock, timestamp or reservation state of its own; expiry stays with `CartContext` and `ReservationExpiryNotice` (§8).
+24. Onboarding never navigates or traps an entry: it is offered only on a normal native launch at `/`, steps aside on any navigation, and never runs for signed-in users (§2.1).
+25. Font families are chosen only through the typography roles (`fontFamilies.ts`); Arabic never resolves to a Latin family.
 
 ---
 

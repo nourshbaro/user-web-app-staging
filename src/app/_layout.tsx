@@ -1,3 +1,4 @@
+import { AppChrome } from "@/components/AppChrome";
 import { ReservationExpiryNotice } from "@/components/cart/ReservationExpiryNotice";
 import { ThemeProvider, useTheme } from "@/components/ui";
 import { AlertDialogProvider } from "@/context/AlertDialogContext";
@@ -7,18 +8,19 @@ import { CartSheetProvider } from "@/context/CartSheetContext";
 import { I18nProvider, useI18n } from "@/i18n/I18nProvider";
 import { TicketHoldersProvider } from "@/context/TicketHoldersContext";
 import { ToastProvider } from "@/context/ToastContext";
-import { Stack } from "expo-router";
+import { useAppFonts } from "@/hooks/useAppFonts";
+import { useOnboardingGate } from "@/hooks/useOnboardingGate";
+import { Stack, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { getMaintenanceSnapshot, subscribeMaintenance } from "@/services/api";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import {
   configureNotificationChannel,
   getInitialNotificationData,
-  getNotificationPermissionStatus,
-  requestNotificationPermission,
   subscribeToFcmTokenRefresh,
   subscribeToNotificationResponses,
 } from "@/lib/notifications";
@@ -26,7 +28,7 @@ import {
 import { MaintenanceGuard } from "@/components/maintenance/MaintenanceGuard";
 import { handleNotificationNavigation } from "@/lib/notificationNavigation";
 import {
-  registerPushDevice,
+  registerPushDeviceIfPermitted,
   registerRefreshedPushDevice,
 } from "@/lib/registerPushDevice";
 
@@ -54,33 +56,37 @@ function AppProviders() {
   const auth = useAuth();
   const i18n = useI18n();
   const isReady = auth.isReady && i18n.isReady;
+  const fontsSettled = useAppFonts();
+  const pathname = usePathname();
+  const onboarding = useOnboardingGate({
+    ready: isReady && fontsSettled,
+    isAuthenticated: auth.isAuthenticated,
+    pathname,
+  });
+
+  // Read-only: MaintenanceGuard owns what renders. When maintenance replaces the
+  // navigator, the launch can never resolve, so the splash must not wait for it.
+  const maintenance = useSyncExternalStore(subscribeMaintenance, getMaintenanceSnapshot, getMaintenanceSnapshot);
 
   useEffect(() => {
-    if (isReady) {
+    // The native splash stays up until the first real frame is decided
+    // (onboarding or the resolved initial route), so nothing flashes in between.
+    if (isReady && fontsSettled && (!onboarding.deciding || maintenance)) {
       SplashScreen.hide();
     }
-  }, [isReady]);
+  }, [fontsSettled, isReady, maintenance, onboarding.deciding]);
 
   useEffect(() => {
     const setupNotifications = async () => {
       try {
         await configureNotificationChannel();
-
-        const currentPermission = await getNotificationPermissionStatus();
-
-        const resolvedPermission =
-          currentPermission === "granted"
-            ? currentPermission
-            : await requestNotificationPermission();
-
-        if (resolvedPermission === "granted") {
-          // Registers with whatever session is current right now — anonymous
-          // while logged out, authenticated once a session exists. Covers
-          // both a permission already granted from a previous launch and one
-          // just granted through the dialog above; registerPushDevice() is
-          // safe to call again from AuthContext for the same token.
-          await registerPushDevice();
-        }
+        // Never prompts at startup: the native permission dialog appears only
+        // after an explicit "Turn on notifications" (onboarding) or the
+        // Settings action. A permission granted earlier (previous launch,
+        // Settings, OS default) registers exactly as before — anonymous while
+        // logged out, authenticated once a session exists; AuthContext may
+        // safely register the same token again.
+        await registerPushDeviceIfPermitted();
       } catch (error) {
         console.error("Notification setup failed:", error);
       }
@@ -121,7 +127,7 @@ function AppProviders() {
     return subscribeToNotificationResponses(handleNotificationNavigation);
   }, []);
 
-  if (!isReady) {
+  if (!isReady || !fontsSettled) {
     return null;
   }
 
@@ -140,66 +146,73 @@ function AppProviders() {
               <StatusBar style={theme.isDark ? "light" : "dark"} />
               <ReservationExpiryNotice />
               <MaintenanceGuard>
-                <Stack
-                  screenOptions={{
-                    headerStyle: { backgroundColor: theme.colors.panel },
-                    headerTintColor: theme.colors.ink,
-                    headerShadowVisible: false,
-                    contentStyle: { backgroundColor: theme.colors.bg },
-                  }}
-                >
-                  <Stack.Screen
-                    name="index"
-                    options={{ headerShown: false, animation: "none" }}
-                  />
-                  <Stack.Screen
-                    name="matches"
-                    options={{ headerShown: false, animation: "none" }}
-                  />
-                  <Stack.Screen
-                    name="tournament"
-                    options={{ headerShown: false, animation: "none" }}
-                  />
-                  <Stack.Screen name="auth" options={{ headerShown: false }} />
-                  <Stack.Screen
-                    name="profile"
-                    options={{ headerShown: false, animation: "none" }}
-                  />
-                  <Stack.Screen
-                    name="tickets"
-                    options={{ headerShown: false, animation: "none" }}
-                  />
-                  <Stack.Screen
-                    name="edit-profile"
-                    options={{ headerShown: false }}
-                  />
-                  <Stack.Screen name="about" options={{ headerShown: false }} />
-                  <Stack.Screen
-                    name="settings"
-                    options={{ headerShown: false }}
-                  />
-                  <Stack.Screen name="cart" options={{ headerShown: false }} />
-                  <Stack.Screen
-                    name="checkout"
-                    options={{ headerShown: false }}
-                  />
-                  <Stack.Screen
-                    name="checkout/ticket-holders"
-                    options={{ headerShown: false, presentation: "card" }}
-                  />
-                  <Stack.Screen
-                    name="checkout/card/payment"
-                    options={{ headerShown: false }}
-                  />
-                  <Stack.Screen
-                    name="checkout/blue/payment"
-                    options={{ headerShown: false }}
-                  />
-                  <Stack.Screen
-                    name="match/[id]"
-                    options={{ headerShown: false }}
-                  />
-                </Stack>
+                <AppChrome onboarding={onboarding}>
+                  <Stack
+                    screenOptions={{
+                      headerStyle: { backgroundColor: theme.colors.panel },
+                      headerTintColor: theme.colors.ink,
+                      headerShadowVisible: false,
+                      contentStyle: { backgroundColor: theme.colors.bg },
+                    }}
+                  >
+                    <Stack.Screen
+                      name="index"
+                      options={{ headerShown: false, animation: "none" }}
+                    />
+                    <Stack.Screen
+                      name="matches"
+                      options={{ headerShown: false, animation: "none" }}
+                    />
+                    <Stack.Screen
+                      name="competitions"
+                      options={{ headerShown: false, animation: "none" }}
+                    />
+                    {/* Legacy primary route: redirects to /competitions for old links. */}
+                    <Stack.Screen
+                      name="tournament"
+                      options={{ headerShown: false, animation: "none" }}
+                    />
+                    <Stack.Screen name="auth" options={{ headerShown: false }} />
+                    <Stack.Screen
+                      name="profile"
+                      options={{ headerShown: false, animation: "none" }}
+                    />
+                    <Stack.Screen
+                      name="tickets"
+                      options={{ headerShown: false, animation: "none" }}
+                    />
+                    <Stack.Screen
+                      name="edit-profile"
+                      options={{ headerShown: false }}
+                    />
+                    <Stack.Screen name="about" options={{ headerShown: false }} />
+                    <Stack.Screen
+                      name="settings"
+                      options={{ headerShown: false }}
+                    />
+                    <Stack.Screen name="cart" options={{ headerShown: false }} />
+                    <Stack.Screen
+                      name="checkout"
+                      options={{ headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="checkout/ticket-holders"
+                      options={{ headerShown: false, presentation: "card" }}
+                    />
+                    <Stack.Screen
+                      name="checkout/card/payment"
+                      options={{ headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="checkout/blue/payment"
+                      options={{ headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="match/[id]"
+                      options={{ headerShown: false }}
+                    />
+                  </Stack>
+                </AppChrome>
               </MaintenanceGuard>
             </CartSheetProvider>
           </TicketHoldersProvider>

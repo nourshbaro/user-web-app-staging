@@ -1,26 +1,18 @@
-import { AppText, StatePanel } from "@/components/foundation";
+import { StatePanel } from "@/components/foundation";
 import { MatchCard } from "@/components/match/MatchCard";
-import { MatchFilterBar, MatchFiltersSheet } from "@/components/match/MatchFilters";
+import { MatchDateStrip, MatchFilterBar, MatchFiltersSheet } from "@/components/match/MatchFilters";
+import { MatchGroup } from "@/components/match/MatchGroup";
 import { MatchListSkeleton } from "@/components/match/MatchSkeletons";
-import { useResponsive } from "@/components/ui";
+import { TabHeader } from "@/components/TabHeader";
 import { useScheduledMatches } from "@/hooks/useScheduledMatches";
 import { useI18n } from "@/i18n/I18nProvider";
 import { spacing } from "@/lib/designTokens";
-import { matchListState, sortMatchesByKickoff } from "@/lib/matchDiscovery";
+import { formatLongCalendarDate } from "@/lib/format";
+import { groupMatchesByDate, matchListState, sortMatchesByKickoff } from "@/lib/matchDiscovery";
 import type { ApiMatch, MatchFilters } from "@/types";
 import { router } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
-import { RefreshControl, ScrollView, View, type DimensionValue } from "react-native";
-
-const GRID_GAP = spacing.md;
-
-/** Responsive columns for match cards; thresholds unchanged from the previous list. */
-export function useMatchGrid() {
-  const responsive = useResponsive();
-  const columns = responsive.width >= 1120 ? 3 : responsive.width >= 720 ? 2 : 1;
-  const cardWidth: DimensionValue = columns === 1 ? "100%" : (responsive.contentWidth - GRID_GAP * (columns - 1)) / columns;
-  return { columns, cardWidth };
-}
+import { RefreshControl, ScrollView, View } from "react-native";
 
 export function openMatch(match: ApiMatch) {
   router.push({ pathname: "/match/[id]", params: { id: String(match.id) } });
@@ -29,14 +21,16 @@ export function openMatch(match: ApiMatch) {
 /**
  * Matches (discovery) screen body. Owns the filter values; loading goes
  * through `useScheduledMatches` (the existing service + request authority).
+ * The source is `/matches/scheduled`: scheduled fixtures only, so there are no
+ * live or results views here.
  */
 export function MatchesList() {
   const { t, plural } = useI18n();
-  const { columns, cardWidth } = useMatchGrid();
   const [filters, setFilters] = useState<MatchFilters>({});
   const [sheetOpen, setSheetOpen] = useState(false);
   const data = useScheduledMatches(filters, { withFilterOptions: true });
   const matches = useMemo(() => sortMatchesByKickoff(data.matches), [data.matches]);
+  const groups = useMemo(() => groupMatchesByDate(matches), [matches]);
   const state = matchListState({ loading: data.loading, error: data.error, count: matches.length, filters });
   const { invalidate } = data;
   // Every filter change voids the in-flight request synchronously, before state changes.
@@ -53,24 +47,26 @@ export function MatchesList() {
         refreshControl={<RefreshControl refreshing={data.refreshing} onRefresh={data.refresh} />}
         contentContainerStyle={local.content}
       >
-        <View style={local.titleRow}>
-          <AppText variant="screenTitle" accessibilityRole="header">{t("matches.title")}</AppText>
-          {state === "results" ? (
-            <AppText variant="label" tone="muted">{plural("matches.count", matches.length)}</AppText>
-          ) : null}
-        </View>
+        <TabHeader title={t("matches.title")} subtitle={t("matches.subtitle")} />
+
+        <MatchDateStrip
+          value={filters.date}
+          onSelect={(date) => changeFilters({ ...filters, date })}
+          onMore={() => setSheetOpen(true)}
+        />
 
         <MatchFilterBar
           filters={filters}
           options={data.filterOptions}
           sheetOpen={sheetOpen}
+          summary={state === "results" ? plural("matches.count", matches.length) : undefined}
           onOpen={() => setSheetOpen(true)}
           onChange={changeFilters}
           onClear={clearFilters}
         />
 
         {state === "loading" ? (
-          <MatchListSkeleton label={t("matches.loading")} count={3} columns={columns} cardWidth={cardWidth} />
+          <MatchListSkeleton label={t("matches.loading")} count={3} />
         ) : state === "error" ? (
           <StatePanel
             variant="error"
@@ -98,9 +94,16 @@ export function MatchesList() {
                 action={{ label: t("common.retry"), onPress: data.retry }}
               />
             ) : null}
-            <View style={local.grid}>
-              {matches.map((match) => (
-                <MatchCard key={match.id} match={match} width={cardWidth} onPress={() => openMatch(match)} />
+            <View style={local.groups}>
+              {groups.map((group) => (
+                <MatchGroup
+                  key={group.date ?? "undated"}
+                  heading={group.date ? formatLongCalendarDate(group.date) : t("matches.dateTbc")}
+                >
+                  {group.matches.map((match, index) => (
+                    <MatchCard key={match.id} match={match} first={index === 0} onPress={() => openMatch(match)} />
+                  ))}
+                </MatchGroup>
               ))}
             </View>
           </>
@@ -120,7 +123,7 @@ export function MatchesList() {
 }
 
 const local = {
-  content: { gap: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl },
-  titleRow: { flexDirection: "row" as const, alignItems: "baseline" as const, justifyContent: "space-between" as const, gap: spacing.md },
-  grid: { width: "100%" as const, flexDirection: "row" as const, flexWrap: "wrap" as const, gap: GRID_GAP, alignItems: "stretch" as const },
+  // One readable column on tablets/desktop instead of stretching rows across the screen.
+  content: { width: "100%" as const, maxWidth: 760, alignSelf: "center" as const, gap: spacing.lg, paddingTop: spacing.xs, paddingBottom: spacing.xxl },
+  groups: { gap: spacing.xl },
 };

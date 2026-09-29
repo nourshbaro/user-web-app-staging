@@ -19,5 +19,5 @@ export function matchLabels(match: ApiMatch, i18n: I18n) {
       : status.known === "unknown"
         ? i18n.t("match.status.unknown")
         : status.raw;
-  return { home, away, date, time, venue, statusLabel, statusTone: status.tone };
+  return { home, away, date, time, venue, statusLabel, statusTone: status.tone, isScheduled: status.known === "scheduled" };
 }

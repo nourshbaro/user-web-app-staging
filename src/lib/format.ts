@@ -56,6 +56,18 @@ export function formatWeekdayShort(date: Date) {
   return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "short" }).format(date);
 }
 
+/** Day-of-month numeral ("3") in the app locale, for compact date tiles and chips. */
+export function formatDayOfMonth(date: Date) {
+  return new Intl.DateTimeFormat(formatLocaleTag, { day: "numeric" }).format(date);
+}
+
+/** Long calendar-date heading ("Saturday, October 3") for backend `match_date` values. */
+export function formatLongCalendarDate(value?: string | null) {
+  const date = parseCalendarDate(value);
+  if (!date) return "Date TBC";
+  return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "long", month: "long", day: "numeric" }).format(date);
+}
+
 export function formatTime(value?: string) {
   if (!value) return "TBC";
 

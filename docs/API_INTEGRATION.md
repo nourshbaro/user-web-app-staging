@@ -262,7 +262,9 @@ Full state model: `docs/ARCHITECTURE.md` §8.
 - `sendDeviceToken` checks the current session: no token → anonymous
   `POST /devices` (`overrideAuthorizationToken: null`); token → authenticated
   `POST /devices` using the live token.
-- Sent on app start (after permission), on every authenticated token change,
+- Sent on app start **only if permission is already granted** (the app never
+  prompts at startup), after an explicit opt-in that grants it (onboarding
+  "Turn on notifications" or Settings), on every authenticated token change,
   and on every FCM token refresh. Re-sending the same token authenticated after
   login is intentional (device association). Whether the backend deduplicates
   is not established here.
@@ -325,7 +327,25 @@ than adding a parallel one.
 - Backend behavior on BLUE callback, and how web BLUE results are finalized.
 - The meaning of the `password` header and of `remember` on login.
 - Ticket `status` value set; whether "used" is `status` or `checked_in_at`.
-- Whether any endpoint provides live scores, results, or competitions/standings.
+- Whether any endpoint provides live scores or live match state.
+- **Competitions (confirmed by the user, not yet integrated; no service calls
+  them yet).** Public endpoints and their confirmed response shapes — do not
+  assume other fields:
+  - `GET /competitions` → `data[]`: `id` (the competition ID source), `name`,
+    `short_name` (nullable), `slug`, `logo` (backend media path, e.g.
+    `competitions/logos/….jpg`), `format` (e.g. `"league"`).
+  - `GET /competitions/{id}/standings` → `data`: `competition` {`id`, `name`,
+    `short_name`}, `season` {`id`, `label`, `is_current`}, `standings[]`
+    {`rank`, `team` {`id`, `name`, `short_name`, `logo`}, `played`, `won`,
+    `drawn`, `lost`, `goals_for`, `goals_against`, `goal_difference`,
+    `points`}.
+  - `GET /competitions/{id}/matches` → `data[]`: `id`, `match_date`,
+    `kickoff_at`, `status` (backend-controlled), `matchday`, `round_name`
+    (nullable), `matchday_label`, `home_team`/`away_team` {`id`, `name`,
+    `short_name` (nullable), `logo`}, `home_score`/`away_score` (nullable),
+    `stadium` {`id`, `name`, `location`}.
+  - Logos are media paths resolved with `storageUrl()` (`src/lib/config.ts`).
+  - `/competitions` is currently only a navigation shell in the app.
 - **Kickoff timezone:** the backend sends `match_date` plus a clock-only
   `kickoff_at` with no zone. The app reads them as local wall-clock time,
   preserving existing behavior. The authoritative timezone is not established

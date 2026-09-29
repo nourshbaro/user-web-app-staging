@@ -29,6 +29,12 @@ for (const [name, colors] of [["light", lightColors], ["dark", darkColors]]) {
       ["disabledText/disabledSurface", colors.disabledText, colors.disabledSurface],
       ["onHero/hero", colors.onHero, colors.hero],
       ["onHeroMuted/hero", colors.onHeroMuted, colors.hero],
+      // Match-day roles (v3): reservation pill, urgent countdown, splash, inverted chips.
+      ["onHero/heroRaised", colors.onHero, colors.heroRaised],
+      ["onHeroUrgent/hero", colors.onHeroUrgent, colors.hero],
+      ["onBrandSurface/brandSurface", colors.onBrandSurface, colors.brandSurface],
+      ["surface/textStrong (selected chip)", colors.surface, colors.textStrong],
+      ["textMuted/surfaceSecondary", colors.textMuted, colors.surfaceSecondary],
     ];
     for (const [pair, fg, bg] of pairs) {
       assert.ok(contrast(fg, bg) >= 4.5, `${pair} is ${contrast(fg, bg).toFixed(2)}:1`);

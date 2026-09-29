@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-09-28 · Phase 4 closure (documentation sync)
+**As of:** 2026-09-29 · v3 Redesign Batches 1–3 (implementation checkpoint)
 
 ---
 
@@ -15,26 +15,41 @@
 - ✅ Phase 1 — Design Foundations (`3863673`).
 - ✅ Phase 2 — Navigation + Home + Match Discovery (`125ee2f`).
 - ✅ Phase 3 — Match Details + Ticket Selection (`cf987f3`).
-- ✅ **Phase 4 — Cart + Checkout: code-complete, pending commit.** Reviewed
-  independently; the confirmed findings (payment lock across restart, expiry
-  during the card handoff, same-session Card/BLUE concurrency) are fixed. The
-  changes are uncommitted on `cf987f3`.
-- ▶ **Next:** the redesign plan against the approved v2 design reference,
-  starting with its first batch once approved (`docs/WORKFLOW.md` §4–§5).
+- ✅ Phase 4 — Cart + Checkout (`bc4ca08`).
+- ✅ **v3 Batches 1–3 — Foundation + navigation, Splash/onboarding/
+  notifications, Home + Matches: implemented, pending independent review.**
+  Uncommitted on `bc4ca08`. Design reference: LFA Screen v3
+  (`docs/WORKFLOW.md` §5).
+- ▶ **Next:** Codex checkpoint review of Batches 1–3; then Batch 4 (Match
+  Details / ticket selection on v3: map collapsed by default with Show/Hide,
+  existing map geometry authoritative).
 
 ---
 
-## Validation (Phase 4 working tree)
+## Validation (Batches 1–3 working tree)
 
 | Check | Result |
 | ----- | ------ |
 | `npx tsc --noEmit` | PASS |
 | `npx expo lint` | 0 errors, 5 existing unused-variable warnings |
-| Tests (`AGENTS.md` §13 command, incl. untracked) | 66 files, **686 / 686 pass** |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | 70 files, **713 / 713 pass** |
 | `git diff --check` | clean |
-| Android / iOS / web exports | NOT RUN in the Phase 4 closure round |
-| Phase 4 runtime (Android, web) | NOT VERIFIED — see below |
+| Web export (server output, incl. `/api`) | PASS |
+| Android + iOS Metro export | PASS (7 font files bundled) |
+| Web runtime (dev server, headless Chrome, staging data) | PASS: Home and Matches at 390 px and 820 px, light and dark, reduced motion; tab order and `aria-selected`; `/tournament` → `/competitions` |
+| Native runtime (onboarding, notification prompt timing, hold bar, fonts) | NOT VERIFIED — the Android emulator did not come online in this environment |
+| Reservation indicator runtime | NOT VERIFIED (needs a signed-in staging cart) |
 | iOS runtime | NOT VERIFIED (Windows environment) |
+
+Runtime checks owed for Batches 1–3 (dev build, not Expo Go):
+- Fresh install at Home: splash → 3 pages → pre-prompt; "Turn on" shows the
+  OS prompt, then registers; "Not now" shows no prompt; relaunch skips it.
+- Launch from a notification tap / deep link / payment return: no onboarding.
+- Existing signed-in user after upgrade: no onboarding; push still registers.
+- Hold bar with an active cart: counts down with the cart, opens `/cart`,
+  disappears at expiry (toast from `ReservationExpiryNotice`); absent on
+  `/cart`, `/checkout/*`, `/match/[id]`; status bar not covered.
+- Custom fonts on Android/iOS (weights, no synthetic bold).
 
 Runtime checks still owed for Phase 4:
 - Android dev build: kill the app during a card submit and while the BLUE page
@@ -48,6 +63,24 @@ Runtime checks still owed for Phase 4:
 - Reserved seats: still no seated staging fixture.
 
 ---
+
+## Batches 1–3 outcome (v3)
+
+- **Foundation:** IBM Plex Sans (text) and Barlow Condensed (selective
+  display) behind semantic typography roles (`src/lib/fontFamilies.ts`,
+  runtime `expo-font`); display variants, radii, motion tokens, press
+  feedback; additive match-day palette roles (existing values unchanged).
+- **Navigation:** Home → Matches → My Tickets → Competitions → Profile;
+  `/competitions` shell; `/tournament` redirects (kept in allowlists).
+- **Startup:** first-run onboarding (`lfa_onboarding_v1`); notification
+  permission is no longer requested at startup, only from "Turn on
+  notifications" (or Settings); granted users keep registering.
+- **Home:** brand header, featured-match hero, ads banner, My Tickets
+  shortcut (no request), upcoming rows. No live/results/scores.
+- **Matches:** v3 header, date strip on the backend `date` filter, filter bar
+  and sheet, fixtures grouped by backend date.
+- **Global reservation indicator:** from `CartContext.secondsLeft` only;
+  header countdown pill removed.
 
 ## Phase 4 outcome
 
@@ -94,9 +127,15 @@ Runtime checks still owed for Phase 4:
 - **Reserved seats:** the runtime path still needs a seated staging fixture;
   the 5-minute seat cache can age (the backend add stays authoritative).
 - **Backend contracts:** kickoff timezone unresolved; no structured error
-  codes; no live data, results, favourites or availability in the APIs used;
-  competitions/standings endpoints are not integrated yet.
-- **Arabic / RTL:** no Arabic translation, and `ar` is not enabled.
+  codes; no live data, favourites or availability in the APIs used;
+  competitions/standings/competition-matches contracts are confirmed
+  (`docs/API_INTEGRATION.md` §14) but not integrated yet.
+- **Arabic / RTL:** no Arabic translation, and `ar` is not enabled. No
+  Arabic-capable font is chosen yet (Arabic falls back to the platform font).
+- **v3 carry-overs:** the dark theme keeps its navy surfaces (v3's neutral
+  black would change untouched screens); legacy screens (Tickets, Profile,
+  Settings, Auth…) still use `MainHeader`/platform-font text until
+  redesigned; `Button` text now uses IBM Plex Sans everywhere.
 - **Platforms:** iOS runtime unverified; a debug dev client can fail on a very
   slow cold Metro bundle (tooling only).
 - **Web (dev):** a "Failed to handle initial notification" toast appears in a

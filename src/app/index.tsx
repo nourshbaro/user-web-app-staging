@@ -1,5 +1,4 @@
 import { View } from "react-native";
-import { MainHeader } from "@/components/MainHeader";
 import { HomeFeed } from "@/components/HomeFeed";
 import { Screen, useResponsive } from "@/components/ui";
 
@@ -8,8 +7,8 @@ export default function HomeScreen() {
 
   return (
     <Screen>
+      {/* HomeFeed renders the brand header inside its scroll view (v3: the header scrolls with the feed). */}
       <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <MainHeader />
         <HomeFeed />
       </View>
     </Screen>

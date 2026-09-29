@@ -6,6 +6,7 @@ import { SymbolView } from "expo-symbols";
 import { useI18n } from "@/i18n/I18nProvider";
 import type { MessageKey } from "@/i18n/messages/en";
 import { radius, size, spacing, typography } from "@/lib/designTokens";
+import { fontStyleFor } from "@/lib/fontFamilies";
 import { createContext, forwardRef, PropsWithChildren, useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 import type { RefObject } from "react";
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, TextInput, TextInputProps, useColorScheme, useWindowDimensions, View } from "react-native";
@@ -175,6 +176,7 @@ type ButtonProps = {
 
 export function Button({ title, onPress, variant = "primary", disabled, loading = false, accessibilityLabel, accessibilityHint }: ButtonProps) {
   const theme = useTheme();
+  const { meta } = useI18n();
   const inactive = Boolean(disabled || loading);
   const textColor = inactive
     ? theme.colors.disabledText
@@ -202,7 +204,7 @@ export function Button({ title, onPress, variant = "primary", disabled, loading 
       ]}
     >
       {loading ? <ActivityIndicator size="small" color={textColor} accessibilityElementsHidden importantForAccessibility="no" /> : null}
-      <Text style={[theme.styles.buttonText, { color: textColor }]}>{title}</Text>
+      <Text style={[theme.styles.buttonText, fontStyleFor("text", typography.action.fontWeight, meta.script), { color: textColor }]}>{title}</Text>
     </Pressable>
   );
 }
@@ -262,13 +264,14 @@ export function Loading({ label }: { label?: string } = {}) {
 function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; onNavigate: (route: PrimaryTabRoute) => void }) {
   const pathname = usePathname();
   const theme = useTheme();
-  const { t } = useI18n();
+  const { t, meta } = useI18n();
 
+  // Same order as PRIMARY_TAB_ROUTES (reading order; swipe follows it).
   const tabs: { labelKey: MessageKey; href: PrimaryTabRoute; icon: any }[] = [
     { labelKey: "nav.home", href: "/", icon: { ios: "house", android: "home", web: "home" } },
-    { labelKey: "nav.tournament", href: "/tournament", icon: { ios: "trophy", android: "emoji_events", web: "emoji_events" } },
-    { labelKey: "nav.matches", href: "/matches", icon: { ios: "sportscourt", android: "stadium", web: "stadium" } },
+    { labelKey: "nav.matches", href: "/matches", icon: { ios: "calendar", android: "calendar_month", web: "calendar_month" } },
     { labelKey: "nav.tickets", href: "/tickets", icon: { ios: "ticket", android: "confirmation_number", web: "confirmation_number" } },
+    { labelKey: "nav.competitions", href: "/competitions", icon: { ios: "trophy", android: "emoji_events", web: "emoji_events" } },
     { labelKey: "nav.profile", href: "/profile", icon: { ios: "person", android: "person_outline", web: "person_outline" } },
   ];
 
@@ -280,7 +283,7 @@ function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; on
           {
             paddingBottom: bottomNavBottomPadding(bottomInset),
             backgroundColor: theme.colors.surface,
-            borderTopColor: theme.colors.divider,
+            borderTopColor: theme.colors.hairline,
           },
         ]}
       >
@@ -315,7 +318,8 @@ function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; on
                   adjustsFontSizeToFit
                   minimumFontScale={0.8}
                   maxFontSizeMultiplier={1.3}
-                  style={[theme.styles.bottomNavText, { color, fontWeight: active ? "800" : "600" }]}
+                  // Selected = heavier weight too (never colour alone).
+                  style={[theme.styles.bottomNavText, fontStyleFor("text", active ? "700" : "500", meta.script), { color }]}
                 >
                   {label}
                 </Text>
@@ -382,7 +386,8 @@ function createStyles(palette: typeof lightColors) {
     buttonDanger: { backgroundColor: palette.actionDestructive },
     buttonDisabled: { backgroundColor: palette.disabledSurface, borderColor: palette.disabledSurface },
     // Color is applied per state in <Button>; text may wrap for long (e.g. Arabic) labels.
-    buttonText: { color: palette.onActionPrimary, fontWeight: typography.action.fontWeight, fontSize: typography.action.fontSize, lineHeight: typography.action.lineHeight, textAlign: "center", flexShrink: 1 },
+    // Family/weight come from `fontStyleFor` in <Button>.
+    buttonText: { color: palette.onActionPrimary, fontSize: typography.action.fontSize, lineHeight: typography.action.lineHeight, textAlign: "center", flexShrink: 1 },
     buttonSecondaryText: { color: palette.onActionSecondary },
     inputWrap: { gap: 6 },
     label: { color: palette.ink, fontSize: 13, fontWeight: "700" },

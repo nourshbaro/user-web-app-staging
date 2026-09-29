@@ -49,5 +49,7 @@ test("only the intended routes render MainHeader", async () => {
     }
   }
 
-  assert.deepEqual(routes.sort(), ["index", "matches", "profile", "tickets", "tournament"]);
+  // Home, Matches and Competitions use the v3 tab headers (`TabHeader`/`BrandHeader`);
+  // /tournament is now a redirect. Tickets and Profile keep MainHeader until redesigned.
+  assert.deepEqual(routes.sort(), ["profile", "tickets"]);
 });

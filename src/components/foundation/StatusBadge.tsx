@@ -1,6 +1,7 @@
 import { useTheme } from "@/components/ui";
 import { useI18n } from "@/i18n/I18nProvider";
 import { radius, size, spacing, typography } from "@/lib/designTokens";
+import { fontStyleFor } from "@/lib/fontFamilies";
 import type { StatusTone } from "@/lib/themePalette";
 import { Text, View } from "react-native";
 
@@ -32,6 +33,7 @@ export function StatusBadge({ label, tone = "neutral", showDot = false }: Props)
         numberOfLines={1}
         style={[
           local.text,
+          fontStyleFor("text", "700", meta.script),
           { color: colors.fg },
           // Uppercase has no meaning in Arabic script; keep natural case there.
           meta.script === "latin" && local.uppercase,
@@ -55,6 +57,6 @@ const local = {
     borderWidth: 1,
   },
   dot: { width: 6, height: 6, borderRadius: 3 },
-  text: { fontSize: typography.caption.fontSize, lineHeight: typography.caption.lineHeight, fontWeight: "800" as const },
+  text: { fontSize: typography.caption.fontSize, lineHeight: typography.caption.lineHeight },
   uppercase: { textTransform: "uppercase" as const },
 };

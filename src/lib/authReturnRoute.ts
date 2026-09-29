@@ -1,6 +1,8 @@
 const STATIC_AUTH_RETURN_ROUTES = new Set([
   "/",
   "/matches",
+  "/competitions",
+  // Legacy primary route: still accepted, it redirects to /competitions.
   "/tournament",
   "/tickets",
   "/profile",

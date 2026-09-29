@@ -6,6 +6,7 @@ const profile = await readFile(new URL("../app/profile.tsx", import.meta.url), "
 const tickets = await readFile(new URL("../app/tickets.tsx", import.meta.url), "utf8");
 const settings = await readFile(new URL("../app/settings.tsx", import.meta.url), "utf8");
 const tournament = await readFile(new URL("../app/tournament.tsx", import.meta.url), "utf8");
+const competitions = await readFile(new URL("../app/competitions.tsx", import.meta.url), "utf8");
 const appSwitch = await readFile(new URL("../components/AppSwitch.tsx", import.meta.url), "utf8");
 const about = await readFile(new URL("../app/about.tsx", import.meta.url), "utf8");
 const catalog = await readFile(new URL("../i18n/messages/en.ts", import.meta.url), "utf8");
@@ -58,11 +59,16 @@ test("match cards keep responsive metadata rows and selected stadium context", (
   assert.match(tickets, /const logo = storageUrl\(team\.logo\)/);
 });
 
-test("Tournament remains a public coming-soon screen", () => {
-  assert.match(tournament, /export default function TournamentScreen/);
-  assert.match(tournament, /t\("tournament\.comingSoon\.title"\)/);
-  assert.match(catalog, /"tournament\.comingSoon\.title": "Coming Soon"/);
-  assert.doesNotMatch(tournament, /AuthRequired|profileService|apiRequest/);
+test("legacy /tournament redirects to the single public Competitions shell (no mock content)", () => {
+  // One competitions experience: the old route only forwards old links.
+  assert.match(tournament, /return <Redirect href="\/competitions" \/>;/);
+  assert.doesNotMatch(tournament, /StatePanel|Screen|useI18n/);
+  assert.match(competitions, /export default function CompetitionsScreen/);
+  assert.match(competitions, /t\("competitions\.comingSoon\.title"\)/);
+  assert.match(catalog, /"competitions\.comingSoon\.title": "Competitions are on the way"/);
+  // Public shell only in this checkpoint: no auth gate, fetching or fabricated data (comments excluded).
+  const code = competitions.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /AuthRequired|withAuthRequired|profileService|apiRequest|Service\.|useEffect|standings|Math\.random/);
 });
 
 test("settings exposes honest preferences and central deletion authority", () => {

@@ -21,8 +21,28 @@ export const radius = {
   sm: 8,
   md: 12,
   lg: 16,
+  /** Grouped list cards (v3 match-day surfaces). */
+  xl: 20,
+  /** Hero surfaces. */
+  xxl: 24,
   pill: 999,
 } as const;
+
+/**
+ * Motion durations (ms). Restrained and native: short fades/rises, press
+ * feedback, sheet and tab transitions. Nothing may wait on an animation, and
+ * every animation is skipped under reduced motion (`useReducedMotion`, or
+ * Reanimated's `ReduceMotion.System`).
+ */
+export const motion = {
+  press: 120,
+  fast: 180,
+  enter: 240,
+  sheet: 300,
+} as const;
+
+/** Resting scale while a card/row is pressed (skipped under reduced motion). */
+export const PRESSED_SCALE = 0.985;
 
 export const size = {
   /** Preferred minimum interactive size (Material 48dp). */
@@ -69,15 +89,23 @@ export type TypographyToken = {
   fontSize: number;
   lineHeight: number;
   fontWeight: FontWeight;
+  /**
+   * Font role (`src/lib/fontFamilies.ts`): `text` (IBM Plex Sans) unless set.
+   * `display` (Barlow Condensed) is reserved for sports/display data.
+   */
+  family?: "text" | "display";
+  /** Display titles are uppercase in Latin script only (Arabic has no case). */
+  uppercase?: boolean;
   /** Tabular digits keep prices, totals and timers from jittering. */
   fontVariant?: "tabular-nums"[];
 };
 
 /**
- * System fonts only (no decorative custom font). Letter-spacing is always 0:
- * tracking breaks Arabic letter joining, so no variant may depend on it.
- * Line heights leave room for Arabic ascenders/descenders (see
- * `lineHeightForScript`).
+ * Semantic typography. Families come from the variant's role, never from a
+ * screen, so an Arabic-capable family can be selected per script later
+ * (`fontFamilyFor`). Letter-spacing is always 0: tracking breaks Arabic letter
+ * joining, so no variant may depend on it. Line heights leave room for
+ * Arabic ascenders/descenders (see `lineHeightForScript`).
  */
 export const typography = {
   hero: { fontSize: 28, lineHeight: 34, fontWeight: "900" },
@@ -89,9 +117,18 @@ export const typography = {
   meta: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
   label: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
   caption: { fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  /** Small grouping heading (e.g. a date above a list of fixtures). */
+  overline: { fontSize: 12, lineHeight: 17, fontWeight: "600", uppercase: true },
   action: { fontSize: 16, lineHeight: 21, fontWeight: "700" },
   numeric: { fontSize: 18, lineHeight: 24, fontWeight: "800", fontVariant: ["tabular-nums"] },
   numericLarge: { fontSize: 26, lineHeight: 32, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  // Display role (Barlow Condensed): primary-tab titles, section titles,
+  // kickoff times, dates and countdown emphasis.
+  displayTitle: { fontSize: 38, lineHeight: 46, fontWeight: "700", family: "display", uppercase: true },
+  displaySection: { fontSize: 26, lineHeight: 32, fontWeight: "700", family: "display", uppercase: true },
+  displayKickoff: { fontSize: 34, lineHeight: 41, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
+  displayNumeral: { fontSize: 22, lineHeight: 27, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
+  displayCountdown: { fontSize: 18, lineHeight: 22, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
 } as const satisfies Record<string, TypographyToken>;
 
 export type TypographyVariant = keyof typeof typography;

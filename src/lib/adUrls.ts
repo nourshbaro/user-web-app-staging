@@ -3,8 +3,10 @@ import { storageUrl } from "@/lib/config";
 const STATIC_INTERNAL_ROUTES = new Set([
   "/",
   "/cart",
+  "/competitions",
   "/matches",
   "/profile",
+  // Legacy: still accepted for existing ad links; the route redirects to /competitions.
   "/tournament",
 ]);
 

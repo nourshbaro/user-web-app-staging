@@ -110,7 +110,8 @@ test("bottom navigation shows visible labels with a non-colour selected indicato
   const nav = ui.slice(ui.indexOf("function BottomNavigation"), ui.indexOf("export function useResponsive"));
   assert.match(nav, /<Text\s+numberOfLines=\{1\}[\s\S]*?maxFontSizeMultiplier=\{1\.3\}[\s\S]*?>\s*\{label\}\s*<\/Text>/);
   assert.match(nav, /active && \{ backgroundColor: theme\.colors\.selectedSurface \}/);
-  assert.match(nav, /fontWeight: active \? "800" : "600"/);
+  // Selected also reads heavier (semantic font helper), never colour alone.
+  assert.match(nav, /fontStyleFor\("text", active \? "700" : "500", meta\.script\)/);
   assert.match(nav, /aria-selected=\{active\}/);
   assert.match(nav, /onNavigate\(tab\.href\);/);
   assert.match(ui, /bottomNavItem: \{[\s\S]*?minHeight: size\.touchTarget/);

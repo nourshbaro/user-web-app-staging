@@ -125,7 +125,7 @@ Delivered as described in `docs/ARCHITECTURE.md` §7 and §8. It introduced
 the `CartPublication` return contract and the confirmation invariant. The
 reserved-seat runtime still needs a seated staging fixture.
 
-### Phase 4 — Cart + Checkout ✅ complete (pending commit)
+### Phase 4 — Cart + Checkout ✅ complete (`bc4ca08`)
 Delivered as described in `docs/ARCHITECTURE.md` §8–§10. It added the shared
 cart re-read gate and the per-session payment gate (one attempt across Card
 and BLUE, restart-safe unknown-outcome lock). Presentation redesign around
@@ -143,6 +143,15 @@ the existing owners. It preserved:
 
 A change to *when* the cart is cleared, or to payment completion, is a
 separate transaction-boundary task (§3).
+
+### v3 redesign batches (reference: LFA Screen v3, §5)
+Batches 1–3 (foundation + navigation, splash/onboarding/notification
+pre-prompt, Home + Matches) are implemented as one checkpoint pending
+independent review (`docs/STATUS.md`). Next: Batch 4 — Match Details /
+ticket selection on v3, keeping the existing map data and geometry
+authoritative (map collapsed by default, explicit Show/Hide, no refetch on
+toggle). Competitions, Tickets and Profile follow as later batches.
+
 ### Phase 5 — Tickets
 ### Phase 6 — Profile + supporting screens
 ### Phase 7 — Localization / RTL / Accessibility / Responsive / Performance / regression polish
@@ -157,10 +166,11 @@ polish.
 
 ## 5. Using the generated reference project
 
-**Primary visual reference (approved by the user after Phase 4 planning):**
-the v2 Claude Design export (`LFA Screen v2.dc.html`, `LFA Tickets v2.dc.html`,
-`lfa2.css` and assets), outside this repo. The earlier generated project below
-is secondary. The rules in this section apply to both: presentation ideas
+**Primary visual reference (approved by the user after Phase 4):** the
+LFA Screen v3 Claude Design project (`LFA Screen v3.dc.html`, `lfa3.css` and
+assets), which supersedes v2 (`LFA Screen v2.dc.html`, `LFA Tickets v2.dc.html`,
+`lfa2.css`). It is outside this repo. The earlier generated project below is
+secondary. The rules in this section apply to both: presentation ideas
 only, never mock data, fake flows, generated QR codes or fixed delays. The
 older "Grid / Poster / Terrace" direction (`LFA Screen.dc.html`) is rejected.
 

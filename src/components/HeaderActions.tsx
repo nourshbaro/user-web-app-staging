@@ -3,25 +3,30 @@ import { Pressable, Text, View } from "react-native";
 import { useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
 import { useCartSheet } from "@/context/CartSheetContext";
-import { CartTimerPill } from "@/components/CartTimer";
+import { useI18n } from "@/i18n/I18nProvider";
 import { groupCartItems } from "@/lib/cartDisplay";
+import { size } from "@/lib/designTokens";
 
 type HeaderActionsProps = {
   hideCart?: boolean;
   onCartPress?: () => void;
 };
 
+/**
+ * Header cart action (opens the cart sheet). The reservation countdown is no
+ * longer repeated here: the global reservation indicator shows the owner's
+ * countdown above these screens (`ReservationHoldBar`).
+ */
 export function HeaderActions({ hideCart = false, onCartPress }: HeaderActionsProps) {
   const theme = useTheme();
   const cart = useCart();
+  const { plural, t } = useI18n();
   const { openCartSheet } = useCartSheet();
   const cartCount = groupCartItems(cart.items).length;
   const actionButton = {
     ...local.iconButton,
-    backgroundColor: theme.isDark ? theme.colors.panelSoft : "#F1F5F9",
-    borderColor: theme.colors.line,
-    shadowColor: theme.colors.ink,
-    shadowOpacity: theme.isDark ? 0.26 : 0.08,
+    backgroundColor: theme.colors.surface,
+    borderColor: cartCount > 0 ? theme.colors.actionPrimary : theme.colors.border,
   };
 
   return (
@@ -29,28 +34,27 @@ export function HeaderActions({ hideCart = false, onCartPress }: HeaderActionsPr
       {!hideCart ? (
         <Pressable
           onPress={onCartPress ?? openCartSheet}
-          style={[actionButton, local.cartButton, cartCount > 0 && { borderColor: theme.colors.primary }]}
-          accessibilityLabel="Cart"
+          style={({ pressed }) => [actionButton, local.cartButton, pressed && { opacity: 0.8 }]}
+          accessibilityRole="button"
+          accessibilityLabel={cartCount > 0 ? plural("header.cart.a11yCount", cartCount) : t("header.cart.a11y")}
+          hitSlop={4}
         >
-          <HeaderIcon name={{ ios: "cart", android: "shopping_cart", web: "shopping_cart" }} color={cartCount > 0 ? theme.colors.primary : theme.colors.secondary} />
+          <HeaderIcon name={{ ios: "cart", android: "shopping_cart", web: "shopping_cart" }} color={cartCount > 0 ? theme.colors.tones.brand.fg : theme.colors.textStrong} />
           {cartCount > 0 ? (
-            <>
-              <View
-                style={[
-                  local.cartBadge,
-                  {
-                    backgroundColor: theme.colors.primary,
-                    borderColor: theme.colors.bg,
-                  },
-                ]}
-              >
-                <Text style={local.cartBadgeText}>{cartCount}</Text>
-              </View>
-            </>
+            <View
+              style={[
+                local.cartBadge,
+                {
+                  backgroundColor: theme.colors.actionPrimary,
+                  borderColor: theme.colors.bg,
+                },
+              ]}
+            >
+              <Text style={[local.cartBadgeText, { color: theme.colors.onActionPrimary }]}>{cartCount}</Text>
+            </View>
           ) : null}
         </Pressable>
       ) : null}
-      {cartCount > 0 ? <CartTimerPill seconds={cart.secondsLeft} /> : null}
     </View>
   );
 }
@@ -66,16 +70,12 @@ const local = {
     gap: 8,
   },
   iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 16,
+    width: size.touchTargetMin,
+    height: size.touchTargetMin,
+    borderRadius: size.touchTargetMin / 2,
     borderWidth: 1,
     alignItems: "center" as const,
     justifyContent: "center" as const,
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
     position: "relative" as const,
   },
   cartButton: {
@@ -83,8 +83,8 @@ const local = {
   },
   cartBadge: {
     position: "absolute" as const,
-    top: -7,
-    right: -7,
+    top: -5,
+    end: -5,
     minWidth: 18,
     height: 18,
     borderRadius: 9,
@@ -94,7 +94,6 @@ const local = {
     justifyContent: "center" as const,
   },
   cartBadgeText: {
-    color: "#FFFFFF",
     fontSize: 10,
     fontWeight: "900" as const,
     lineHeight: 12,

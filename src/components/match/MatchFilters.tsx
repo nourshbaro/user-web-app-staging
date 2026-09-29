@@ -3,7 +3,8 @@ import { AppText, DirectionalChevron } from "@/components/foundation";
 import { Button, useTheme } from "@/components/ui";
 import { useI18n } from "@/i18n/I18nProvider";
 import { radius, size, spacing } from "@/lib/designTokens";
-import { formatAccessibleCalendarDate, formatCalendarDate, formatMonthYear, formatWeekdayShort, parseCalendarDate } from "@/lib/format";
+import { fontStyleFor } from "@/lib/fontFamilies";
+import { formatAccessibleCalendarDate, formatDayOfMonth, formatMonthYear, formatWeekdayShort, parseCalendarDate } from "@/lib/format";
 import { getDateTriggerLabel, isDropdownOptionSelected } from "@/lib/matchFilterAccessibility";
 import {
   activeFilterCount,
@@ -11,6 +12,7 @@ import {
   getCalendarDays,
   isBeforeDay,
   isSameDay,
+  matchDateStrip,
   startOfMonth,
   startOfToday,
   toDateInputValue,
@@ -18,7 +20,7 @@ import {
 import type { FilterOption, MatchFilters } from "@/types";
 import { SymbolView } from "expo-symbols";
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 
 type FilterOptions = { teams: FilterOption[]; stadiums: FilterOption[] };
 
@@ -34,6 +36,7 @@ export function MatchFilterBar({
   filters,
   options,
   sheetOpen,
+  summary,
   onOpen,
   onChange,
   onClear,
@@ -41,6 +44,8 @@ export function MatchFilterBar({
   filters: MatchFilters;
   options: FilterOptions;
   sheetOpen: boolean;
+  /** Result summary owned by the screen (e.g. "12 matches"); omitted while loading. */
+  summary?: string;
   onOpen: () => void;
   onChange: (next: MatchFilters) => void;
   onClear: () => void;
@@ -48,44 +53,20 @@ export function MatchFilterBar({
   const theme = useTheme();
   const { t, plural } = useI18n();
   const count = activeFilterCount(filters);
+  // The date is always visible (and removable) in the date strip, so only team/venue get chips here.
   const chips = [
     filters.team ? { key: "team" as const, label: optionName(options.teams, filters.team) ?? filters.team } : null,
     filters.stadium ? { key: "stadium" as const, label: optionName(options.stadiums, filters.stadium) ?? filters.stadium } : null,
-    filters.date ? { key: "date" as const, label: formatCalendarDate(filters.date) } : null,
-  ].filter((chip): chip is { key: "team" | "stadium" | "date"; label: string } => chip !== null);
+  ].filter((chip): chip is { key: "team" | "stadium"; label: string } => chip !== null);
 
   return (
     <View style={local.bar}>
       <View style={local.row}>
-        <Pressable
-          onPress={onOpen}
-          accessibilityRole="button"
-          accessibilityLabel={count ? plural("filters.openActive", count) : t("filters.open")}
-          aria-expanded={sheetOpen}
-          style={({ pressed }) => [
-            local.filterButton,
-            {
-              backgroundColor: count ? theme.colors.selectedSurface : theme.colors.surface,
-              borderColor: count ? theme.colors.actionPrimary : theme.colors.border,
-              opacity: pressed ? 0.85 : 1,
-            },
-          ]}
-        >
-          <SymbolView
-            accessible={false}
-            name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as never}
-            size={18}
-            tintColor={count ? theme.colors.tones.brand.fg : theme.colors.textStrong}
-            fallback={<View />}
-          />
-          <AppText variant="label" tone={count ? "brand" : "strong"}>{t("filters.open")}</AppText>
-          {count ? (
-            // Count badge: filtered state is shown by shape and number, not colour alone.
-            <View style={[local.countBadge, { backgroundColor: theme.colors.actionPrimary }]}>
-              <Text style={[local.countText, { color: theme.colors.onActionPrimary }]}>{count}</Text>
-            </View>
-          ) : null}
-        </Pressable>
+        {summary ? (
+          <AppText variant="meta" tone="muted" numberOfLines={1} style={local.summary}>{summary}</AppText>
+        ) : (
+          <View style={local.summary} />
+        )}
 
         {count ? (
           <Pressable
@@ -95,9 +76,36 @@ export function MatchFilterBar({
             hitSlop={8}
             style={({ pressed }) => [local.clearLink, pressed && { opacity: 0.7 }]}
           >
-            <AppText variant="label" tone="brand">{t("filters.clear")}</AppText>
+            <AppText variant="label" tone="brand">{t("filters.clearShort")}</AppText>
           </Pressable>
         ) : null}
+
+        <Pressable
+          onPress={onOpen}
+          accessibilityRole="button"
+          accessibilityLabel={count ? plural("filters.openActive", count) : t("filters.open")}
+          aria-expanded={sheetOpen}
+          style={({ pressed }) => [
+            local.filterButton,
+            {
+              // Active filters invert the button (shape, fill and count), not colour alone.
+              backgroundColor: count ? theme.colors.textStrong : theme.colors.surface,
+              borderColor: count ? theme.colors.textStrong : theme.colors.border,
+              opacity: pressed ? 0.85 : 1,
+            },
+          ]}
+        >
+          <SymbolView
+            accessible={false}
+            name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as never}
+            size={16}
+            tintColor={count ? theme.colors.surface : theme.colors.textStrong}
+            fallback={<View />}
+          />
+          <AppText variant="label" style={{ color: count ? theme.colors.surface : theme.colors.textStrong }}>
+            {count ? t("filters.openCount", { count }) : t("filters.open")}
+          </AppText>
+        </Pressable>
       </View>
 
       {chips.length ? (
@@ -126,6 +134,110 @@ export function MatchFilterBar({
         </View>
       ) : null}
     </View>
+  );
+}
+
+/** Days shown in the compact strip (today + 13); later dates are in the sheet's calendar. */
+const DATE_STRIP_DAYS = 14;
+
+/**
+ * Compact date navigation (v3). Every chip maps to the existing backend
+ * `date` filter (one calendar day) or clears it ("All"); nothing is filtered
+ * on the device. "More dates" opens the sheet's full calendar.
+ */
+export function MatchDateStrip({
+  value,
+  onSelect,
+  onMore,
+}: {
+  value?: string;
+  onSelect: (date?: string) => void;
+  onMore: () => void;
+}) {
+  const theme = useTheme();
+  const { t } = useI18n();
+  const days = matchDateStrip(startOfToday(), DATE_STRIP_DAYS, value);
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={local.strip}
+      accessibilityLabel={t("filters.date")}
+    >
+      <DateChip selected={!value} label={t("filters.allDates")} accessibilityLabel={t("filters.anyDate")} onPress={() => onSelect(undefined)} />
+      {days.map((day) => {
+        const date = parseCalendarDate(day);
+        if (!date) return null;
+        return (
+          <DateChip
+            key={day}
+            selected={value === day}
+            weekday={formatWeekdayShort(date)}
+            label={formatDayOfMonth(date)}
+            accessibilityLabel={formatAccessibleCalendarDate(date)}
+            onPress={() => onSelect(day)}
+          />
+        );
+      })}
+      <Pressable
+        onPress={onMore}
+        accessibilityRole="button"
+        accessibilityLabel={t("filters.moreDates")}
+        style={({ pressed }) => [
+          local.dateChip,
+          { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, opacity: pressed ? 0.85 : 1 },
+        ]}
+      >
+        <SymbolView
+          accessible={false}
+          name={{ ios: "calendar", android: "calendar_month", web: "calendar_month" } as never}
+          size={18}
+          tintColor={theme.colors.textStrong}
+          fallback={<View />}
+        />
+        <AppText variant="caption" tone="muted" numberOfLines={1}>{t("filters.more")}</AppText>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function DateChip({
+  selected,
+  weekday,
+  label,
+  accessibilityLabel,
+  onPress,
+}: {
+  selected: boolean;
+  weekday?: string;
+  label: string;
+  accessibilityLabel: string;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const fg = selected ? theme.colors.surface : theme.colors.textStrong;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      aria-selected={selected}
+      style={({ pressed }) => [
+        local.dateChip,
+        {
+          // Selected = filled (ink) chip, not colour alone.
+          backgroundColor: selected ? theme.colors.textStrong : theme.colors.surface,
+          borderColor: selected ? theme.colors.textStrong : theme.colors.border,
+          opacity: pressed ? 0.85 : 1,
+        },
+      ]}
+    >
+      {weekday ? (
+        <AppText variant="caption" numberOfLines={1} style={{ color: fg }}>{weekday}</AppText>
+      ) : null}
+      <AppText variant={weekday ? "displayNumeral" : "label"} numberOfLines={1} style={{ color: fg }}>{label}</AppText>
+    </Pressable>
   );
 }
 
@@ -215,6 +327,7 @@ function OptionGroup({
 
 function OptionPill({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
   const theme = useTheme();
+  const { meta } = useI18n();
   return (
     <Pressable
       onPress={onPress}
@@ -224,17 +337,17 @@ function OptionPill({ label, selected, onPress }: { label: string; selected: boo
       style={({ pressed }) => [
         local.pill,
         {
-          backgroundColor: selected ? theme.colors.actionPrimary : theme.colors.surface,
-          borderColor: selected ? theme.colors.actionPrimary : theme.colors.border,
+          backgroundColor: selected ? theme.colors.textStrong : theme.colors.surface,
+          borderColor: selected ? theme.colors.textStrong : theme.colors.border,
           opacity: pressed ? 0.85 : 1,
         },
       ]}
     >
       {selected ? (
         // A checkmark marks the selection in addition to colour.
-        <SymbolView accessible={false} name={{ ios: "checkmark", android: "check", web: "check" } as never} size={14} tintColor={theme.colors.onActionPrimary} fallback={<View />} />
+        <SymbolView accessible={false} name={{ ios: "checkmark", android: "check", web: "check" } as never} size={14} tintColor={theme.colors.surface} fallback={<View />} />
       ) : null}
-      <Text numberOfLines={1} style={[local.pillText, { color: selected ? theme.colors.onActionPrimary : theme.colors.textStrong }]}>
+      <Text numberOfLines={1} style={[local.pillText, fontStyleFor("text", "600", meta.script), { color: selected ? theme.colors.surface : theme.colors.textStrong }]}>
         {label}
       </Text>
     </Pressable>
@@ -333,18 +446,28 @@ function DateFilter({ value, onSelect }: { value?: string; onSelect: (value?: st
 const local = {
   bar: { gap: spacing.sm },
   row: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md },
+  summary: { flex: 1, minWidth: 0 },
   filterButton: {
     minHeight: size.touchTargetMin,
     flexDirection: "row" as const,
     alignItems: "center" as const,
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderRadius: radius.pill,
+    borderRadius: radius.md,
     borderWidth: 1,
   },
-  countBadge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5, alignItems: "center" as const, justifyContent: "center" as const },
-  countText: { fontSize: 12, fontWeight: "800" as const },
   clearLink: { minHeight: size.touchTargetMin, justifyContent: "center" as const },
+  strip: { flexDirection: "row" as const, gap: spacing.sm, paddingVertical: spacing.xxs },
+  dateChip: {
+    minWidth: 52,
+    minHeight: 62,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 2,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+  },
   chips: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: spacing.sm },
   chip: {
     minHeight: 32,
@@ -371,7 +494,7 @@ const local = {
     borderRadius: radius.pill,
     borderWidth: 1,
   },
-  pillText: { fontSize: 14, lineHeight: 19, fontWeight: "700" as const, flexShrink: 1 },
+  pillText: { fontSize: 14, lineHeight: 19, flexShrink: 1 },
   calendar: { borderWidth: 1, borderRadius: radius.md, padding: spacing.md, gap: spacing.sm },
   calendarHeader: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const },
   calendarNav: { width: size.touchTargetMin, height: size.touchTargetMin, alignItems: "center" as const, justifyContent: "center" as const },

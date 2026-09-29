@@ -1,5 +1,4 @@
 import { View } from "react-native";
-import { MainHeader } from "@/components/MainHeader";
 import { MatchesList } from "@/components/MatchesList";
 import { Screen, useResponsive } from "@/components/ui";
 
@@ -8,8 +7,8 @@ export default function MatchesScreen() {
 
   return (
     <Screen>
+      {/* MatchesList renders the tab header inside its scroll view. */}
       <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <MainHeader />
         <MatchesList />
       </View>
     </Screen>

@@ -1,4 +1,5 @@
-export const PRIMARY_TAB_ROUTES = ["/", "/tournament", "/matches", "/tickets", "/profile"] as const;
+/** Primary tabs in reading order. `/tournament` is a compatibility redirect to `/competitions`. */
+export const PRIMARY_TAB_ROUTES = ["/", "/matches", "/tickets", "/competitions", "/profile"] as const;
 
 export type PrimaryTabRoute = (typeof PRIMARY_TAB_ROUTES)[number];
 let primaryTabTransitionDirection: -1 | 1 = 1;

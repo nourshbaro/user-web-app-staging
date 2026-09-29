@@ -1,6 +1,11 @@
 import { Platform } from "react-native";
 
-import { getFcmDeviceToken } from "@/lib/notifications";
+import {
+  getFcmDeviceToken,
+  getNotificationPermissionStatus,
+  requestNotificationPermission,
+  type NotificationPermissionState,
+} from "@/lib/notifications";
 import { registerAnonymousDevice, registerAuthenticatedDevice } from "@/services/auth";
 import { captureAuthenticationSnapshot } from "@/services/api";
 
@@ -40,6 +45,26 @@ export async function registerPushDevice() {
   if (!fcmToken) return;
 
   await sendDeviceToken(fcmToken);
+}
+
+/**
+ * Startup: registers only when the user has ALREADY granted permission (a
+ * previous launch, Settings, or the OS default). It never asks: the native
+ * prompt is shown only from an explicit user action (`optInToPushNotifications`).
+ */
+export async function registerPushDeviceIfPermitted() {
+  if ((await getNotificationPermissionStatus()) !== "granted") return;
+  await registerPushDevice();
+}
+
+/**
+ * The explicit "Turn on notifications" action: shows the native prompt, then
+ * registers exactly as a previously granted launch would.
+ */
+export async function optInToPushNotifications(): Promise<NotificationPermissionState> {
+  const permission = await requestNotificationPermission();
+  if (permission === "granted") await registerPushDevice();
+  return permission;
 }
 
 export async function registerRefreshedPushDevice(fcmToken: string) {

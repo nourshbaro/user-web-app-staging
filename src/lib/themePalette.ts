@@ -62,6 +62,23 @@ export type ThemeColors = {
   scrim: string;
   /** Fixed light backdrop for scannable content (QR) in both themes. */
   scanSurface: string;
+
+  // Match-day roles (v3 direction), additive: existing roles keep their values.
+  /** Raised element on a hero/night surface (e.g. the reservation pill). */
+  heroRaised: string;
+  /** Hairline on a hero/night surface. */
+  heroHairline: string;
+  /** Countdown emphasis on a hero surface once the reservation is running low. */
+  onHeroUrgent: string;
+  /** First-run brand surface (splash). */
+  brandSurface: string;
+  onBrandSurface: string;
+  /** Track behind segmented controls / unselected chips on the canvas. */
+  segment: string;
+  /** Hairline separating rows inside one grouped card. */
+  hairline: string;
+  /** Soft elevation colour for grouped cards and heroes. */
+  shadow: string;
   tones: Record<StatusTone, ToneColors>;
 };
 
@@ -108,6 +125,14 @@ export const lightColors: ThemeColors = {
   skeletonHighlight: "#EEF1F6",
   scrim: "rgba(15,18,22,0.48)",
   scanSurface: "#FFFFFF",
+  heroRaised: "#1D2129",
+  heroHairline: "rgba(255,255,255,0.12)",
+  onHeroUrgent: "#FF8A9A",
+  brandSurface: "#B30E28",
+  onBrandSurface: "#FFFFFF",
+  segment: "#E6E9EF",
+  hairline: "#ECEEF2",
+  shadow: "rgba(21,22,28,0.08)",
   tones: {
     neutral: { fg: "#3E4A67", bg: "#EEF1F6", border: "#DBE0E8" },
     brand: { fg: "#A10E26", bg: "#FBE6EA", border: "#F2BCC6" },
@@ -164,6 +189,14 @@ export const darkColors: ThemeColors = {
   skeletonHighlight: "#273449",
   scrim: "rgba(0,0,0,0.6)",
   scanSurface: "#FFFFFF",
+  heroRaised: "#1A2233",
+  heroHairline: "rgba(255,255,255,0.12)",
+  onHeroUrgent: "#FF8A9A",
+  brandSurface: "#B30E28",
+  onBrandSurface: "#FFFFFF",
+  segment: "#1E293B",
+  hairline: "#223047",
+  shadow: "rgba(0,0,0,0.36)",
   tones: {
     neutral: { fg: "#CBD5E1", bg: "#1E293B", border: "#334155" },
     brand: { fg: "#FF9AA9", bg: "#3A0F18", border: "#6B1A2A" },

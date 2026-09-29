@@ -1,31 +1,42 @@
 import { AppBanner } from "@/components/AppBanner";
-import { SectionHeader, StatePanel } from "@/components/foundation";
+import { AppText, DirectionalChevron, SectionHeader, StatePanel, usePressFeedback } from "@/components/foundation";
 import { FeaturedMatchCard } from "@/components/match/FeaturedMatchCard";
 import { MatchCard } from "@/components/match/MatchCard";
+import { MatchGroup } from "@/components/match/MatchGroup";
 import { MatchListSkeleton } from "@/components/match/MatchSkeletons";
-import { openMatch, useMatchGrid } from "@/components/MatchesList";
+import { openMatch } from "@/components/MatchesList";
+import { BrandHeader } from "@/components/TabHeader";
+import { useTheme } from "@/components/ui";
 import { useKickoffClock } from "@/hooks/useKickoffClock";
 import { useScheduledMatches } from "@/hooks/useScheduledMatches";
 import { useI18n } from "@/i18n/I18nProvider";
-import { spacing } from "@/lib/designTokens";
+import { radius, size, spacing } from "@/lib/designTokens";
 import { selectHomeMatches } from "@/lib/matchDiscovery";
-import { setPrimaryTabTransitionDirection } from "@/lib/navigationPresentation";
+import { setPrimaryTabTransitionDirection, type PrimaryTabRoute } from "@/lib/navigationPresentation";
 import type { MatchFilters } from "@/types";
 import { router } from "expo-router";
+import { SymbolView } from "expo-symbols";
 import { useMemo } from "react";
-import { RefreshControl, ScrollView, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 const NO_FILTERS: MatchFilters = {};
 /** Same number of matches Home showed before (featured + upcoming). */
 const HOME_MATCH_LIMIT = 5;
 
+/** Same semantics as the bottom tab: replace, forward transition. */
+function switchTab(route: PrimaryTabRoute) {
+  setPrimaryTabTransitionDirection(1);
+  router.replace(route);
+}
+
 /**
- * Home: backend ads banner, the featured (next) match, then upcoming matches.
- * Data comes from the same scheduled-matches owner as the Matches screen.
+ * Home (v3 hierarchy): brand header, the featured (next) match, the backend
+ * ads banner, a My Tickets shortcut, then upcoming matches. Match data comes
+ * from the same scheduled-matches owner as the Matches screen. Sections the
+ * API cannot support (live matches, results, scores) are not shown.
  */
 export function HomeFeed() {
   const { t } = useI18n();
-  const { columns, cardWidth } = useMatchGrid();
   const data = useScheduledMatches(NO_FILTERS);
   // Presentation time: load time, advanced at the next kickoff and on app foreground (no refetch).
   const now = useKickoffClock(data.matches, data.loadedAt);
@@ -47,10 +58,10 @@ export function HomeFeed() {
       refreshControl={<RefreshControl refreshing={data.refreshing} onRefresh={data.refresh} />}
       contentContainerStyle={local.content}
     >
-      <AppBanner />
+      <BrandHeader />
 
       {data.loading ? (
-        <MatchListSkeleton label={t("matches.loading")} count={2} columns={columns} cardWidth={cardWidth} withFeatured />
+        <MatchListSkeleton label={t("matches.loading")} count={2} withFeatured />
       ) : data.error && !hasMatches ? (
         <StatePanel
           variant="error"
@@ -82,28 +93,83 @@ export function HomeFeed() {
               action={{ label: t("home.upcoming.viewAll"), onPress: openAllMatches }}
             />
           )}
-
-          {upcoming.length ? (
-            <View style={local.section}>
-              <SectionHeader
-                title={t("home.upcoming.title")}
-                action={{ label: t("home.upcoming.viewAll"), onPress: openAllMatches, accessibilityHint: t("home.upcoming.viewAllHint") }}
-              />
-              <View style={local.grid}>
-                {upcoming.map((match) => (
-                  <MatchCard key={match.id} match={match} width={cardWidth} onPress={() => openMatch(match)} />
-                ))}
-              </View>
-            </View>
-          ) : null}
         </>
       )}
+
+      <AppBanner />
+
+      <TicketsShortcut />
+
+      {!data.loading && upcoming.length ? (
+        <View style={local.section}>
+          <SectionHeader
+            display
+            title={t("home.upcoming.title")}
+            action={{ label: t("home.upcoming.viewAll"), onPress: openAllMatches, accessibilityHint: t("home.upcoming.viewAllHint") }}
+          />
+          <MatchGroup>
+            {upcoming.map((match, index) => (
+              <MatchCard key={match.id} match={match} variant="dated" first={index === 0} onPress={() => openMatch(match)} />
+            ))}
+          </MatchGroup>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
 
+/**
+ * Entry to My Tickets. It deliberately loads nothing: ticket data stays with
+ * the Tickets screen and its portal requests, so Home makes no extra call.
+ */
+function TicketsShortcut() {
+  const theme = useTheme();
+  const { t } = useI18n();
+  const pressFeedback = usePressFeedback();
+  return (
+    <Pressable
+      onPress={() => switchTab("/tickets")}
+      accessibilityRole="button"
+      accessibilityLabel={t("home.tickets.title")}
+      accessibilityHint={t("home.tickets.hint")}
+      style={({ pressed }) => [
+        local.shortcut,
+        { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairline, boxShadow: `0 6px 20px ${theme.colors.shadow}` },
+        pressFeedback(pressed),
+      ]}
+    >
+      <View style={[local.shortcutIcon, { backgroundColor: theme.colors.tones.brand.bg }]}>
+        <SymbolView
+          accessible={false}
+          name={{ ios: "ticket", android: "confirmation_number", web: "confirmation_number" } as never}
+          size={20}
+          tintColor={theme.colors.tones.brand.fg}
+          fallback={<View />}
+        />
+      </View>
+      <View style={local.shortcutCopy}>
+        <AppText variant="bodyStrong" numberOfLines={1}>{t("home.tickets.title")}</AppText>
+        <AppText variant="meta" tone="muted" numberOfLines={2}>{t("home.tickets.message")}</AppText>
+      </View>
+      <DirectionalChevron kind="forward" size={16} color={theme.colors.textMuted} />
+    </Pressable>
+  );
+}
+
 const local = {
-  content: { gap: spacing.xl, paddingTop: spacing.xs, paddingBottom: spacing.xxl },
-  section: { gap: spacing.md },
-  grid: { width: "100%" as const, flexDirection: "row" as const, flexWrap: "wrap" as const, gap: spacing.md, alignItems: "stretch" as const },
+  // One readable column on tablets/desktop instead of stretching rows across the screen.
+  content: { width: "100%" as const, maxWidth: 760, alignSelf: "center" as const, gap: spacing.xl, paddingTop: spacing.xs, paddingBottom: spacing.xxl },
+  section: { gap: spacing.sm },
+  shortcut: {
+    minHeight: size.touchTarget + spacing.xl,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+  },
+  shortcutIcon: { width: 42, height: 42, borderRadius: radius.md, alignItems: "center" as const, justifyContent: "center" as const },
+  shortcutCopy: { flex: 1, minWidth: 0, gap: spacing.xxs },
 };

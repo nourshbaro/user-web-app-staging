@@ -196,3 +196,48 @@ export function nextKickoffAfter(matches: readonly Pick<ApiMatch, "match_date" |
   }
   return next;
 }
+
+export type MatchDateGroup<T> = {
+  /** The shared backend `match_date` ("YYYY-MM-DD"), or null for fixtures without a valid date. */
+  date: string | null;
+  matches: T[];
+};
+
+/**
+ * Groups already-sorted fixtures under the calendar date the backend gave
+ * them (presentation only: nothing is filtered out or re-dated). Groups keep
+ * the order of their first fixture; fixtures without a valid date are grouped
+ * last, never assigned a date.
+ */
+export function groupMatchesByDate<T extends Pick<ApiMatch, "match_date">>(matches: readonly T[]): MatchDateGroup<T>[] {
+  const dated = new Map<string, T[]>();
+  const undated: T[] = [];
+  for (const match of matches) {
+    const parts = parseStrictCalendarDate(match.match_date);
+    if (!parts) {
+      undated.push(match);
+      continue;
+    }
+    const key = match.match_date.slice(0, 10);
+    const group = dated.get(key);
+    if (group) group.push(match);
+    else dated.set(key, [match]);
+  }
+  const groups: MatchDateGroup<T>[] = [...dated].map(([date, items]) => ({ date, matches: items }));
+  if (undated.length) groups.push({ date: null, matches: undated });
+  return groups;
+}
+
+/**
+ * The compact date strip on Matches: `count` consecutive calendar days from
+ * `today`, as the "YYYY-MM-DD" values the backend `date` filter takes. A
+ * selected date outside the strip is kept visible (first) so the current
+ * filter is never hidden.
+ */
+export function matchDateStrip(today: Date, count: number, selected?: string): string[] {
+  const days = Array.from({ length: count }, (_, offset) =>
+    toDateInputValue(new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)),
+  );
+  if (selected && !days.includes(selected)) return [selected, ...days];
+  return days;
+}
