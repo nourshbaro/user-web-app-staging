@@ -2,59 +2,46 @@ import type { CheckoutResultParams } from "@/lib/checkoutResultParams";
 
 export type CheckoutResultOutcome = "success" | "failed";
 
-export function getCheckoutResultPresentation(
-  outcome: CheckoutResultOutcome,
-  provider: CheckoutResultParams["provider"],
-) {
+/**
+ * Catalog keys for a result route. Pure (no React Native imports).
+ *
+ * These routes are reached only from production's own terminal handling:
+ * `success` after a trusted, matched completion (the cart was already cleared
+ * for that session); `failed` from the provider's failure return. Neither
+ * claims more than that: success never promises fields the backend did not
+ * send, and failure never states that no order exists.
+ */
+export function getCheckoutResultPresentation(outcome: CheckoutResultOutcome) {
   if (outcome === "success") {
-    if (provider === "blue") {
-      return {
-        title: "Blue Wallet payment successful",
-        message: "Your booking has been confirmed. Your ticket(s) have been sent to your email.",
-        secondaryAction: { title: "View tickets", href: "/tickets" as const },
-      };
-    }
-    if (provider === "cybersource") {
-      return {
-        title: "Card payment successful",
-        message: "Your booking has been confirmed. Your ticket(s) have been sent to your email.",
-        secondaryAction: { title: "View tickets", href: "/tickets" as const },
-      };
-    }
     return {
-      title: "Payment successful",
-      message: "Your payment result is ready. Your ticket(s) have been sent to your email.",
-      secondaryAction: { title: "View tickets", href: "/tickets" as const },
-    };
-  }
-
-  if (provider === "blue") {
-    return {
-      title: "Blue Wallet payment failed",
-      message: "Blue Wallet could not complete this payment. The previous checkout is no longer active, so a new attempt must begin with a new reservation.",
-      secondaryAction: { title: "Browse matches", href: "/matches" as const },
-    };
-  }
-  if (provider === "cybersource") {
-    return {
-      title: "Card payment failed",
-      message: "The card payment could not be completed. Return home or browse matches to begin a safe new attempt.",
-      secondaryAction: { title: "Browse matches", href: "/matches" as const },
-    };
+      titleKey: "result.success.title",
+      messageKey: "result.success.message",
+      primaryAction: { labelKey: "result.success.tickets", href: "/tickets" as const },
+      secondaryAction: { labelKey: "result.home", href: "/" as const },
+    } as const;
   }
   return {
-    title: "Payment failed",
-    message: "The payment could not be completed. Return home or browse matches to continue safely.",
-    secondaryAction: { title: "Browse matches", href: "/matches" as const },
-  };
+    titleKey: "result.failed.title",
+    messageKey: "result.failed.message",
+    primaryAction: { labelKey: "result.failed.browse", href: "/matches" as const },
+    secondaryAction: { labelKey: "result.home", href: "/" as const },
+  } as const;
 }
 
+/** "Paid with" label key, only when the provider is known. */
+export function getCheckoutResultProviderKey(provider: CheckoutResultParams["provider"]) {
+  if (provider === "blue") return "result.provider.blue" as const;
+  if (provider === "cybersource") return "result.provider.card" as const;
+  return null;
+}
+
+/** Detail rows from backend-provided route values only; missing values are omitted. */
 export function getCheckoutResultMetadata(result: CheckoutResultParams) {
   const order = result.order_number ?? result.order_id;
 
   return [
-    ...(order ? [{ label: "Order", value: order }] : []),
-    ...(result.reference ? [{ label: "Reference", value: result.reference }] : []),
-    ...(result.status ? [{ label: "Status", value: result.status }] : []),
+    ...(order ? [{ labelKey: "result.detail.order" as const, value: order, mono: true }] : []),
+    ...(result.reference ? [{ labelKey: "result.detail.reference" as const, value: result.reference, mono: true }] : []),
+    ...(result.status ? [{ labelKey: "result.detail.status" as const, value: result.status, mono: false }] : []),
   ];
 }

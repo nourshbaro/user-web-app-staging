@@ -71,6 +71,8 @@ function fakeOwner({ sessionId = "S1", lines = [] } = {}) {
         cart.push({ lock_key: `L${nextLock++}`, match_id: MATCH, stadium_zone_id: String(zoneId), type: "seats", quantity: seatIds.length, seat_ids: [...seatIds] });
       }),
     currentSessionId: () => state.sessionId,
+    // The match is re-read before any mutation; scheduled unless a test says otherwise.
+    confirmStillOnSale: async () => { state.statusChecks = (state.statusChecks ?? 0) + 1; return state.onSale ?? true; },
   };
   return { state, ops };
 }
@@ -97,7 +99,7 @@ test("remove with an authoritative refresh confirms; the line is gone from the p
   assert.equal(plan.gaChanges[0].action, "remove");
   const outcome = await executeSelectionCommit(plan, owner.ops);
   assert.deepEqual(outcome, { status: "confirmed" });
-  assert.deepEqual(commitEffects(outcome, null), { success: true, needsReconcile: false });
+  assert.deepEqual(commitEffects(outcome, null), { success: true, needsReconcile: false, discardDraft: false });
   assert.equal(cartLinesByZone(owner.state.published, MATCH).has(1), false);
 });
 
@@ -146,7 +148,7 @@ test("partial success: A publishes, B is rejected; the retry sends only B", asyn
   assert.equal(first.status, "failed");
   assert.equal(first.completedSteps, 1);
   const effects = commitEffects(first, "unavailable");
-  assert.deepEqual(effects, { success: false, needsReconcile: false }, "a definite rejection needs no reconcile");
+  assert.deepEqual(effects, { success: false, needsReconcile: false, discardDraft: false }, "a definite rejection needs no reconcile");
 
   // Drafts were kept; the next plan is re-diffed against the published cart, so A is not resent.
   const retry = planFrom(owner, drafts);

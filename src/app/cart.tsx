@@ -1,5 +1,5 @@
-import { AppHeader } from "@/components/AppHeader";
-import { CartLineItem } from "@/components/cart/CartLineItem";
+import { FlowHeader } from "@/components/FlowHeader";
+import { CartGroupCard, CartLineItem } from "@/components/cart/CartLineItem";
 import { CartNotice } from "@/components/cart/CartNotice";
 import { ReservationStatus } from "@/components/cart/ReservationStatus";
 import {
@@ -9,7 +9,7 @@ import {
   StatePanel,
   TransactionBar,
 } from "@/components/foundation";
-import { Button, Screen, useResponsive } from "@/components/ui";
+import { Button, useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useCart } from "@/context/CartContext";
 import { useCartLineActions } from "@/hooks/useCartLineActions";
@@ -20,18 +20,21 @@ import {
   groupLinesByMatch,
   ticketCount,
 } from "@/lib/cartPresentation";
-import { radius, spacing } from "@/lib/designTokens";
+import { layout, radius, spacing } from "@/lib/designTokens";
 import { formatMoney } from "@/lib/format";
 import { router, Stack } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BackHandler, ScrollView, View } from "react-native";
+import { ActivityIndicator, BackHandler, ScrollView, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Readable single column on tablets and web.
 const COLUMN_MAX_WIDTH = 720;
 
 function CartScreen() {
   const cart = useCart();
+  const theme = useTheme();
   const responsive = useResponsive();
+  const insets = useSafeAreaInsets();
   const i18n = useI18n();
   const actions = useCartLineActions();
   const [barHeight, setBarHeight] = useState(0);
@@ -47,6 +50,7 @@ function CartScreen() {
   const hasItems = viewState === "active" || viewState === "expired";
   const lineActionsBlocked =
     viewState !== "active" || actions.busy || actions.needsCartCheck || cart.isLoading;
+  const columnWidth = Math.min(responsive.contentWidth, COLUMN_MAX_WIDTH);
 
   const continueShopping = useCallback(() => {
     // Preserve the cart — this only navigates, it never clears it. Prefer
@@ -81,116 +85,143 @@ function CartScreen() {
     router.replace("/checkout/ticket-holders");
   };
 
+  const totalLabel = formatMoney(cart.total, cart.currency);
+
   return (
-    <Screen>
-      <Stack.Screen options={{ gestureEnabled: false }} />
-      <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <AppHeader
-          title={i18n.t("cart.title")}
-          subtitle={hasItems ? i18n.plural("cart.subtitle", tickets) : i18n.t("cart.noReservation")}
-          hideCart
+    <View style={[local.root, { backgroundColor: theme.colors.background }]}>
+      <Stack.Screen options={{ headerShown: false, gestureEnabled: false }} />
+      <View style={[local.header, { paddingTop: insets.top }]}>
+        <FlowHeader
+          title={i18n.t("cart.header")}
+          subtitle={hasItems ? i18n.plural("cart.subtitle", tickets) : undefined}
           onBack={goBack}
         />
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            local.content,
-            { paddingBottom: hasItems ? barHeight + spacing.lg : spacing.xxxl },
-          ]}
-        >
-          {viewState === "loading" ? (
-            <SkeletonGroup label={i18n.t("cart.loading")}>
-              <SkeletonBlock height={64} borderRadius={radius.md} />
-              <SkeletonBlock height={148} borderRadius={radius.lg} />
-              <SkeletonBlock height={148} borderRadius={radius.lg} />
-            </SkeletonGroup>
-          ) : viewState === "refreshFailed" ? (
-            <StatePanel
-              variant="error"
-              title={i18n.t("cart.refreshFailed.title")}
-              message={i18n.t("cart.refreshFailed.message")}
-              action={{ label: i18n.t("common.retry"), onPress: () => void actions.checkCart() }}
-            />
-          ) : viewState === "empty" ? (
-            <StatePanel
-              variant="empty"
-              title={i18n.t("cart.empty.title")}
-              message={i18n.t("cart.empty.message")}
-              action={{ label: i18n.t("cart.empty.action"), onPress: () => router.dismissTo("/matches") }}
-            />
-          ) : (
-            <>
-              <ReservationStatus secondsLeft={cart.secondsLeft} />
-
-              {viewState === "expired" ? (
-                <StatePanel
-                  variant="unavailable"
-                  title={i18n.t("cart.expired.title")}
-                  message={i18n.t("cart.expired.message")}
-                />
-              ) : null}
-
-              {actions.needsCartCheck ? (
-                <CartNotice
-                  tone="warning"
-                  message={i18n.t("cart.unconfirmed.message")}
-                  action={{
-                    label: i18n.t("cart.check.action"),
-                    busy: actions.checkingCart,
-                    onPress: () => void actions.checkCart(),
-                  }}
-                />
-              ) : cart.cartRefreshError ? (
-                <CartNotice
-                  tone="warning"
-                  message={i18n.t("cart.refreshWarning")}
-                  action={{
-                    label: i18n.t("common.retry"),
-                    busy: actions.checkingCart,
-                    onPress: () => void actions.checkCart(),
-                  }}
-                />
-              ) : null}
-
-              {matchGroups.map((group) => (
-                <View key={group.matchId} style={local.group}>
-                  <AppText variant="sectionTitle" accessibilityRole="header" numberOfLines={2}>
-                    {group.matchTitle ?? i18n.t("cart.matchFallback", { id: group.matchId })}
-                  </AppText>
-                  {group.lines.map((line) => {
-                    const zone = line.zone_name ?? i18n.t("cart.zoneFallback");
-                    return (
-                      <CartLineItem
-                        key={line.key}
-                        line={line}
-                        showMatch={false}
-                        busy={actions.pendingLineKey === line.key}
-                        disabled={lineActionsBlocked}
-                        onChangeQuantity={(quantity) => void actions.setQuantity(line, quantity)}
-                        onRemove={() => void actions.removeLine(line, zone)}
-                      />
-                    );
-                  })}
-                </View>
-              ))}
-
-              <Button title={i18n.t("cart.continueShopping")} variant="secondary" onPress={continueShopping} />
-            </>
-          )}
-        </ScrollView>
       </View>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          local.content,
+          { width: columnWidth, paddingBottom: hasItems ? barHeight + spacing.lg : spacing.xxxl },
+        ]}
+      >
+        {viewState === "loading" ? (
+          <>
+            {/* v3 pending cart: nothing is shown as confirmed until LFA answers. */}
+            <View
+              style={[local.pending, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}
+              accessible
+              accessibilityRole="progressbar"
+              accessibilityLabel={`${i18n.t("cart.pending.title")}. ${i18n.t("cart.pending.message")}`}
+              aria-busy
+            >
+              <ActivityIndicator size="large" color={theme.colors.actionPrimary} />
+              <AppText variant="bodyStrong" align="center" style={local.pendingTitle}>{i18n.t("cart.pending.title")}</AppText>
+              <AppText variant="meta" tone="muted" align="center" style={local.regular}>{i18n.t("cart.pending.message")}</AppText>
+            </View>
+            <SkeletonGroup label={i18n.t("cart.loading")}>
+              <SkeletonBlock height={132} borderRadius={radius.xl} />
+            </SkeletonGroup>
+          </>
+        ) : viewState === "refreshFailed" ? (
+          <StatePanel
+            variant="error"
+            title={i18n.t("cart.refreshFailed.title")}
+            message={i18n.t("cart.refreshFailed.message")}
+            action={{ label: i18n.t("common.retry"), onPress: () => void actions.checkCart() }}
+          />
+        ) : viewState === "empty" ? (
+          <StatePanel
+            variant="empty"
+            title={i18n.t("cart.empty.title")}
+            message={i18n.t("cart.empty.message")}
+            action={{ label: i18n.t("cart.empty.action"), onPress: () => router.dismissTo("/matches") }}
+          />
+        ) : (
+          <>
+            <ReservationStatus secondsLeft={cart.secondsLeft} />
 
-      {/* Presentation-only TransactionBar: the total is the owner's
-          authoritative cart.total; the bar never owns cart state. */}
+            {viewState === "expired" ? (
+              <StatePanel
+                variant="unavailable"
+                title={i18n.t("cart.expired.title")}
+                message={i18n.t("cart.expired.message")}
+              />
+            ) : null}
+
+            {actions.needsCartCheck ? (
+              <CartNotice
+                tone="warning"
+                message={i18n.t("cart.unconfirmed.message")}
+                action={{
+                  label: i18n.t("cart.check.action"),
+                  busy: actions.checkingCart,
+                  onPress: () => void actions.checkCart(),
+                }}
+              />
+            ) : cart.cartRefreshError ? (
+              <CartNotice
+                tone="warning"
+                message={i18n.t("cart.refreshWarning")}
+                action={{
+                  label: i18n.t("common.retry"),
+                  busy: actions.checkingCart,
+                  onPress: () => void actions.checkCart(),
+                }}
+              />
+            ) : null}
+
+            {matchGroups.map((group) => (
+              <CartGroupCard
+                key={group.matchId}
+                title={group.matchTitle ?? i18n.t("cart.matchFallback", { id: group.matchId })}
+              >
+                {group.lines.map((line) => {
+                  const zone = line.zone_name ?? i18n.t("cart.zoneFallback");
+                  return (
+                    <CartLineItem
+                      key={line.key}
+                      line={line}
+                      showMatch={false}
+                      busy={actions.pendingLineKey === line.key}
+                      disabled={lineActionsBlocked}
+                      onChangeQuantity={(quantity) => void actions.setQuantity(line, quantity)}
+                      onRemove={() => void actions.removeLine(line, zone)}
+                    />
+                  );
+                })}
+              </CartGroupCard>
+            ))}
+
+            {/* The total is the owner's authoritative cart.total, never a client sum. */}
+            <View
+              style={[local.total, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}
+              accessible
+              accessibilityLabel={`${i18n.t("cart.total")}, ${totalLabel}. ${i18n.t("cart.totalConfirmed")}`}
+            >
+              <View style={local.totalCopy}>
+                <AppText variant="bodyStrong" style={local.totalTitle}>{i18n.t("cart.total")}</AppText>
+                <AppText variant="caption" tone="muted" style={local.regular}>{i18n.t("cart.totalConfirmed")}</AppText>
+              </View>
+              <AppText variant="displayNumeral" style={local.totalValue}>{totalLabel}</AppText>
+            </View>
+
+            <Button title={i18n.t("cart.continueShopping")} variant="ghost" onPress={continueShopping} />
+          </>
+        )}
+      </ScrollView>
+
+      {/* Presentation-only TransactionBar: readiness and navigation stay with
+          this screen; the bar never owns cart state. */}
       {hasItems ? (
         <View
           style={local.actionBar}
           onLayout={(event) => setBarHeight(event.nativeEvent.layout.height)}
         >
           <TransactionBar
-            totalLabel={i18n.t("cart.total")}
-            totalValue={formatMoney(cart.total, cart.currency)}
-            countLabel={i18n.plural("transaction.ticketCount", tickets)}
+            stacked
+            note={i18n.t("cart.continueNote", {
+              tickets: i18n.plural("transaction.ticketCount", tickets),
+            })}
             primaryAction={{
               label: i18n.t("cart.checkout"),
               onPress: goToCheckout,
@@ -201,19 +232,33 @@ function CartScreen() {
           />
         </View>
       ) : null}
-    </Screen>
+    </View>
   );
 }
 
 const local = {
-  shell: { flex: 1, alignSelf: "center" as const },
+  root: { flex: 1 },
+  header: { width: "100%" as const, paddingHorizontal: layout.gutter },
   content: {
-    width: "100%" as const,
-    maxWidth: COLUMN_MAX_WIDTH,
     alignSelf: "center" as const,
-    gap: spacing.lg,
+    gap: 14,
+    paddingTop: spacing.sm,
   },
-  group: { gap: spacing.md },
+  pending: { borderRadius: 20, padding: spacing.xl, alignItems: "center" as const, gap: spacing.sm },
+  pendingTitle: { fontSize: 16, marginTop: spacing.xs },
+  regular: { fontWeight: "400" as const },
+  // v3 total card: "Total" 16/600, note 12, amount 28 display.
+  total: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: spacing.md,
+    borderRadius: 20,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 14,
+  },
+  totalCopy: { flex: 1, minWidth: 0, gap: 2 },
+  totalTitle: { fontSize: 16, lineHeight: 21 },
+  totalValue: { fontSize: 28, lineHeight: 34, flexShrink: 1 },
   actionBar: { position: "absolute" as const, left: 0, right: 0, bottom: 0 },
 };
 

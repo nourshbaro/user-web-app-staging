@@ -36,7 +36,7 @@ export function TicketHoldersBlock({
   const visible = collapsible && !expanded ? ticketSlots.slice(0, PREVIEW_COUNT) : ticketSlots;
 
   return (
-    <View style={[local.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+    <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
       <SectionHeader
         title={i18n.t("checkout.holders.title")}
         subtitle={i18n.t("holders.progress", { complete: completeness.complete, total: completeness.total })}
@@ -78,7 +78,7 @@ export function TicketHoldersBlock({
 }
 
 const local = {
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.lg, gap: spacing.md },
+  card: { borderRadius: radius.xl, padding: spacing.lg, gap: spacing.md },
   list: { gap: spacing.sm },
   row: { gap: spacing.xxs },
   slot: {},

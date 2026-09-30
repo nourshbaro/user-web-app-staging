@@ -125,7 +125,7 @@ response shape at runtime and throws on mismatch.
 | ------------- | ----- |
 | `GET /matches/scheduled?team=&stadium=&date=` | Normalized from array, `matches`, `scheduled_matches`, or `items` |
 | `GET /matches/scheduled/filters` | `{ teams, stadiums }` (optionally under `data`) |
-| `GET /matches/single/{id}` | Match detail including zones (`has_seats`, price, currency, map data) |
+| `GET /matches/single/{id}` | Match detail (`ApiMatchDetail`): competition, season, matchday, scores, nested live clock, events, stats, stadium with map and zones (see below) |
 | `GET /matches/{matchId}/zones/{zoneId}/seats` | `{ zone, seats }`; seat selectable iff `status === "available"` |
 
 All four are cached in a module-level map for 5 minutes, keyed by path;
@@ -145,11 +145,51 @@ All four are cached in a module-level map for 5 minutes, keyed by path;
   (`scheduled`, `live`, `completed`), `home_score`/`away_score` (numbers on
   results and live matches, otherwise null), `matchday`, `round_name`,
   `stadium` {`id`, `name`}, and `home_team`/`away_team` (`name`,
-  `short_name`, `logo`). The client models only `home_score`/`away_score`
+  `short_name`, `logo`). The client models `home_score`/`away_score`
   beyond the existing fields.
-- No live minute, events, statistics, competition, favourite or
-  availability/sold-out data; the app does not derive any of these.
+- **Live list fields (`?status=live`, confirmed):** also `clock_minute`,
+  `clock_running`, `clock_updated_at`, flat statistics (`possession_home`,
+  `shots_home`/`shots_away`, `shots_on_target_home`/`_away`,
+  `corners_home`/`_away`, `fouls_home`/`_away`) and status timestamps/reason
+  (`reason`, `status_changed_by`, `status_changed_at`) where returned. They
+  are **flat** on the list item (`ApiMatch.clock_minute`, …), unlike the
+  single-match response below; the two shapes are never merged into one type.
+- No favourite or availability/sold-out data; the app does not derive any.
   `/matches/scheduled/filters` lists teams/stadiums of scheduled fixtures.
+
+**Single match (`GET /matches/single/{id}`, confirmed on staging
+2026-09-30 with `/matches/single/14` and `/matches/single/16`):**
+- `id`, `match_date`, `kickoff_at`, `status`, `home_team`/`away_team`
+  {`id`, `name`, `logo`};
+- `competition` {`id`, `name`, `short_name`, `slug`, `logo`}; `season`
+  {`id`, `label`, `is_current`}; `matchday`, `round_name` (nullable),
+  `matchday_label`;
+- `home_score`/`away_score`, **each independently nullable** (match 16 had
+  `1` / `null` while live and after completion); `clock` {`minute`
+  (nullable), `running`} (**nested**, unlike the flat list fields);
+- `events[]` (`ApiMatchEvent`): `id`, `type`, `team` {`id`, `name`,
+  `short_name`, `logo`}, `player` {`id`, `name`, `shirt_number`},
+  `player_in`/`player_out` (nullable), `minute`, `extra_minute` (nullable).
+  Only `type: "goal"` has been observed; other types are shown as a neutral
+  event with no inferred meaning. Example (match 16): goal, Nejmeh, "Sierra
+  Leone" #17, minute 1 → "1'"; minute 45 + extra 2 → "45+2'";
+- `stats` {`possession`, `shots`, `shots_on_target`, `corners`, `fouls`},
+  each `{home, away}` or null (example, match 16: possession 3/97, the others
+  1/1);
+- `stadium` {`id`, `name`, `location`, `map_image`, `zones[]` {`id`,
+  `name`, `has_seats`, `shape_type`, `shape_data`, `price`, `currency`,
+  `capacity` (nullable)}}.
+- **Purchasability:** only `status: "scheduled"` exposes ticket purchasing
+  in the app. Live, completed (and any other status) get the match
+  information / result view. `stadium.zones` can still be present for them
+  and **does not** imply that tickets are on sale. The selection commit
+  re-reads this endpoint (forced, uncached) immediately before any cart
+  mutation and sends nothing unless it is still scheduled.
+- Display facts come only through `matchDetailFacts`
+  (`src/lib/matchDetailFacts.ts`): a null score side is not 0, a null minute
+  is not a live minute (there is no client-side clock), empty events are no
+  timeline, and a null statistic is omitted, never zero. Media paths go
+  through `storageUrl()`.
 
 ### Cart — `src/services/cart.ts` (`cartService`)
 | Method & path | Body | Notes |
@@ -337,7 +377,6 @@ than adding a parallel one.
 - Backend behavior on BLUE callback, and how web BLUE results are finalized.
 - The meaning of the `password` header and of `remember` on login.
 - Ticket `status` value set; whether "used" is `status` or `checked_in_at`.
-- Live match detail (minute, events, statistics): no endpoint provides it.
 - **Competitions (confirmed by the user, not yet integrated; no service calls
   them yet).** Public endpoints and their confirmed response shapes — do not
   assume other fields:
@@ -361,6 +400,7 @@ than adding a parallel one.
   preserving existing behavior. The authoritative timezone is not established
   by this repository, so do not introduce UTC (or other) conversion without
   backend evidence.
+- Single-match event types other than `goal` (none observed yet).
 - Structured error codes for cart/seat rejections (e.g. ticket limit vs seat
   taken); the client can only distinguish HTTP status classes.
 - Idempotency of cart mutations: a request that times out may or may not have

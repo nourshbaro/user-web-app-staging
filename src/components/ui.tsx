@@ -176,7 +176,7 @@ type ButtonProps = {
   title: string;
   onPress?: () => void;
   /** `ghost`: v3 text button (no fill), e.g. "Not now" / "Skip". */
-  variant?: "primary" | "secondary" | "danger" | "ghost";
+  variant?: "primary" | "secondary" | "danger" | "ghost" | "tonal";
   /** Ghost text tone: `muted` (v3 Skip) or the default strong ink (v3 Not now). */
   tone?: "strong" | "muted";
   disabled?: boolean;
@@ -185,17 +185,21 @@ type ButtonProps = {
   /** Defaults to `title`; override only when the visible text is ambiguous out of context. */
   accessibilityLabel?: string;
   accessibilityHint?: string;
+  /** Decorative leading glyph (e.g. the v3 lock on "Pay"); hidden from assistive tech. */
+  icon?: React.ReactNode;
 };
 
-export function Button({ title, onPress, variant = "primary", tone = "strong", disabled, loading = false, accessibilityLabel, accessibilityHint }: ButtonProps) {
+export function Button({ title, onPress, variant = "primary", tone = "strong", disabled, loading = false, accessibilityLabel, accessibilityHint, icon }: ButtonProps) {
   const theme = useTheme();
   const { meta } = useI18n();
   const reducedMotion = useReducedMotion();
   const inactive = Boolean(disabled || loading);
   const ghost = variant === "ghost";
+  // v3 `--bg2` filled secondary ("Back to cart", "Change payment method").
+  const tonal = variant === "tonal";
   const textColor = inactive && !ghost
     ? theme.colors.disabledText
-    : ghost
+    : ghost || tonal
       ? (tone === "muted" ? theme.colors.textMuted : theme.colors.textStrong)
       : variant === "secondary"
       ? theme.colors.onActionSecondary
@@ -217,12 +221,17 @@ export function Button({ title, onPress, variant = "primary", tone = "strong", d
         variant === "secondary" && theme.styles.buttonSecondary,
         variant === "danger" && theme.styles.buttonDanger,
         ghost && theme.styles.buttonGhost,
+        tonal && { backgroundColor: theme.colors.bgAlt },
         inactive && (ghost ? { opacity: 0.4 } : theme.styles.buttonDisabled),
         // v3 press: a slight scale-down (opacity under reduced motion); instant, never delays onPress.
         pressed && !inactive && (reducedMotion ? { opacity: 0.82 } : { transform: [{ scale: 0.98 }] }),
       ]}
     >
-      {loading ? <ActivityIndicator size="small" color={textColor} accessibilityElementsHidden importantForAccessibility="no" /> : null}
+      {loading ? (
+        <ActivityIndicator size="small" color={textColor} accessibilityElementsHidden importantForAccessibility="no" />
+      ) : icon ? (
+        <View accessible={false} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>{icon}</View>
+      ) : null}
       <Text style={[theme.styles.buttonText, fontStyleFor("text", ghost ? "500" : typography.action.fontWeight, meta.script), { color: textColor }]}>{title}</Text>
     </Pressable>
   );

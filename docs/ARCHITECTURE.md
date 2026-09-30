@@ -81,15 +81,28 @@ navigation. It reaches `expo-notifications` only through
 (`useAppFonts`, §14) before rendering, and keeps the native splash up until
 the onboarding gate has decided (§2.1).
 
+**Launch splash (every launch):** `AppChrome` shows the v3 branded
+`LaunchSplash` on top of everything on every launch until the gate has
+decided and a short brand beat has played (`src/lib/launchSplash.ts`,
+`useLaunchSplash`; 1.2 s, 0.5 s under reduced motion). It is in-memory
+only (never persisted), never navigates, and does not block routing: a
+direct entry resolves beneath it.
+
 ### 2.1 First-run onboarding
 
 - **Owner:** `useOnboardingGate` (`src/hooks/useOnboardingGate.ts`) over the
   pure rules in `src/lib/onboarding.ts`; UI in
   `src/components/onboarding/OnboardingFlow.tsx`.
-- **Flow:** splash → three product pages → notification pre-prompt → app. No
-  favourite-team step (no backend contract).
-- **Persistence:** `lfa_onboarding_v1` = `"completed"`. Written on finish, and
-  for a signed-in (existing) user at startup so they are never sent through it.
+- **Flow (after the launch splash):** three product pages → notification
+  pre-prompt (whenever the build has a push runtime; "Turn on" asks the OS
+  only if permission is not already granted, "Not now" never asks) → Home.
+  Without a push runtime (Expo Go, web) the pages go straight to Home. There
+  is no authentication step at startup: sign-in stays in the normal app /
+  Profile journey. No favourite-team step (no backend contract).
+- **Persistence:** `lfa_onboarding_v1` = `"completed"`. Written when first run
+  finishes (either notification choice, or the last page when no pre-prompt
+  is offered), and for a signed-in (existing) user at startup so they are
+  never sent through it.
 - **Offered only when:** native platform, flag absent, not signed in, and the
   **resolved** initial destination is Home. The decision
   (`decideLaunchOnboarding`) never uses the early pathname, which reads `/`
@@ -370,6 +383,30 @@ Not used by any route (do not assume they own anything):
     only, never backend wording).
 - Zone kinds come from the backend: `zone.has_seats` → reserved seating (seat
   selection) vs general admission (quantity stepper).
+- **Status gating (hard boundary):** only a `scheduled` match is a
+  ticket-purchase experience (`matchDetailExperience` /
+  `isPurchasableMatchStatus` in `src/lib/ticketSelection.ts`). Live,
+  completed and any other status render `MatchInfoView` (v3 result screen:
+  score hero, Timeline / Stats from the real single-match data) with no
+  zones, stepper, seat picker or cart action, even when zones are present;
+  no zone is selected and no seats are loaded for them.
+  `executeSelectionCommit` requires `confirmStillOnSale`, which the screen
+  implements by re-reading the match through its own `loadMatch(force)`
+  owner immediately before the first cart mutation. Not scheduled
+  (`notOnSale`) or unreadable (`statusUnverified`) means zero cart calls;
+  `notOnSale` discards the stale draft, and the screen is already showing
+  the fresh status. The backend stays authoritative for any race after that
+  check.
+- **v3 presentation** (all state stays in `match/[id].tsx`):
+  - the stadium map is collapsed by default behind "Show map / Hide map";
+    visibility is presentation state only (no refetch; the map-size probe and
+    match load do not depend on it);
+  - the zones are one radio list; selecting a zone never mutates the cart;
+  - a GA zone's quantity stepper lives in the action bar for the selected
+    zone;
+  - a reserved zone's "Choose seats" opens the seat picker, a **view of the
+    same screen** (not a route), so the draft, seat snapshot and
+    confirmation keep one owner. Hardware back closes the picker first.
 - **One confirmation action** (a `TransactionBar`) sends GA changes and pending
   seats together. The confirmation invariant (§8) applies:
   - the preflight runs before any cart mutation;
@@ -487,10 +524,15 @@ Not used by any route (do not assume they own anything):
   session with items and `secondsLeft > 0`. It shows `CartContext.secondsLeft`
   only (no second timestamp or timer), opens `/cart`, and announces nothing
   per second. It sits in the layout flow above the screen (the screens below
-  receive a zero top inset), and is not shown on routes that already present
-  the countdown or a transaction surface: `/cart`, `/checkout/*`,
-  `/match/[id]` (`src/lib/reservationIndicator.ts`). The header cart action
-  no longer repeats the countdown.
+  receive a zero top inset) and is **the** countdown on Match Details, ticket
+  holders and Checkout (v3). It is not shown on `/cart` (which has its own
+  countdown card, `ReservationStatus`), the Card/BLUE payment screens or the
+  result screens. Inside `/checkout*` it is read-only (no "View", no jump to
+  Cart mid-submission). Routes live in `src/lib/reservationIndicator.ts`. So
+  every screen shows at most one countdown, all derived from `secondsLeft`;
+  holders and Checkout keep the thresholded screen-reader warnings through
+  `useReservationAnnouncements`. The header cart action no longer repeats the
+  countdown.
 - **Restore**: on mount the persisted session is parsed; before a restored
   session is published, its payment gate is restored (§10). Signed-out,
   missing, malformed or expired sessions clear the persisted payment record.
@@ -620,7 +662,28 @@ and shown with catalog copy; an unknown outcome is never presented as
 
 **Result screens** (`CheckoutPaymentResult`) are display-only. Route params
 are sanitized by `src/lib/checkoutResultParams.ts`; they do not mutate cart or
-order state.
+order state. The v3 presentation (`src/components/checkout/PaymentOutcome.tsx`,
+copy keys from `src/lib/checkoutResultPresentation.ts`) is chosen by the
+production state that routed there:
+- success only after the existing trusted, matched completion;
+- "didn't go through" only for the provider's failure return, never claiming
+  that no order exists;
+- unknown outcomes stay inside the Card/BLUE screens and Checkout (locked),
+  never as a failure.
+Detail rows show backend-provided values only.
+
+**Checkout Back:** header and Android hardware Back share one policy
+(`checkoutBackBlocked` / `checkoutBackHandlers` in `src/lib/checkoutFlow.ts`)
+over the existing synchronous guards (`submitInFlightRef`,
+`blueHandoffStartedRef`). Leaving is refused while a submit is in flight or
+a BLUE handoff has started; hardware Back is always consumed; the header is
+visibly disabled while submitting. The Card handoff navigates synchronously,
+and the Card screen keeps its own in-flight back guard.
+
+**Checkout presentation (v3):** choosing a payment method only records the
+choice (and, for Card, prepares the capture context). The single explicit
+action ("Pay {total}" / "Continue with BLUE") runs `handleContinue`. Card
+entry is always CyberSource's own form.
 
 ---
 
@@ -746,8 +809,11 @@ retry, so recovery requires an app restart.
   - `StatePanel` — empty/error/unavailable/info with optional actions; never
     fetches.
   - `Skeleton*` — reduced-motion aware.
-  - `TransactionBar` — presentation-only total and primary action; receives
-    values and callbacks from the existing owner and holds no transaction state.
+  - `TransactionBar` — presentation-only action bar (row or v3 stacked layout,
+    optional leading content and note); receives values and callbacks from
+    the existing owner and holds no transaction state.
+  - `FlowHeader` / `StepBar` (`src/components/FlowHeader.tsx`) — v3 flow header
+    and holders→payment step bar; Back is the screen's own handler.
   - Ticket primitives (`TicketCardShell`, `TicketCardSection`,
     `TicketPerforation`, `TicketQrFrame`) — layout only; no QR generation.
   - `PhysicalLayout`, `DirectionalChevron`.

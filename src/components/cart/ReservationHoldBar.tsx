@@ -16,7 +16,8 @@ type Props = {
   secondsLeft: number;
   /** Status-bar inset the strip paints behind (the screens below no longer do). */
   topInset: number;
-  onPress: () => void;
+  /** Opens the Cart. Omitted inside the checkout flow, where the pill is read-only. */
+  onPress?: () => void;
 };
 
 /**
@@ -35,44 +36,58 @@ export function ReservationHoldBar({ secondsLeft, topInset, onPress }: Props) {
   // v3: the countdown turns pink in the final minute.
   const urgent = reservationUrgency(secondsLeft) === "critical";
   const { minutes, seconds } = countdownParts(secondsLeft);
+  const pill = (pressed: boolean) => (
+    <View
+      style={[
+        local.pill,
+        {
+          backgroundColor: theme.colors.hero,
+          borderColor: theme.colors.heroHairline,
+          opacity: pressed ? 0.86 : 1,
+        },
+      ]}
+    >
+      <PulseDot color={theme.isDark ? theme.colors.primaryLight : theme.colors.primaryDark} />
+      <AppText variant="meta" tone="onHero" numberOfLines={1} style={local.label}>
+        {i18n.t("reservation.indicator.label")}
+      </AppText>
+      <AppText
+        variant="displayCountdown"
+        numberOfLines={1}
+        style={[local.time, { color: urgent ? theme.colors.onHeroUrgent : theme.colors.onHero }]}
+      >
+        {minutesSeconds(secondsLeft)}
+      </AppText>
+      {onPress ? (
+        <View style={local.view}>
+          <AppText variant="caption" tone="onHero">{i18n.t("reservation.indicator.view")}</AppText>
+        </View>
+      ) : null}
+    </View>
+  );
 
   return (
     <View style={[local.strip, { paddingTop: topInset, backgroundColor: theme.colors.background }]}>
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={i18n.t("reservation.indicator.a11y", { minutes, seconds })}
-        accessibilityHint={i18n.t("reservation.indicator.hint")}
-        style={local.target}
-      >
-        {({ pressed }) => (
-          <View
-            style={[
-              local.pill,
-              {
-                backgroundColor: theme.colors.hero,
-                borderColor: theme.colors.heroHairline,
-                opacity: pressed ? 0.86 : 1,
-              },
-            ]}
-          >
-            <PulseDot color={theme.isDark ? theme.colors.primaryLight : theme.colors.primaryDark} />
-            <AppText variant="meta" tone="onHero" numberOfLines={1} style={local.label}>
-              {i18n.t("reservation.indicator.label")}
-            </AppText>
-            <AppText
-              variant="displayCountdown"
-              numberOfLines={1}
-              style={[local.time, { color: urgent ? theme.colors.onHeroUrgent : theme.colors.onHero }]}
-            >
-              {minutesSeconds(secondsLeft)}
-            </AppText>
-            <View style={local.view}>
-              <AppText variant="caption" tone="onHero">{i18n.t("reservation.indicator.view")}</AppText>
-            </View>
-          </View>
-        )}
-      </Pressable>
+      {onPress ? (
+        <Pressable
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={i18n.t("reservation.indicator.a11y", { minutes, seconds })}
+          accessibilityHint={i18n.t("reservation.indicator.hint")}
+          style={local.target}
+        >
+          {({ pressed }) => pill(pressed)}
+        </Pressable>
+      ) : (
+        <View
+          accessible
+          accessibilityRole="timer"
+          accessibilityLabel={i18n.t("reservation.indicator.a11y", { minutes, seconds })}
+          style={local.target}
+        >
+          {pill(false)}
+        </View>
+      )}
     </View>
   );
 }

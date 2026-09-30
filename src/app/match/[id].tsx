@@ -1,29 +1,30 @@
-import { Collapsible } from "@/components/Collapsible";
-import { MatchTicketsHeader } from "@/components/MatchTicketsHeader";
+import { FlowHeader } from "@/components/FlowHeader";
 import {
   AppText,
-  SectionHeader,
+  PhysicalLayout,
   SkeletonBlock,
   SkeletonGroup,
   StatePanel,
   TransactionBar,
 } from "@/components/foundation";
 import { MatchDetailHero } from "@/components/match/MatchDetailHero";
+import { MatchInfoView } from "@/components/match/MatchInfoView";
 import { MatchDetailSkeleton } from "@/components/match/MatchSkeletons";
 import {
+  PitchBar,
   SeatLegend,
-  SeatSelectionSummary,
   SeatZoomControls,
+  SelectedSeatChips,
   SelectedSeatMark,
   seatGlyphStyle,
 } from "@/components/match/SeatSelection";
 import {
   GaZoneStepper,
-  ReservedZoneStatus,
-  ZoneOptionCard,
+  ZoneList,
+  ZoneRow,
 } from "@/components/match/TicketOptions";
+import { matchLabels } from "@/components/match/matchLabels";
 import {
-  Screen,
   useResponsive,
   useTheme,
   type ThemeColors,
@@ -34,9 +35,8 @@ import { useToast } from "@/context/ToastContext";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { PHYSICAL_LAYOUT_STYLE } from "@/i18n/direction";
 import { useI18n } from "@/i18n/I18nProvider";
-import { groupCartItems } from "@/lib/cartDisplay";
 import { storageUrl } from "@/lib/config";
-import { radius, spacing } from "@/lib/designTokens";
+import { layout, radius, spacing } from "@/lib/designTokens";
 import { formatMoney } from "@/lib/format";
 import {
   createSeatLayout,
@@ -66,9 +66,9 @@ import {
   selectionPreflight,
   type CommitPlan,
   gaCartChanges,
-  hasSelectionChanges,
+  isPurchasableMatchStatus,
   isSeatSelectable,
-  lineSubtotal,
+  matchDetailExperience,
   resolveDraftQuantity,
   seatVisualState,
   selectionActionKind,
@@ -82,11 +82,13 @@ import {
 } from "@/lib/ticketSelection";
 import { ApiError, ApiTransportError } from "@/services/api";
 import { matchesService } from "@/services/matches";
-import type { ApiSeat, ApiZone, ApiMatch } from "@/types";
+import type { ApiSeat, ApiZone, ApiMatchDetail } from "@/types";
 import { Image as ExpoImage } from "expo-image";
 import { Stack, router, useLocalSearchParams } from "expo-router";
+import { SymbolView } from "expo-symbols";
 import {
   createElement,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -96,6 +98,7 @@ import {
 } from "react";
 import {
   AccessibilityInfo,
+  BackHandler,
   Image,
   Text,
   Platform,
@@ -104,6 +107,7 @@ import {
   ScrollView,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Polygon } from "react-native-svg";
 
 const MAP_VIEW_W = 600;
@@ -113,6 +117,8 @@ const SEAT_SIZE = 18;
 const SEAT_LAYOUT_PADDING = 36;
 // Readable single column on tablets and web; the page never stretches cards to 1180px.
 const COLUMN_MAX_WIDTH = 760;
+// v3 content sheet top padding (it overlaps the hero by 24pt).
+const SHEET_PADDING_TOP = 22;
 
 type I18n = ReturnType<typeof useI18n>;
 
@@ -123,7 +129,8 @@ export default function MatchDetail() {
   const theme = useTheme();
   const i18n = useI18n();
   const reducedMotion = useReducedMotion();
-  const [match, setMatch] = useState<ApiMatch | null>(null);
+  const insets = useSafeAreaInsets();
+  const [match, setMatch] = useState<ApiMatchDetail | null>(null);
   const [matchIdentity, setMatchIdentity] = useState<string | null>(null);
   const [selectedZone, setSelectedZone] = useState<ApiZone | null>(null);
   const [seatSnapshot, setSeatSnapshot] = useState<{
@@ -161,7 +168,11 @@ export default function MatchDetail() {
   );
   const [isCommitting, setIsCommitting] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
+  // v3: the stadium map starts collapsed; showing it is presentation only.
   const [stadiumExpanded, setStadiumExpanded] = useState(false);
+  // v3 seat picker for the selected reserved zone: a view of this screen, so
+  // the draft, seat snapshot and confirmation stay with this one owner.
+  const [seatPickerOpen, setSeatPickerOpen] = useState(false);
   const [seatZoom, setSeatZoom] = useState<number>(SEAT_ZOOM_LEVELS[0]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -171,6 +182,7 @@ export default function MatchDetail() {
   const pageScrollRef = useRef<ScrollView>(null);
   const ticketSectionY = useRef(0);
   const zoneCardLayouts = useRef(new Map<number, number>());
+  const zoneListY = useRef(0);
   const matchRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const seatRequestAuthority = useMemo(() => createRequestAuthority(), []);
   const selectedZoneRef = useRef<ApiZone | null>(null);
@@ -182,12 +194,6 @@ export default function MatchDetail() {
   // so an already-applied change is never replayed.
   const needsCartReconcile = reconciliationActive(cart.cartReconciliation, cart.sessionId);
   const toast = useToast();
-  // Same grouping HeaderActions/Cart/Checkout already use for the cart
-  // badge count — one shared cart authority, several presentations.
-  const cartCount = useMemo(
-    () => groupCartItems(cart.items).length,
-    [cart.items],
-  );
   const cartSeatIds = useMemo(
     () => cartSeatIdsForZone(cart.items, String(id ?? ""), selectedZone?.id),
     [cart.items, id, selectedZone?.id],
@@ -281,8 +287,11 @@ export default function MatchDetail() {
     [seatRequestAuthority],
   );
 
+  // The screen's one match-status owner: every read of the backend status
+  // (initial load, pull-to-refresh, the pre-commit re-check) goes through
+  // here, and resolves with the fresh match (null when it failed or is stale).
   const loadMatch = useCallback(
-    (force = false) => {
+    (force = false, quiet = false): Promise<ApiMatchDetail | null> => {
       const requestIdentity = routeMatchId;
       const ticket = matchRequestAuthority.begin(requestIdentity);
       if (!force) {
@@ -299,13 +308,17 @@ export default function MatchDetail() {
             selectedZoneMatchIdRef.current === requestIdentity
               ? selectedZoneRef.current
               : null;
-          const nextZone =
-            data.stadium?.zones?.find((zone) => zone.id === currentZone?.id) ??
-            data.stadium?.zones?.[0] ??
-            null;
+          // Zones may still be present on a live/completed match; they are
+          // never selectable unless the match is scheduled (no seat loads either).
+          const nextZone = !isPurchasableMatchStatus(data.status)
+            ? null
+            : (data.stadium?.zones?.find((zone) => zone.id === currentZone?.id) ??
+              data.stadium?.zones?.[0] ??
+              null);
           setMatch(data);
           setMatchIdentity(requestIdentity);
           commitZone(nextZone, requestIdentity);
+          return data;
         })
         .catch((err) => {
           if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
@@ -313,7 +326,8 @@ export default function MatchDetail() {
           setErrorKind(kind);
           // A failed pull-to-refresh keeps the match on screen, so it is
           // reported as a toast; an initial failure is shown inline instead.
-          if (force) {
+          // (The pre-commit re-check reports its own outcome.)
+          if (force && !quiet) {
             toast.showToast({
               variant: "error",
               title: i18n.t("matchDetail.refreshError.title"),
@@ -325,7 +339,8 @@ export default function MatchDetail() {
           if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
           setLoading(false);
           setRefreshing(false);
-        });
+        })
+        .then((data) => data ?? null);
     },
     [commitZone, i18n, matchRequestAuthority, routeMatchId, toast],
   );
@@ -416,6 +431,15 @@ export default function MatchDetail() {
     selectedZoneBelongsToMatch,
   ]);
 
+  useEffect(() => {
+    if (!seatPickerOpen) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      setSeatPickerOpen(false);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [seatPickerOpen]);
+
   const handleBack = () => {
     if (effectiveSelectedSeats.length) {
       setSelectedSeats([]);
@@ -468,9 +492,6 @@ export default function MatchDetail() {
   // success the already-applied zones drop out of the next confirmation.
   const gaChanges = gaCartChanges(zones, getDraftQuantity, cartByZone);
   const preflight = selectionPreflight(gaChanges, seatDraft);
-  const hasPendingSelection =
-    hasSelectionChanges(gaChanges, seatDraft.actionableIds.length) ||
-    seatDraft.awaitingSnapshot;
 
   // The one explicit confirmation action for this screen. Preflight runs
   // before the first cart mutation (a reserved-seat draft must be valid
@@ -511,6 +532,12 @@ export default function MatchDetail() {
             seat_ids: [...seatIds],
           }),
         currentSessionId: () => cart.captureCartSession()?.sessionId ?? null,
+        // Re-read the match now: only a still-scheduled match may reach the cart.
+        confirmStillOnSale: async () => {
+          const current = await loadMatch(true, true);
+          if (!current) throw new Error("Match status could not be verified.");
+          return isPurchasableMatchStatus(current.status);
+        },
       });
       const failureKind =
         outcome.status === "failed"
@@ -519,6 +546,7 @@ export default function MatchDetail() {
       const effects = commitEffects(outcome, failureKind);
 
       if (effects.success) {
+        setSeatPickerOpen(false);
         setSelectedSeats([]);
         setSelectedSeatsIdentity(activeZoneIdentity);
         setDraftQuantities(new Map());
@@ -528,6 +556,29 @@ export default function MatchDetail() {
           message: i18n.t("selection.done.message"),
         });
         router.navigate("/cart");
+        return;
+      }
+
+      // The match left sale since it loaded: nothing was sent. The stale draft
+      // goes, and the screen already shows the current (live/result) state.
+      if (effects.discardDraft) {
+        setSeatPickerOpen(false);
+        setSelectedSeats([]);
+        setSelectedSeatsIdentity(activeZoneIdentity);
+        setDraftQuantities(new Map());
+        toast.showToast({
+          variant: "info",
+          title: i18n.t("selection.notOnSale.title"),
+          message: i18n.t("selection.notOnSale.message"),
+        });
+        return;
+      }
+      if (outcome.status === "statusUnverified") {
+        toast.showToast({
+          variant: "error",
+          title: i18n.t("selection.error.title"),
+          message: i18n.t("selection.statusUnverified"),
+        });
         return;
       }
 
@@ -598,66 +649,82 @@ export default function MatchDetail() {
     setSelectedSeatsIdentity(activeZoneIdentity);
   };
 
-  const header = (subtitle: string, withCart: boolean) => (
-    <MatchTicketsHeader
-      title={i18n.t("matchDetail.title")}
-      subtitle={subtitle}
-      onBack={handleBack}
-      cartCount={withCart ? cartCount : 0}
-      secondsLeft={withCart ? cart.secondsLeft : 0}
-      compact={responsive.isNarrow}
-    />
+  const header = (subtitle: string) => (
+    <View style={[local.flowHeader, { paddingTop: insets.top }]}>
+      <FlowHeader title={i18n.t("matchDetail.title")} subtitle={subtitle} onBack={handleBack} />
+    </View>
   );
 
   if (loading || (match !== null && !matchBelongsToRoute)) {
     return (
-      <Screen>
+      <View style={[local.root, { backgroundColor: theme.colors.background }]}>
         <Stack.Screen options={{ headerShown: false }} />
-        <View style={[local.shell, { width: responsive.contentWidth }]}>
-          {header(i18n.t("matchDetail.loading"), false)}
-          <View style={local.column}>
-            <MatchDetailSkeleton label={i18n.t("matchDetail.loading")} />
-          </View>
+        {header(i18n.t("matchDetail.loading"))}
+        <View style={[local.column, { width: columnWidthFor(responsive.contentWidth) }]}>
+          <MatchDetailSkeleton label={i18n.t("matchDetail.loading")} />
         </View>
-      </Screen>
+      </View>
     );
   }
 
   if (!match || !matchBelongsToRoute) {
     const notFound = errorKind === "notFound";
     return (
-      <Screen>
+      <View style={[local.root, { backgroundColor: theme.colors.background }]}>
         <Stack.Screen options={{ headerShown: false }} />
-        <View style={[local.shell, { width: responsive.contentWidth }]}>
-          {header(i18n.t("matchDetail.unavailableSubtitle"), true)}
-          <View style={[local.column, local.centered]}>
-            <StatePanel
-              variant={notFound ? "unavailable" : "error"}
-              title={
-                notFound
-                  ? i18n.t("matchDetail.notFound.title")
-                  : i18n.t("matchDetail.error.title")
-              }
-              message={ticketErrorMessage(i18n, "match", errorKind ?? "generic")}
-              action={{
-                label: i18n.t("common.retry"),
-                onPress: () => void loadMatch(),
-              }}
-            />
-          </View>
+        {header(i18n.t("matchDetail.unavailableSubtitle"))}
+        <View style={[local.column, local.centered, { width: columnWidthFor(responsive.contentWidth) }]}>
+          <StatePanel
+            variant={notFound ? "unavailable" : "error"}
+            title={
+              notFound
+                ? i18n.t("matchDetail.notFound.title")
+                : i18n.t("matchDetail.error.title")
+            }
+            message={ticketErrorMessage(i18n, "match", errorKind ?? "generic")}
+            action={{
+              label: i18n.t("common.retry"),
+              onPress: () => void loadMatch(),
+            }}
+          />
         </View>
-      </Screen>
+      </View>
     );
   }
 
-  const columnWidth = Math.min(responsive.contentWidth, COLUMN_MAX_WIDTH);
-  // Section cards have 16px padding on each side.
-  const innerWidth = Math.max(0, columnWidth - spacing.lg * 2);
-  const mapWidth = Math.min(innerWidth, 560);
+  // Only a scheduled match is a ticket-purchase experience. Live, completed
+  // and any other status get match information / result instead, even when
+  // the response still carries zones: no zone list, stepper, seat picker or
+  // cart action is rendered for them.
+  const experience = matchDetailExperience(match.status);
+  if (experience !== "purchase") {
+    return (
+      <View style={[local.root, { backgroundColor: theme.colors.background }]}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <MatchInfoView
+          match={match}
+          experience={experience}
+          topInset={insets.top}
+          compact={responsive.isNarrow}
+          contentWidth={columnWidthFor(responsive.contentWidth)}
+          onBack={handleBack}
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true);
+            void loadMatch(true);
+          }}
+        />
+      </View>
+    );
+  }
+
+  const columnWidth = columnWidthFor(responsive.contentWidth);
+  // The map card has 14pt padding on each side (v3).
+  const mapWidth = Math.min(Math.max(0, columnWidth - 28), 560);
   const mapHeight = Math.round((mapWidth * mapViewHeight) / MAP_VIEW_W);
-  const seatMapSize = innerWidth;
-  const stadiumName = match.stadium?.name ?? i18n.t("match.venueTbc");
-  const zoneLegendIndex = new Map(zones.map((zone, index) => [zone.id, index]));
+  // The seat card has 16pt padding on each side.
+  const seatMapSize = Math.max(0, columnWidth - spacing.lg * 2);
+  const labels = matchLabels(match, i18n);
 
   const selectZone = (
     zone: ApiZone,
@@ -669,19 +736,19 @@ export default function MatchDetail() {
       fromStadium ? { matchId: routeMatchId, zoneId: zone.id } : null,
     );
     if (!revealInList) return;
-    // From the stadium map: bring the zone's ticket card into view.
+    // From the stadium map: bring the zone's row into view.
     requestAnimationFrame(() => {
-      const cardY = zoneCardLayouts.current.get(zone.id);
-      if (cardY === undefined) return;
+      const rowY = zoneCardLayouts.current.get(zone.id);
+      if (rowY === undefined) return;
       pageScrollRef.current?.scrollTo({
-        y: Math.max(0, ticketSectionY.current + cardY - spacing.md),
+        y: Math.max(0, ticketSectionY.current + SHEET_PADDING_TOP + zoneListY.current + rowY - spacing.xxxl * 3),
         animated: !reducedMotion,
       });
     });
   };
 
-  // Display-only estimate for the transaction bar: the tickets this commit
-  // would leave in the cart for each changed GA zone plus the pending seats.
+  // Display-only estimate: the tickets this commit would leave in the cart
+  // for each changed GA zone plus the pending seats. It only labels the action.
   const estimate = selectionEstimate([
     ...gaChanges.map((change) => {
       const zone = zones.find((item) => item.id === change.zoneId);
@@ -701,21 +768,23 @@ export default function MatchDetail() {
         ]
       : []),
   ]);
-  const estimateValue =
-    estimate.tickets === 0
-      ? i18n.t("selection.removal")
-      : estimate.mixedCurrency
-        ? i18n.t("selection.mixedCurrency")
-        : formatMoney(estimate.amount, estimate.currency ?? undefined);
-  const showTransactionBar =
-    hasPendingSelection || isCommitting || needsCartReconcile;
+  const showSeatPicker = seatPickerOpen && Boolean(selectedZone?.has_seats);
+  const pendingSeatCount = seatDraft.actionableIds.length;
   const actionLabel = needsCartReconcile
     ? i18n.t("selection.refresh")
     : !auth.isAuthenticated
       ? i18n.t("selection.signIn")
-      : selectionActionKind(gaChanges) === "update"
-        ? i18n.t("selection.update")
-        : i18n.t("selection.add");
+      : isCommitting
+        ? i18n.t("selection.confirming")
+        : selectionActionKind(gaChanges) === "update"
+          ? i18n.t("selection.update")
+          : showSeatPicker
+            ? pendingSeatCount
+              ? i18n.plural("seats.hold", pendingSeatCount)
+              : i18n.t("seats.select")
+            : estimate.tickets > 0
+              ? i18n.plural("selection.addCount", estimate.tickets)
+              : i18n.t("selection.add");
   // Signed-out users can always press through to sign in; otherwise the
   // action waits for a valid preflight (e.g. a current seat snapshot).
   const actionDisabled =
@@ -729,61 +798,262 @@ export default function MatchDetail() {
         ? i18n.t("selection.seatsFailed")
         : i18n.t("selection.seatsChecking")
       : i18n.t("selection.estimateNote");
+  // The one explicit confirmation action for this screen (see commitSelections).
+  const primaryAction = {
+    label: actionLabel,
+    onPress: needsCartReconcile
+      ? () => void reconcileCart()
+      : () => void commitSelections(),
+    disabled: actionDisabled,
+    busy: isCommitting || isReconciling,
+    accessibilityHint: needsCartReconcile
+      ? i18n.t("selection.refreshHint")
+      : auth.isAuthenticated
+        ? i18n.t("selection.addHint")
+        : i18n.t("selection.signInHint"),
+  };
 
   const summarySeats = seatDraft.actionable.map((seat) => ({
     id: seat.id,
     label: getSeatIdentity(seat),
   }));
-  const seatSubtotal = selectedZone?.has_seats
-    ? lineSubtotal(seatDraft.actionableIds.length, selectedZone.price)
-    : null;
+  const reconcileNotice = needsCartReconcile ? (
+    <AppText variant="meta" tone="danger" accessibilityLiveRegion="polite">
+      {barNotice}
+    </AppText>
+  ) : null;
+  const barFrame = (bar: ReactNode) => (
+    <View
+      style={local.actionBar}
+      onLayout={(event) => setTransactionBarHeight(event.nativeEvent.layout.height)}
+    >
+      {bar}
+    </View>
+  );
 
-  return (
-    <Screen>
-      <Stack.Screen options={{ headerShown: false }} />
-      <View style={[local.shell, { width: responsive.contentWidth }]}>
-        {header(stadiumName, true)}
+  if (showSeatPicker && selectedZone) {
+    const unitPrice = formatMoney(selectedZone.price, selectedZone.currency);
+    return (
+      <View style={[local.root, { backgroundColor: theme.colors.background }]}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <View style={[local.flowHeader, { paddingTop: insets.top }]}>
+          <FlowHeader
+            title={selectedZone.name}
+            subtitle={i18n.t("seats.picker.subtitle", { home: labels.home, away: labels.away })}
+            backLabel={i18n.t("flow.match")}
+            onBack={() => setSeatPickerOpen(false)}
+          />
+        </View>
         <ScrollView
-          ref={pageScrollRef}
           showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              tintColor={theme.colors.primary}
-              onRefresh={() => {
-                setRefreshing(true);
-                void loadMatch(true);
-              }}
-            />
-          }
           contentContainerStyle={[
-            local.column,
-            {
-              gap: spacing.lg,
-              paddingBottom: showTransactionBar
-                ? transactionBarHeight + spacing.lg
-                : spacing.xxxl,
-            },
+            local.pickerContent,
+            { width: columnWidth, paddingBottom: transactionBarHeight + spacing.lg },
           ]}
         >
-          <MatchDetailHero match={match} compact={responsive.isNarrow} />
+          <SeatLegend />
+          {visibleSeatError ? (
+            <StatePanel
+              variant="error"
+              title={i18n.t("seats.error.title")}
+              message={ticketErrorMessage(i18n, "seats", visibleSeatError)}
+              action={{
+                label: i18n.t("common.retry"),
+                onPress: () => setSeatRetryNonce((value) => value + 1),
+              }}
+            />
+          ) : seatLoading || !seatSnapshotLoaded ? (
+            <SkeletonGroup label={i18n.t("seats.loading")}>
+              <SkeletonBlock
+                height={Math.round(seatMapSize * 0.6)}
+                borderRadius={radius.xl}
+              />
+            </SkeletonGroup>
+          ) : !visibleSeats.length ? (
+            <StatePanel
+              variant="unavailable"
+              title={i18n.t("seats.empty.title")}
+              message={i18n.t("seats.empty.message")}
+            />
+          ) : (
+            <>
+              <PhysicalLayout
+                style={[
+                  local.seatCard,
+                  { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard },
+                ]}
+              >
+                <PitchBar />
+                <SeatMap
+                  seats={visibleSeats}
+                  zoneName={selectedZone.name}
+                  selectedIds={seatDraft.actionableIds}
+                  cartSeatIds={cartSeatIds}
+                  size={seatMapSize - spacing.lg * 2}
+                  zoom={seatZoom}
+                  disabled={isCommitting}
+                  onToggleSeat={toggleSeat}
+                />
+              </PhysicalLayout>
+              <SeatZoomControls
+                zoom={seatZoom}
+                canZoomOut={seatZoom > SEAT_ZOOM_LEVELS[0]}
+                canZoomIn={
+                  seatZoom < SEAT_ZOOM_LEVELS[SEAT_ZOOM_LEVELS.length - 1]
+                }
+                onZoomOut={() => setSeatZoom((value) => stepSeatZoom(value, -1))}
+                onZoomIn={() => setSeatZoom((value) => stepSeatZoom(value, 1))}
+              />
+              {seatDraft.droppedIds.length ? (
+                <AppText
+                  variant="meta"
+                  tone="danger"
+                  accessibilityLiveRegion="polite"
+                >
+                  {i18n.plural("seats.dropped", seatDraft.droppedIds.length)}
+                </AppText>
+              ) : null}
+            </>
+          )}
+        </ScrollView>
+        {barFrame(
+          <TransactionBar
+            stacked
+            accessory={reconcileNotice}
+            leading={
+              <SelectedSeatChips
+                seats={summarySeats}
+                unitPriceLabel={unitPrice}
+                disabled={isCommitting}
+                onRemove={removeDraftSeat}
+                onClear={clearDraftSeats}
+              />
+            }
+            note={!needsCartReconcile && pendingSeatCount ? barNotice : undefined}
+            primaryAction={primaryAction}
+          />,
+        )}
+      </View>
+    );
+  }
 
-          {zones.length ? (
-            <View style={local.section}>
-              <Collapsible
-                title={i18n.t("stadium.title")}
-                subtitle={i18n.t("stadium.subtitle")}
-                expanded={stadiumExpanded}
-                onToggle={() => setStadiumExpanded((value) => !value)}
+  const zoneBar = !selectedZone ? null : selectedZone.has_seats && !needsCartReconcile ? (
+    <TransactionBar
+      stacked
+      leading={
+        <View style={local.barInfo}>
+          <AppText variant="bodyStrong" numberOfLines={1} style={local.barTitle}>{selectedZone.name}</AppText>
+          <AppText variant="body" tone="muted" numberOfLines={2}>
+            {pendingSeatCount
+              ? `${i18n.t("tickets.perSeatPrice", { price: formatMoney(selectedZone.price, selectedZone.currency) })} · ${i18n.plural("tickets.selected", pendingSeatCount)}`
+              : i18n.t("tickets.perSeatPrice", { price: formatMoney(selectedZone.price, selectedZone.currency) })}
+          </AppText>
+        </View>
+      }
+      note={gaChanges.length ? i18n.t("selection.otherPending") : undefined}
+      primaryAction={{
+        label: i18n.t("tickets.chooseSeats"),
+        onPress: () => setSeatPickerOpen(true),
+        accessibilityHint: i18n.t("tickets.zone.selectHint"),
+      }}
+    />
+  ) : (
+    <TransactionBar
+      stacked
+      accessory={reconcileNotice}
+      leading={
+        selectedZone.has_seats ? null : (
+          <View style={local.barRow}>
+            <View style={local.barInfo}>
+              <AppText variant="bodyStrong" numberOfLines={1} style={local.barTitle}>{selectedZone.name}</AppText>
+              <AppText variant="meta" tone="muted" numberOfLines={2}>
+                {i18n.t("tickets.eachGa", { price: formatMoney(selectedZone.price, selectedZone.currency) })}
+              </AppText>
+            </View>
+            <GaZoneStepper
+              zoneName={selectedZone.name}
+              quantity={getDraftQuantity(selectedZone.id)}
+              disabled={isCommitting}
+              onIncrement={() => incrementGaDraft(selectedZone)}
+              onDecrement={() => decrementGaDraft(selectedZone)}
+            />
+          </View>
+        )
+      }
+      note={needsCartReconcile ? undefined : barNotice}
+      primaryAction={primaryAction}
+    />
+  );
+
+  return (
+    <View style={[local.root, { backgroundColor: theme.colors.background }]}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <ScrollView
+        ref={pageScrollRef}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            tintColor={theme.colors.primary}
+            onRefresh={() => {
+              setRefreshing(true);
+              void loadMatch(true);
+            }}
+          />
+        }
+        contentContainerStyle={{
+          paddingBottom: zoneBar ? transactionBarHeight + spacing.lg : spacing.xxxl,
+        }}
+      >
+        <MatchDetailHero
+          match={match}
+          compact={responsive.isNarrow}
+          topInset={insets.top}
+          onBack={handleBack}
+        />
+
+        {/* v3 content sheet: overlaps the hero by 24pt with rounded top corners. */}
+        <View
+          style={[local.sheet, { backgroundColor: theme.colors.background }]}
+          onLayout={(event) => {
+            ticketSectionY.current = event.nativeEvent.layout.y;
+          }}
+        >
+          <View style={[local.column, { width: columnWidth }]}>
+            <View style={local.sitHeader}>
+              <View style={local.sitCopy}>
+                <AppText variant="displayDay" accessibilityRole="header" style={local.sitTitle}>
+                  {i18n.t("sit.title")}
+                </AppText>
+                <AppText variant="body" tone="muted">
+                  {!zones.length
+                    ? i18n.t("tickets.empty.title")
+                    : stadiumExpanded
+                      ? i18n.t("sit.hintMap")
+                      : i18n.t("sit.hintList")}
+                </AppText>
+              </View>
+              {zones.length ? (
+                <MapToggle
+                  expanded={stadiumExpanded}
+                  onToggle={() => setStadiumExpanded((value) => !value)}
+                />
+              ) : null}
+            </View>
+
+            {zones.length && stadiumExpanded ? (
+              <PhysicalLayout
+                style={[
+                  local.mapCard,
+                  { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard },
+                ]}
               >
                 <ZoneMap
                   zones={zones}
                   selectedZoneId={
-                    selectedZone?.has_seats
-                      ? selectedZone.id
-                      : stadiumFocusedZone?.matchId === routeMatchId
-                        ? stadiumFocusedZone.zoneId
-                        : null
+                    stadiumFocusedZone?.matchId === routeMatchId
+                      ? stadiumFocusedZone.zoneId
+                      : (selectedZone?.id ?? null)
                   }
                   mapImageUrl={mapImageUrl}
                   width={mapWidth}
@@ -791,275 +1061,198 @@ export default function MatchDetail() {
                   viewHeight={mapViewHeight}
                   onSelectZone={(zone) => selectZone(zone, true, true)}
                 />
-              </Collapsible>
-            </View>
-          ) : null}
+                <MapLegend />
+              </PhysicalLayout>
+            ) : null}
 
-          <View
-            style={local.ticketSection}
-            onLayout={(event) => {
-              ticketSectionY.current = event.nativeEvent.layout.y;
-            }}
-          >
-            <SectionHeader
-              title={i18n.t("tickets.title")}
-              subtitle={
-                zones.length
-                  ? i18n.plural("tickets.options", zones.length)
-                  : undefined
-              }
-            />
             {!zones.length ? (
               <StatePanel
                 variant="empty"
                 title={i18n.t("tickets.empty.title")}
                 message={i18n.t("tickets.empty.message")}
               />
-            ) : null}
-            {zones.map((zone) => {
-              const selected =
-                (zone.has_seats && selectedZone?.id === zone.id) ||
-                (stadiumFocusedZone?.matchId === routeMatchId &&
-                  stadiumFocusedZone.zoneId === zone.id);
-              const legendColor = zoneColor(zoneLegendIndex.get(zone.id) ?? 0);
-              const cartLine = cartByZone.get(zone.id);
-              const gaQuantity = !zone.has_seats
-                ? getDraftQuantity(zone.id)
-                : 0;
-              const price = formatMoney(zone.price, zone.currency);
-              const kindLabel = zone.has_seats
-                ? i18n.t("tickets.kind.reserved")
-                : i18n.t("tickets.kind.ga");
-              const unitLabel = zone.has_seats
-                ? i18n.t("tickets.perSeat")
-                : i18n.t("tickets.perTicket");
-              const gaSubtotal =
-                !zone.has_seats && gaQuantity > 0
-                  ? lineSubtotal(gaQuantity, zone.price)
-                  : null;
-              const inCartQuantity = zone.has_seats
-                ? (cartLine?.seatCount ?? 0)
-                : (cartLine?.quantity ?? 0);
-
-              return (
-                <View
-                  key={zone.id}
-                  onLayout={(event) =>
-                    zoneCardLayouts.current.set(
-                      zone.id,
-                      event.nativeEvent.layout.y,
-                    )
-                  }
-                >
-                  <ZoneOptionCard
-                    name={zone.name}
-                    kindLabel={kindLabel}
-                    priceLabel={price}
-                    unitLabel={unitLabel}
-                    capacityLabel={
-                      zone.capacity
-                        ? i18n.t("tickets.capacity", {
-                            capacity: zone.capacity,
-                          })
-                        : null
-                    }
-                    legendColor={legendColor}
-                    selected={selected}
-                    pressTarget={zone.has_seats ? "card" : "details"}
-                    onPress={() => selectZone(zone)}
-                    accessibilityLabel={i18n.t("tickets.zone.a11y", {
-                      zone: zone.name,
-                      kind: kindLabel,
-                      price,
-                      unit: unitLabel,
-                    })}
-                    accessibilityHint={
-                      zone.has_seats
-                        ? i18n.t("tickets.zone.selectHint")
-                        : undefined
-                    }
-                    end={
-                      zone.has_seats ? (
-                        <ReservedZoneStatus
-                          selected={selected}
-                          pendingCount={
-                            selected ? seatDraft.actionableIds.length : 0
-                          }
-                          inCartCount={cartLine?.seatCount ?? 0}
-                        />
-                      ) : (
-                        <GaZoneStepper
-                          zoneName={zone.name}
-                          quantity={gaQuantity}
-                          disabled={isCommitting}
-                          onIncrement={() => incrementGaDraft(zone)}
-                          onDecrement={() => decrementGaDraft(zone)}
-                        />
-                      )
-                    }
-                    footer={
-                      !zone.has_seats && (inCartQuantity > 0 || gaSubtotal !== null) ? (
-                        <View style={local.cardFooter}>
-                          {inCartQuantity > 0 ? (
-                            <AppText variant="caption" tone="muted">
-                              {i18n.plural("tickets.inCart", inCartQuantity)}
-                            </AppText>
-                          ) : (
-                            <View />
-                          )}
-                          {gaSubtotal !== null ? (
-                            <AppText variant="label">
-                              {i18n.t("tickets.lineSubtotal", {
-                                quantity: gaQuantity,
-                                price,
-                                subtotal: formatMoney(gaSubtotal, zone.currency),
-                              })}
-                            </AppText>
-                          ) : null}
-                        </View>
-                      ) : null
-                    }
-                  />
-                </View>
-              );
-            })}
-          </View>
-
-          {selectedZone?.has_seats ? (
-            <View style={local.section}>
-              <SectionHeader
-                title={i18n.t("seats.title")}
-                subtitle={i18n.t("seats.subtitle", {
-                  zone: selectedZone.name,
-                  price: formatMoney(selectedZone.price, selectedZone.currency),
-                })}
-              />
-              {visibleSeatError ? (
-                <StatePanel
-                  variant="error"
-                  title={i18n.t("seats.error.title")}
-                  message={ticketErrorMessage(i18n, "seats", visibleSeatError)}
-                  action={{
-                    label: i18n.t("common.retry"),
-                    onPress: () => setSeatRetryNonce((value) => value + 1),
-                  }}
-                />
-              ) : seatLoading || !seatSnapshotLoaded ? (
-                <SkeletonGroup label={i18n.t("seats.loading")}>
-                  <SkeletonBlock
-                    height={Math.round(seatMapSize * 0.6)}
-                    borderRadius={radius.lg}
-                  />
-                </SkeletonGroup>
-              ) : !visibleSeats.length ? (
-                <StatePanel
-                  variant="unavailable"
-                  title={i18n.t("seats.empty.title")}
-                  message={i18n.t("seats.empty.message")}
-                />
-              ) : (
-                <>
-                  <View style={local.seatToolbar}>
-                    <SeatLegend />
-                    <SeatZoomControls
-                      zoom={seatZoom}
-                      canZoomOut={seatZoom > SEAT_ZOOM_LEVELS[0]}
-                      canZoomIn={
-                        seatZoom < SEAT_ZOOM_LEVELS[SEAT_ZOOM_LEVELS.length - 1]
-                      }
-                      onZoomOut={() => setSeatZoom((value) => stepSeatZoom(value, -1))}
-                      onZoomIn={() => setSeatZoom((value) => stepSeatZoom(value, 1))}
-                    />
-                  </View>
-                  <SeatMap
-                    seats={visibleSeats}
-                    zoneName={selectedZone.name}
-                    selectedIds={seatDraft.actionableIds}
-                    cartSeatIds={cartSeatIds}
-                    size={seatMapSize}
-                    zoom={seatZoom}
-                    disabled={isCommitting}
-                    onToggleSeat={toggleSeat}
-                  />
-                  {seatDraft.droppedIds.length ? (
-                    <AppText
-                      variant="meta"
-                      tone="danger"
-                      accessibilityLiveRegion="polite"
-                    >
-                      {i18n.plural("seats.dropped", seatDraft.droppedIds.length)}
-                    </AppText>
-                  ) : null}
-                  <SeatSelectionSummary
-                    seats={summarySeats}
-                    count={seatDraft.actionableIds.length}
-                    zoneName={selectedZone.name}
-                    unitPriceLabel={formatMoney(
-                      selectedZone.price,
-                      selectedZone.currency,
-                    )}
-                    subtotalLabel={
-                      seatSubtotal !== null && seatDraft.actionableIds.length
-                        ? formatMoney(seatSubtotal, selectedZone.currency)
-                        : null
-                    }
-                    disabled={isCommitting}
-                    onRemove={removeDraftSeat}
-                    onClear={clearDraftSeats}
-                  />
-                </>
-              )}
-            </View>
-          ) : null}
-        </ScrollView>
-      </View>
-
-      {/* The one explicit confirmation action for this screen (see
-          commitSelections). Presentation-only TransactionBar fed by the
-          screen's draft and CartContext; fixed so it stays reachable, with
-          matching scroll padding so the last card is never hidden. */}
-      {showTransactionBar ? (
-        <View
-          style={local.actionBar}
-          onLayout={(event) =>
-            setTransactionBarHeight(event.nativeEvent.layout.height)
-          }
-        >
-          <TransactionBar
-            totalLabel={i18n.t("selection.total")}
-            totalValue={estimateValue}
-            countLabel={
-              estimate.tickets > 0
-                ? i18n.plural("transaction.ticketCount", estimate.tickets)
-                : undefined
-            }
-            accessory={
-              <AppText
-                variant="caption"
-                tone={needsCartReconcile ? "danger" : "muted"}
-                accessibilityLiveRegion="polite"
+            ) : (
+              <View
+                onLayout={(event) => {
+                  zoneListY.current = event.nativeEvent.layout.y;
+                }}
               >
-                {barNotice}
-              </AppText>
-            }
-            primaryAction={{
-              label: actionLabel,
-              onPress: needsCartReconcile
-                ? () => void reconcileCart()
-                : () => void commitSelections(),
-              disabled: actionDisabled,
-              busy: isCommitting || isReconciling,
-              accessibilityHint: needsCartReconcile
-                ? i18n.t("selection.refreshHint")
-                : auth.isAuthenticated
-                  ? i18n.t("selection.addHint")
-                  : i18n.t("selection.signInHint"),
-            }}
-          />
+              <ZoneList label={i18n.t("sit.title")}>
+                {zones.map((zone, index) => {
+                  const selected = selectedZone?.id === zone.id;
+                  const cartLine = cartByZone.get(zone.id);
+                  const price = formatMoney(zone.price, zone.currency);
+                  const kindLabel = zone.has_seats
+                    ? i18n.t("tickets.kind.reserved")
+                    : i18n.t("tickets.kind.ga");
+                  const unitLabel = zone.has_seats
+                    ? i18n.t("tickets.perSeat")
+                    : i18n.t("tickets.perTicket");
+                  const inCartQuantity = zone.has_seats
+                    ? (cartLine?.seatCount ?? 0)
+                    : (cartLine?.quantity ?? 0);
+                  // A GA draft that differs from the cart stays visible on its
+                  // row after another zone is selected, so it is never hidden.
+                  const gaDraft = zone.has_seats ? null : gaChanges.find((change) => change.zoneId === zone.id);
+                  const detail = [
+                    kindLabel,
+                    gaDraft
+                      ? i18n.plural("tickets.selected", getDraftQuantity(zone.id))
+                      : inCartQuantity > 0
+                        ? i18n.plural("tickets.inCart", inCartQuantity)
+                        : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+
+                  return (
+                    <View
+                      key={zone.id}
+                      onLayout={(event) =>
+                        zoneCardLayouts.current.set(
+                          zone.id,
+                          event.nativeEvent.layout.y,
+                        )
+                      }
+                    >
+                      <ZoneRow
+                        name={zone.name}
+                        detail={detail}
+                        priceLabel={price}
+                        selected={selected}
+                        first={index === 0}
+                        onPress={() => selectZone(zone)}
+                        accessibilityLabel={i18n.t("tickets.zone.a11y", {
+                          zone: zone.name,
+                          kind: detail,
+                          price,
+                          unit: unitLabel,
+                        })}
+                        accessibilityHint={
+                          zone.has_seats
+                            ? i18n.t("tickets.zone.selectHint")
+                            : i18n.t("tickets.zone.gaHint")
+                        }
+                      />
+                    </View>
+                  );
+                })}
+              </ZoneList>
+              </View>
+            )}
+          </View>
         </View>
-      ) : null}
-    </Screen>
+      </ScrollView>
+
+      {/* Presentation-only TransactionBar fed by the screen's draft and
+          CartContext; fixed so it stays reachable, with matching scroll
+          padding so the last row is never hidden. */}
+      {zoneBar ? barFrame(zoneBar) : null}
+    </View>
   );
+}
+
+/** Readable single column: the page never stretches rows to 1180pt. */
+function columnWidthFor(contentWidth: number) {
+  return Math.min(contentWidth, COLUMN_MAX_WIDTH);
+}
+
+/**
+ * v3 "Show map / Hide map" control. Visibility is presentation state only:
+ * toggling never refetches the match, the map image or its geometry.
+ */
+function MapToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  const theme = useTheme();
+  const i18n = useI18n();
+  return (
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      aria-expanded={expanded}
+      hitSlop={{ top: 6, bottom: 6 }}
+      style={({ pressed }) => [
+        mapToggleStyles.button,
+        { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard },
+        pressed && { opacity: 0.7 },
+      ]}
+    >
+      <AppText variant="meta" style={mapToggleStyles.label}>
+        {expanded ? i18n.t("stadium.hide") : i18n.t("stadium.show")}
+      </AppText>
+      <View style={expanded ? mapToggleStyles.chevronOpen : mapToggleStyles.chevron}>
+        <SymbolView
+          name={{ ios: "chevron.down", android: "expand_more", web: "expand_more" } as never}
+          size={14}
+          tintColor={theme.colors.textStrong}
+          fallback={<AppText variant="caption">⌄</AppText>}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
+const mapToggleStyles = {
+  // v3: 34pt high, radius 12; the press target is extended by hitSlop to 46pt.
+  button: {
+    minHeight: 34,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 6,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    flexShrink: 0,
+  },
+  label: { fontWeight: "500" as const },
+  chevron: { transform: [{ rotate: "0deg" }] },
+  chevronOpen: { transform: [{ rotate: "180deg" }] },
+};
+
+/** v3 map legend: kinds of zone and the current selection. Decorative text. */
+function MapLegend() {
+  const theme = useTheme();
+  const i18n = useI18n();
+  const items = [
+    { key: "reserved", label: i18n.t("stadium.legend.reserved"), fill: zoneKindFill("reserved", theme.colors), border: true },
+    { key: "ga", label: i18n.t("stadium.legend.ga"), fill: zoneKindFill("ga", theme.colors), border: true },
+    { key: "selected", label: i18n.t("stadium.legend.selected"), fill: theme.colors.actionPrimary, border: false },
+  ];
+  return (
+    <View style={legendStyles.row}>
+      {items.map((item) => (
+        <View key={item.key} style={legendStyles.item}>
+          <View
+            style={[
+              legendStyles.swatch,
+              { backgroundColor: item.fill },
+              item.border ? { borderWidth: 1, borderColor: theme.colors.border } : null,
+            ]}
+          />
+          <AppText variant="caption" tone="muted">{item.label}</AppText>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const legendStyles = {
+  row: { flexDirection: "row" as const, flexWrap: "wrap" as const, columnGap: spacing.lg, rowGap: spacing.xs, marginTop: 10 },
+  item: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
+  swatch: { width: 12, height: 12, borderRadius: 4 },
+};
+
+/** v3 zone fills by kind (reserved `--bg2`, GA `--card2`); selection is brand red. */
+function zoneKindFill(kind: "reserved" | "ga", colors: ThemeColors) {
+  return kind === "reserved" ? colors.bgAlt : colors.surfaceSecondary;
+}
+
+function zoneColors(zone: ApiZone, active: boolean, colors: ThemeColors) {
+  if (active) return { fill: colors.actionPrimary, fillOpacity: 0.7, stroke: colors.actionPrimary };
+  return {
+    fill: zoneKindFill(zone.has_seats ? "reserved" : "ga", colors),
+    fillOpacity: 0.5,
+    stroke: colors.textMuted,
+  };
 }
 
 function errorFacts(error: unknown): TicketErrorFacts {
@@ -1100,12 +1293,6 @@ function ticketErrorMessage(
           ? i18n.t("ticketError.seats")
           : i18n.t("ticketError.cart");
   }
-}
-
-function zoneColor(index: number) {
-  return ["#C8102E", "#007A3D", "#2563EB", "#C8A84B", "#7C3AED", "#0E7490"][
-    index % 6
-  ];
 }
 
 function getZonePoints(zone: ApiZone) {
@@ -1288,8 +1475,7 @@ function ZoneMap({
           direction: "ltr",
           width,
           height,
-          borderRadius: 18,
-          border: `1px solid ${theme.colors.border}`,
+          borderRadius: 14,
           backgroundColor: theme.colors.surfaceSecondary,
           overflow: "hidden",
         },
@@ -1329,11 +1515,11 @@ function ZoneMap({
               },
               i18n.t("stadium.unavailable"),
             ),
-        ...zones.map((zone, index) => {
+        ...zones.map((zone) => {
           const points = getDisplayZonePoints(zone);
           if (!points.length) return null;
           const active = zone.id === selectedZoneId;
-          const color = zoneColor(index);
+          const paint = zoneColors(zone, active, theme.colors);
           const center = getZoneCentroid(zone, viewHeight);
 
           return createElement(
@@ -1345,11 +1531,11 @@ function ZoneMap({
             },
             createElement("polygon", {
               points: points.map((point) => `${point.x},${point.y}`).join(" "),
-              fill: color,
-              fillOpacity: active ? 0.75 : 0.35,
-              stroke: active ? "#FFFFFF" : color,
+              fill: paint.fill,
+              fillOpacity: paint.fillOpacity,
+              stroke: paint.stroke,
               strokeWidth: active ? 2.5 : 1,
-              strokeOpacity: active ? 0.9 : 0.5,
+              strokeOpacity: active ? 0.9 : 0.6,
             }),
             createElement(
               "text",
@@ -1382,7 +1568,6 @@ function ZoneMap({
           width,
           height,
           backgroundColor: theme.colors.surfaceSecondary,
-          borderColor: theme.colors.border,
         },
       ]}
     >
@@ -1406,18 +1591,18 @@ function ZoneMap({
           },
         ]}
       >
-        {zones.map((zone, index) => {
+        {zones.map((zone) => {
           const points = getPolygonPointsAttribute(zone);
           if (!points) return null;
           const active = zone.id === selectedZoneId;
-          const color = zoneColor(index);
+          const paint = zoneColors(zone, active, theme.colors);
           return (
             <Polygon
               key={`shape-fill-${zone.id}`}
               points={points}
-              fill={color}
-              fillOpacity={active ? 0.5 : 0.28}
-              stroke={color}
+              fill={paint.fill}
+              fillOpacity={paint.fillOpacity}
+              stroke={paint.stroke}
               strokeWidth={active ? 2.5 : 1}
             />
           );
@@ -1449,7 +1634,7 @@ function ZoneMap({
           />
         );
       })}
-      {zones.map((zone, index) => {
+      {zones.map((zone) => {
         const center = getZoneCentroid(zone, viewHeight);
         const compact = width < 420;
         const markerWidth = compact ? 64 : 84;
@@ -1484,8 +1669,8 @@ function ZoneMap({
                 width: markerWidth,
                 minHeight: markerHeight,
                 paddingHorizontal: compact ? 5 : 6,
-                borderColor: zoneColor(index),
-                backgroundColor: active ? zoneColor(index) : theme.colors.surface,
+                borderColor: active ? theme.colors.actionPrimary : theme.colors.border,
+                backgroundColor: active ? theme.colors.actionPrimary : theme.colors.surface,
               },
             ]}
           >
@@ -1493,7 +1678,7 @@ function ZoneMap({
               style={[
                 local.zoneMarkerDot,
                 compact && local.zoneMarkerDotCompact,
-                { backgroundColor: active ? "#FFFFFF" : zoneColor(index) },
+                { backgroundColor: active ? "#FFFFFF" : theme.colors.textMuted },
               ]}
             />
             <Text
@@ -1576,21 +1761,9 @@ function SeatMap({
           {
             width: frameWidth,
             height: frameHeight,
-            backgroundColor: theme.colors.surfaceSecondary,
-            borderColor: theme.colors.border,
           },
         ]}
       >
-        <View
-          style={local.pitchLabel}
-          accessible={false}
-          importantForAccessibility="no-hide-descendants"
-          accessibilityElementsHidden
-        >
-          <AppText variant="caption" style={{ color: theme.colors.tones.success.fg, fontWeight: "800" }}>
-            {i18n.t("seats.pitch")}
-          </AppText>
-        </View>
         {layout.seats.map((seat) => {
           const state = seatVisualState(seat, selectedIds, cartSeatIds);
           const inCart = state === "inCart";
@@ -1651,39 +1824,28 @@ function useMatchStyles() {
 
 function createMatchStyles(colors: ThemeColors) {
   return {
-    shell: { flex: 1, alignSelf: "center" as const },
-    column: {
-      width: "100%" as const,
-      maxWidth: COLUMN_MAX_WIDTH,
-      alignSelf: "center" as const,
-    },
+    root: { flex: 1 },
+    flowHeader: { width: "100%" as const, paddingHorizontal: layout.gutter },
+    column: { alignSelf: "center" as const, gap: spacing.lg },
     centered: { flex: 1, justifyContent: "center" as const },
-    section: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderWidth: 1,
-      borderRadius: radius.lg,
-      padding: spacing.lg,
-      gap: spacing.md,
+    // v3: margin-top -24, radius 26 26 0 0, padding 22 16 16.
+    sheet: {
+      marginTop: -24,
+      borderTopLeftRadius: radius.hero,
+      borderTopRightRadius: radius.hero,
+      paddingTop: SHEET_PADDING_TOP,
+      paddingHorizontal: layout.gutter,
+      paddingBottom: spacing.lg,
     },
-    ticketSection: { gap: spacing.md },
-    cardFooter: {
-      flexDirection: "row" as const,
-      flexWrap: "wrap" as const,
-      alignItems: "center" as const,
-      justifyContent: "space-between" as const,
-      gap: spacing.sm,
-      paddingTop: spacing.sm,
-      borderTopWidth: 1,
-      borderTopColor: colors.divider,
-    },
-    seatToolbar: {
-      flexDirection: "row" as const,
-      flexWrap: "wrap" as const,
-      alignItems: "center" as const,
-      justifyContent: "space-between" as const,
-      gap: spacing.md,
-    },
+    sitHeader: { flexDirection: "row" as const, alignItems: "flex-start" as const, gap: spacing.md },
+    sitCopy: { flex: 1, minWidth: 0, gap: spacing.xs },
+    sitTitle: { textTransform: "uppercase" as const },
+    mapCard: { padding: 14, borderRadius: radius.xl, marginTop: -spacing.xs },
+    pickerContent: { alignSelf: "center" as const, gap: spacing.lg, paddingTop: spacing.sm },
+    seatCard: { padding: spacing.lg, borderRadius: 22, gap: spacing.md },
+    barRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md },
+    barInfo: { flex: 1, minWidth: 0, gap: 2 },
+    barTitle: { fontSize: 16, lineHeight: 21 },
     // Fixed transaction area; TransactionBar supplies its own surface,
     // border and safe-area padding.
     actionBar: {
@@ -1696,9 +1858,7 @@ function createMatchStyles(colors: ThemeColors) {
       // Real stadium geometry: never mirrored in RTL.
       ...PHYSICAL_LAYOUT_STYLE,
       alignSelf: "center" as const,
-      borderRadius: 18,
-      borderWidth: 1,
-      borderColor: colors.border,
+      borderRadius: 14,
       backgroundColor: colors.surfaceSecondary,
       overflow: "hidden" as const,
       position: "relative" as const,
@@ -1746,27 +1906,12 @@ function createMatchStyles(colors: ThemeColors) {
       // Real seat geometry: never mirrored in RTL.
       ...PHYSICAL_LAYOUT_STYLE,
       alignSelf: "center" as const,
-      borderRadius: 18,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surfaceSecondary,
       position: "relative" as const,
       overflow: "hidden" as const,
     },
     seatMapScroll: { ...PHYSICAL_LAYOUT_STYLE, width: "100%" as const },
     seatMapScroller: {
       flexGrow: 1,
-      justifyContent: "center" as const,
-    },
-    pitchLabel: {
-      position: "absolute" as const,
-      left: "28%" as const,
-      right: "28%" as const,
-      top: 10,
-      height: 26,
-      borderRadius: 999,
-      backgroundColor: colors.tones.success.bg,
-      alignItems: "center" as const,
       justifyContent: "center" as const,
     },
     seat: {

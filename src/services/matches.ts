@@ -1,5 +1,5 @@
 import { apiRequest, unwrapData } from "@/services/api";
-import type { ApiMatch, ApiSeat, FilterOption, MatchFilters } from "@/types";
+import type { ApiMatch, ApiMatchDetail, ApiSeat, FilterOption, MatchFilters } from "@/types";
 
 const CACHE_TTL = 5 * 60 * 1000;
 const cache = new Map<string, { value: unknown; expiresAt: number }>();
@@ -46,7 +46,7 @@ export const matchesService = {
 
   async details(id: string | number, force = false) {
     const path = `/matches/single/${id}`;
-    return cached(path, async () => unwrapData(await apiRequest<ApiMatch | { data: ApiMatch }>(path)), force);
+    return cached(path, async () => unwrapData(await apiRequest<ApiMatchDetail | { data: ApiMatchDetail }>(path)), force);
   },
 
   async seats(matchId: string | number, zoneId: string | number, force = false) {

@@ -375,6 +375,13 @@ export type CommitOps<Item extends CartLineLike> = {
   addSeats: (zoneId: number, seatIds: readonly number[]) => Promise<Publication<Item>>;
   /** The owner's current session id right now (null when there is no cart session). */
   currentSessionId: () => string | null;
+  /**
+   * Re-reads the match from the backend and reports whether it is still on
+   * sale (`isPurchasableMatchStatus`). Runs before the first cart mutation;
+   * a throw means the status could not be verified. Required: no caller can
+   * commit a selection without it.
+   */
+  confirmStillOnSale: () => Promise<boolean>;
 };
 
 export type CommitOutcome =
@@ -383,7 +390,31 @@ export type CommitOutcome =
   /** A step finished but its result could not be confirmed as the current cart. Outcome unknown. */
   | { status: "unconfirmed"; completedSteps: number }
   /** A step threw. Earlier steps may have been applied and published. */
-  | { status: "failed"; completedSteps: number; error: unknown };
+  | { status: "failed"; completedSteps: number; error: unknown }
+  /** The re-read match is no longer scheduled. Nothing was sent to the cart. */
+  | { status: "notOnSale" }
+  /** The match could not be re-read. Nothing was sent to the cart. */
+  | { status: "statusUnverified"; error: unknown };
+
+/**
+ * Ticket purchasing exists only for a scheduled match. Live, completed and
+ * any other status are information/result experiences even when the
+ * response still carries stadium zones: zones never imply purchasability.
+ */
+export function isPurchasableMatchStatus(status: string | null | undefined) {
+  return typeof status === "string" && status.trim().toLowerCase() === "scheduled";
+}
+
+export type MatchDetailExperience = "purchase" | "live" | "result" | "info";
+
+/** Which Match Details experience a backend status gets. */
+export function matchDetailExperience(status: string | null | undefined): MatchDetailExperience {
+  if (isPurchasableMatchStatus(status)) return "purchase";
+  const normalized = typeof status === "string" ? status.trim().toLowerCase() : "";
+  if (normalized === "live") return "live";
+  if (normalized === "completed") return "result";
+  return "info";
+}
 
 /** Whether the published cart reflects every change in the plan. */
 export function cartReflectsPlan(plan: CommitPlan, items: readonly CartLineLike[]) {
@@ -418,6 +449,14 @@ export async function executeSelectionCommit<Item extends CartLineLike>(
   plan: CommitPlan,
   ops: CommitOps<Item>,
 ): Promise<CommitOutcome> {
+  // The match must still be on sale right now (not only when the screen
+  // loaded): re-read before the first mutation; zero cart calls otherwise.
+  try {
+    if (!(await ops.confirmStillOnSale())) return { status: "notOnSale" };
+  } catch (error) {
+    return { status: "statusUnverified", error };
+  }
+
   const steps: (() => Promise<Publication<Item>>)[] = plan.gaChanges.map((change) => {
     if (change.action === "add") return () => ops.addZone(change.zoneId, change.to);
     if (change.action === "remove") return () => ops.removeLine(change.lockKey);
@@ -458,6 +497,8 @@ export type CommitEffects = {
   success: boolean;
   /** Keep drafts but require a cart refresh before the next confirmation. */
   needsReconcile: boolean;
+  /** The match left sale: discard the stale purchase draft (nothing was sent). */
+  discardDraft: boolean;
 };
 
 /**
@@ -466,9 +507,12 @@ export type CommitEffects = {
  * the cart authoritatively shows, so an already-applied change is not resent.
  */
 export function commitEffects(outcome: CommitOutcome, failureKind: TicketErrorKind | null): CommitEffects {
-  if (outcome.status === "confirmed") return { success: true, needsReconcile: false };
-  if (outcome.status === "unconfirmed") return { success: false, needsReconcile: true };
-  return { success: false, needsReconcile: failureNeedsReconcile(failureKind ?? "generic") };
+  if (outcome.status === "confirmed") return { success: true, needsReconcile: false, discardDraft: false };
+  if (outcome.status === "unconfirmed") return { success: false, needsReconcile: true, discardDraft: false };
+  // Nothing reached the cart, so there is nothing to reconcile.
+  if (outcome.status === "notOnSale") return { success: false, needsReconcile: false, discardDraft: true };
+  if (outcome.status === "statusUnverified") return { success: false, needsReconcile: false, discardDraft: false };
+  return { success: false, needsReconcile: failureNeedsReconcile(failureKind ?? "generic"), discardDraft: false };
 }
 
 /* ------------------------------------------------------------------------ *

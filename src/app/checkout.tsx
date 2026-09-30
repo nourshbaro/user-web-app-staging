@@ -1,12 +1,12 @@
-import { AppHeader } from "@/components/AppHeader";
+import { FlowHeader, StepBar } from "@/components/FlowHeader";
 import { CartNotice } from "@/components/cart/CartNotice";
 import { OrderSummary } from "@/components/cart/OrderSummary";
-import { ReservationStatus } from "@/components/cart/ReservationStatus";
+import { useReservationAnnouncements } from "@/components/cart/ReservationStatus";
 import { PaymentMethodOptions } from "@/components/checkout/PaymentMethodOptions";
-import { AppText, SectionHeader, StatePanel, TransactionBar } from "@/components/foundation";
+import { AppText, StatePanel, TransactionBar } from "@/components/foundation";
 import type { PaymentMethodOption } from "@/components/PaymentMethodSheet";
 import { TicketHoldersBlock } from "@/components/TicketHoldersBlock";
-import { Screen, useResponsive, useTheme } from "@/components/ui";
+import { useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
@@ -35,6 +35,8 @@ import { groupCartItems } from "@/lib/cartDisplay";
 import {
   buildTicketsByMatch,
   checkoutAttemptBlocks,
+  checkoutBackBlocked,
+  checkoutBackHandlers,
   checkoutReadiness,
   holderCompleteness,
   paymentFailureKind,
@@ -58,13 +60,14 @@ import {
 } from "@/lib/checkoutOwnership";
 import { createCheckoutSubmissionAuthority } from "@/lib/checkoutSubmissionAuthority";
 import { config } from "@/lib/config";
-import { radius, spacing } from "@/lib/designTokens";
+import { layout, radius, size, spacing } from "@/lib/designTokens";
 import { formatMoney } from "@/lib/format";
 import { initializePhoneValue } from "@/lib/phoneNumber";
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import { paymentError, userFacingError } from "@/lib/userFacingError";
 import { checkoutService } from "@/services/checkout";
 import { router, Stack, useFocusEffect, useIsFocused } from "expo-router";
+import { SymbolView } from "expo-symbols";
 import {
   useCallback,
   useEffect,
@@ -80,6 +83,7 @@ import {
   ScrollView,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 function getCheckoutOrigin() {
   if (Platform.OS === "web" && typeof window !== "undefined")
@@ -105,6 +109,7 @@ function CheckoutScreen() {
   const theme = useTheme();
   const i18n = useI18n();
   const toast = useToast();
+  const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const { ticketSlots, holderNames } = useTicketHolders();
   const [paymentMethod, setPaymentMethod] =
@@ -156,7 +161,20 @@ function CheckoutScreen() {
   // Two columns (summary | payment) on wide screens instead of a stretched phone column.
   const twoColumn = responsive.width >= 1024;
   const isCheckoutLocked = loading || auth.isRefreshingUser;
-  const returnToCart = useCallback(() => router.replace("/cart"), []);
+  // Header and hardware Back share one policy: never leave while a submit is
+  // in flight or a payment handoff has started (the existing synchronous
+  // guards; no new lock). Normal Back resumes as soon as they clear.
+  const isBackBlocked = useCallback(
+    () => checkoutBackBlocked({ submitInFlight: submitInFlightRef.current, handoffStarted: blueHandoffStartedRef.current }),
+    [],
+  );
+  const leaveToCart = useCallback(() => router.replace("/cart"), []);
+  // Handlers are built at press time (refs are read only inside events).
+  const onHeaderBack = useCallback(() => checkoutBackHandlers(isBackBlocked, leaveToCart).header(), [isBackBlocked, leaveToCart]);
+  const onHardwareBack = useCallback(() => checkoutBackHandlers(isBackBlocked, leaveToCart).hardware(), [isBackBlocked, leaveToCart]);
+  // The visible countdown is the global read-only indicator; this keeps the
+  // thresholded screen-reader warnings on Checkout.
+  useReservationAnnouncements(cart.secondsLeft);
 
   useFocusEffect(
     useCallback(() => {
@@ -206,13 +224,10 @@ function CheckoutScreen() {
   useEffect(() => {
     const subscription = BackHandler.addEventListener(
       "hardwareBackPress",
-      () => {
-        returnToCart();
-        return true;
-      },
+      onHardwareBack,
     );
     return () => subscription.remove();
-  }, [returnToCart]);
+  }, [onHardwareBack]);
 
   useEffect(() => {
     if (isFocused && !cart.isLoading && !cart.sessionId && !cart.items.length)
@@ -614,154 +629,202 @@ function CheckoutScreen() {
 
   const payLabel =
     paymentMethod === "cybersource"
-      ? i18n.t("checkout.pay.card")
+      ? i18n.t("checkout.pay.card", { total: formatMoney(cart.total, cart.currency) })
       : paymentMethod === "blue"
         ? i18n.t("checkout.pay.blue")
         : i18n.t("checkout.pay.choose");
+  const payNote =
+    paymentMethod === "cybersource"
+      ? i18n.t("checkout.pay.cardNote")
+      : paymentMethod === "blue"
+        ? i18n.t("checkout.pay.blueNote")
+        : undefined;
   const blockerMessage =
     readiness.blocker && readiness.blocker !== "busy"
       ? i18n.t(`checkout.blocker.${readiness.blocker}`)
       : null;
   const hasItems = cart.items.length > 0;
+  const billingRows = [
+    { label: i18n.t("checkout.billing.name"), value: name },
+    { label: i18n.t("checkout.billing.email"), value: email },
+    { label: i18n.t("checkout.billing.phone"), value: canonicalPhone },
+  ];
 
   return (
-    <Screen>
-      <Stack.Screen options={{ gestureEnabled: false }} />
-      <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <AppHeader
+    <View style={[local.root, { backgroundColor: theme.colors.background }]}>
+      <Stack.Screen options={{ gestureEnabled: false, headerShown: false }} />
+      <View style={[local.header, { paddingTop: insets.top }]}>
+        <FlowHeader
           title={i18n.t("checkout.title")}
-          subtitle={hasItems ? i18n.t("checkout.subtitle") : i18n.t("cart.noReservation")}
-          hideCart
-          onBack={returnToCart}
+          backLabel={i18n.t("flow.cart")}
+          onBack={onHeaderBack}
+          backDisabled={loading}
         />
-        <ScrollView
-          style={local.scroll}
-          contentContainerStyle={[
-            local.content,
-            { paddingBottom: hasItems ? barHeight + spacing.lg : spacing.xxxl },
-          ]}
-        >
-          {!hasItems ? (
+      </View>
+      <ScrollView
+        style={local.scroll}
+        contentContainerStyle={[
+          local.content,
+          { paddingBottom: hasItems ? barHeight + spacing.lg : spacing.xxxl },
+        ]}
+      >
+        {!hasItems ? (
+          <View style={[local.layout, { width: responsive.contentWidth }]}>
             <StatePanel
               variant="empty"
               title={i18n.t("checkout.empty.title")}
               message={i18n.t("checkout.empty.message")}
             />
-          ) : (
-            <View style={[local.layout, twoColumn && local.layoutWide]}>
-              <View style={[local.column, twoColumn && local.mainColumn]}>
-                <ReservationStatus secondsLeft={cart.secondsLeft} />
-                {paymentOutcomeUnknown ? (
-                  <StatePanel
-                    variant="info"
-                    title={i18n.t("checkout.paymentUnknown.title")}
-                    message={i18n.t("checkout.paymentUnknown.message")}
-                    action={{ label: i18n.t("payment.viewTickets"), onPress: () => router.replace("/tickets") }}
-                  />
-                ) : reconciliationRequired ? (
+          </View>
+        ) : (
+          <View style={[local.layout, { width: responsive.contentWidth }, twoColumn && local.layoutWide]}>
+            <View style={[local.column, twoColumn && local.mainColumn]}>
+              <StepBar step={2} />
+              <AppText variant="displayPrompt" accessibilityRole="header">{i18n.t("checkout.prompt")}</AppText>
+              {paymentOutcomeUnknown ? (
+                <StatePanel
+                  variant="info"
+                  title={i18n.t("checkout.paymentUnknown.title")}
+                  message={i18n.t("checkout.paymentUnknown.message")}
+                  action={{ label: i18n.t("payment.viewTickets"), onPress: () => router.replace("/tickets") }}
+                />
+              ) : reconciliationRequired ? (
+                <CartNotice
+                  message={i18n.t("checkout.reconcile.message")}
+                  action={{
+                    label: i18n.t("cart.check.action"),
+                    busy: refreshingCart,
+                    onPress: () => {
+                      if (refreshingCart) return;
+                      setRefreshingCart(true);
+                      void cart.refreshCart()
+                        .catch(() => undefined)
+                        .finally(() => setRefreshingCart(false));
+                    },
+                  }}
+                />
+              ) : null}
+
+              <View style={local.section}>
+                <AppText variant="overline" tone="muted" accessibilityRole="header">{i18n.t("checkout.billing.title")}</AppText>
+                {/* Read-only profile values; the backend receives the same billing it always has. */}
+                <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
+                  {billingRows.map((row, index) => (
+                    <View
+                      key={row.label}
+                      style={[local.billingRow, index > 0 && { borderTopWidth: 1, borderTopColor: theme.colors.hairline }]}
+                      accessible
+                      accessibilityLabel={`${row.label}: ${row.value || i18n.t("checkout.billing.missing")}`}
+                    >
+                      <AppText variant="body" tone="muted">{row.label}</AppText>
+                      <AppText
+                        variant="body"
+                        tone={row.value ? "strong" : "danger"}
+                        numberOfLines={1}
+                        style={local.billingValue}
+                      >
+                        {row.value || i18n.t("checkout.billing.missing")}
+                      </AppText>
+                    </View>
+                  ))}
+                </View>
+                {auth.isRefreshingUser ? (
+                  <AppText variant="meta" tone="muted" accessibilityLiveRegion="polite">
+                    {i18n.t("checkout.profile.loading")}
+                  </AppText>
+                ) : null}
+                {!canonicalPhone && !auth.isRefreshingUser ? (
                   <CartNotice
-                    message={i18n.t("checkout.reconcile.message")}
+                    message={i18n.t("checkout.phone.message")}
                     action={{
-                      label: i18n.t("cart.check.action"),
-                      busy: refreshingCart,
-                      onPress: () => {
-                        if (refreshingCart) return;
-                        setRefreshingCart(true);
-                        void cart.refreshCart()
-                          .catch(() => undefined)
-                          .finally(() => setRefreshingCart(false));
-                      },
+                      label: i18n.t("checkout.phone.action"),
+                      onPress: () => router.push("/edit-profile"),
                     }}
                   />
                 ) : null}
-                <OrderSummary
-                  lines={groupedItems}
-                  totalLabel={formatMoney(cart.total, cart.currency)}
-                />
-                <TicketHoldersBlock
-                  ticketSlots={ticketSlots}
-                  holderNames={holderNames}
-                  expanded={holdersExpanded}
-                  onToggle={() => setHoldersExpanded((value) => !value)}
-                />
               </View>
 
-              <View style={[local.column, twoColumn && local.sideColumn]}>
-                <View style={[local.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                  <SectionHeader title={i18n.t("checkout.payment.title")} />
-                  {auth.isRefreshingUser ? (
-                    <AppText variant="meta" tone="muted" accessibilityLiveRegion="polite">
-                      {i18n.t("checkout.profile.loading")}
-                    </AppText>
-                  ) : null}
-                  <PaymentMethodOptions
-                    selected={paymentMethod}
-                    disabled={isCheckoutLocked}
-                    onSelect={setPaymentMethod}
-                    status={{
-                      cybersource: captureError ? (
-                        <CartNotice
-                          tone="danger"
-                          message={i18n.t("checkout.payment.cardError")}
-                          action={{
-                            label: i18n.t("checkout.payment.cardRetry"),
-                            disabled: isCheckoutLocked || captureLoading,
-                            onPress: () => {
-                              if (cart.sessionId) void loadCaptureContext(cart.sessionId, true).catch(() => {});
-                            },
-                          }}
-                        />
-                      ) : captureLoading ? (
-                        <View style={local.inlineStatus} accessibilityLiveRegion="polite">
-                          <ActivityIndicator size="small" color={theme.colors.textMuted} />
-                          <AppText variant="caption" tone="muted">{i18n.t("checkout.payment.cardPreparing")}</AppText>
-                        </View>
-                      ) : null,
-                    }}
-                  />
-                  {!canonicalPhone && !auth.isRefreshingUser ? (
-                    <CartNotice
-                      message={i18n.t("checkout.phone.message")}
-                      action={{
-                        label: i18n.t("checkout.phone.action"),
-                        onPress: () => router.push("/edit-profile"),
-                      }}
-                    />
-                  ) : null}
-                </View>
-                <AppText variant="caption" tone="muted" align="center" style={local.terms}>
-                  {i18n.t("checkout.terms")}
-                </AppText>
-              </View>
+              <OrderSummary
+                lines={groupedItems}
+                totalLabel={formatMoney(cart.total, cart.currency)}
+              />
+              <TicketHoldersBlock
+                ticketSlots={ticketSlots}
+                holderNames={holderNames}
+                expanded={holdersExpanded}
+                onToggle={() => setHoldersExpanded((value) => !value)}
+              />
             </View>
-          )}
-        </ScrollView>
-      </View>
+
+            <View style={[local.column, twoColumn && local.sideColumn]}>
+              <View style={local.section}>
+                <AppText variant="overline" tone="muted" accessibilityRole="header">{i18n.t("checkout.payment.title")}</AppText>
+                <PaymentMethodOptions
+                  selected={paymentMethod}
+                  disabled={isCheckoutLocked}
+                  onSelect={setPaymentMethod}
+                  status={{
+                    cybersource: captureError ? (
+                      <CartNotice
+                        tone="danger"
+                        message={i18n.t("checkout.payment.cardError")}
+                        action={{
+                          label: i18n.t("checkout.payment.cardRetry"),
+                          disabled: isCheckoutLocked || captureLoading,
+                          onPress: () => {
+                            if (cart.sessionId) void loadCaptureContext(cart.sessionId, true).catch(() => {});
+                          },
+                        }}
+                      />
+                    ) : captureLoading ? (
+                      <View style={local.inlineStatus} accessibilityLiveRegion="polite">
+                        <ActivityIndicator size="small" color={theme.colors.textMuted} />
+                        <AppText variant="caption" tone="muted">{i18n.t("checkout.payment.cardPreparing")}</AppText>
+                      </View>
+                    ) : null,
+                  }}
+                />
+              </View>
+              <AppText variant="caption" tone="muted" align="center" style={local.terms}>
+                {i18n.t("checkout.terms")}
+              </AppText>
+            </View>
+          </View>
+        )}
+      </ScrollView>
 
       {/* Presentation-only TransactionBar: the total is the owner's
-          cart.total; readiness and submission stay owned by this screen. */}
+          cart.total; readiness and submission stay owned by this screen.
+          Choosing a method above never pays — only this explicit action does. */}
       {hasItems ? (
         <View
           style={local.actionBar}
           onLayout={(event) => setBarHeight(event.nativeEvent.layout.height)}
         >
           <TransactionBar
-            totalLabel={i18n.t("checkout.total")}
-            totalValue={formatMoney(cart.total, cart.currency)}
-            countLabel={i18n.plural("transaction.ticketCount", ticketSlots.length)}
+            stacked
             accessory={
               blockerMessage ? (
-                <AppText variant="caption" tone="muted" accessibilityLiveRegion="polite">
+                <AppText variant="caption" tone="muted" align="center" accessibilityLiveRegion="polite">
                   {blockerMessage}
                 </AppText>
               ) : null
             }
+            note={payNote}
             primaryAction={{
               label: payLabel,
               onPress: handleContinue,
               disabled: !canContinue,
               busy: loading,
               accessibilityHint: blockerMessage ?? i18n.t("checkout.pay.hint"),
+              icon: paymentMethod ? (
+                <SymbolView
+                  name={{ ios: "lock.fill", android: "lock", web: "lock" }}
+                  size={16}
+                  tintColor={canContinue ? theme.colors.onActionPrimary : theme.colors.disabledText}
+                  fallback={<View />}
+                />
+              ) : undefined,
             }}
           />
         </View>
@@ -774,35 +837,47 @@ function CheckoutScreen() {
           aria-busy
         >
           <View
-            style={[local.overlayPanel, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+            style={[local.overlayPanel, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowRaised }]}
             accessible
             accessibilityRole="progressbar"
             accessibilityLabel={`${i18n.t("checkout.blue.preparing.title")}. ${i18n.t("checkout.blue.preparing.message")}`}
           >
             <ActivityIndicator color={theme.colors.actionPrimary} />
-            <AppText variant="cardTitle" align="center">{i18n.t("checkout.blue.preparing.title")}</AppText>
+            <AppText variant="bodyStrong" align="center">{i18n.t("checkout.blue.preparing.title")}</AppText>
             <AppText variant="meta" tone="muted" align="center">{i18n.t("checkout.blue.preparing.message")}</AppText>
           </View>
         </View>
       ) : null}
-    </Screen>
+    </View>
   );
 }
 
 const local = {
-  shell: { flex: 1, alignSelf: "center" as const },
+  root: { flex: 1 },
+  header: { width: "100%" as const, paddingHorizontal: layout.gutter },
   scroll: { width: "100%" as const },
-  content: { width: "100%" as const, gap: spacing.lg },
-  layout: { width: "100%" as const, maxWidth: 720, alignSelf: "center" as const, gap: spacing.lg },
+  content: { width: "100%" as const, gap: spacing.lg, paddingTop: spacing.sm },
+  layout: { maxWidth: 720, alignSelf: "center" as const, gap: spacing.xl },
   layoutWide: {
     maxWidth: 1080,
     flexDirection: "row" as const,
     alignItems: "flex-start" as const,
   },
-  column: { gap: spacing.lg },
+  column: { gap: spacing.xl },
   mainColumn: { flex: 1, minWidth: 0 },
   sideColumn: { width: 380 },
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.lg, gap: spacing.md },
+  section: { gap: spacing.sm },
+  card: { borderRadius: radius.xl, overflow: "hidden" as const },
+  billingRow: {
+    minHeight: size.touchTarget,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  billingValue: { flexShrink: 1, fontWeight: "500" as const },
   inlineStatus: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.sm },
   terms: { paddingHorizontal: spacing.lg },
   actionBar: { position: "absolute" as const, left: 0, right: 0, bottom: 0 },
@@ -819,8 +894,7 @@ const local = {
   overlayPanel: {
     width: "100%" as const,
     maxWidth: 320,
-    borderRadius: radius.lg,
-    borderWidth: 1,
+    borderRadius: radius.xl,
     padding: spacing.xl,
     alignItems: "center" as const,
     gap: spacing.sm,

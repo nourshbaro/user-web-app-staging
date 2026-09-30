@@ -8,6 +8,7 @@ import {
   ONBOARDING_STORAGE_KEY,
   serializeOnboardingCompleted,
   shouldOfferNotificationStep,
+  shouldRequestPermissionOnTurnOn,
   shouldYieldToNavigation,
 } from "./onboarding.ts";
 
@@ -41,12 +42,18 @@ test("only the Home route name counts as Home; once visible, any navigation away
   assert.equal(shouldYieldToNavigation("/match/7"), true);
 });
 
-test("the notification pre-prompt appears only while the OS can still ask", () => {
-  assert.equal(shouldOfferNotificationStep("undetermined", true), true);
-  assert.equal(shouldOfferNotificationStep("granted", true), false);
-  assert.equal(shouldOfferNotificationStep("denied", true), false);
-  // No push runtime (Expo Go, web): never offered.
-  assert.equal(shouldOfferNotificationStep("undetermined", false), false);
+test("the notification pre-prompt is part of first run whenever a push runtime exists", () => {
+  // Regression: it used to require "undetermined" and silently vanished on
+  // devices whose OS had already decided (Android <= 12, earlier builds).
+  for (const permission of ["undetermined", "granted", "denied"]) {
+    assert.equal(shouldOfferNotificationStep(permission, true), true, permission);
+    // No push runtime (Expo Go, web): never offered.
+    assert.equal(shouldOfferNotificationStep(permission, false), false, permission);
+  }
+  // "Turn on" asks the OS only when permission is not already granted.
+  assert.equal(shouldRequestPermissionOnTurnOn("undetermined"), true);
+  assert.equal(shouldRequestPermissionOnTurnOn("denied"), true);
+  assert.equal(shouldRequestPermissionOnTurnOn("granted"), false);
 });
 
 test("startup never requests notification permission; granted users keep registering", async () => {
@@ -64,7 +71,7 @@ test("startup never requests notification permission; granted users keep registe
   assert.match(ifPermitted, /if \(\(await getNotificationPermissionStatus\(\)\) !== "granted"\) return;/);
   assert.doesNotMatch(ifPermitted, /requestNotificationPermission/);
   const optIn = register.slice(register.indexOf("export async function optInToPushNotifications"), register.indexOf("export async function registerRefreshedPushDevice"));
-  assert.match(optIn, /const permission = await requestNotificationPermission\(\);\s*if \(permission === "granted"\) await registerPushDevice\(\);/);
+  assert.match(optIn, /const current = await getNotificationPermissionStatus\(\);\s*const permission = shouldRequestPermissionOnTurnOn\(current\) \? await requestNotificationPermission\(\) : current;\s*if \(permission === "granted"\) await registerPushDevice\(\);/);
 });
 
 test("the native prompt is reachable from onboarding only through the explicit Turn on action", async () => {
@@ -90,9 +97,10 @@ test("onboarding owns no navigation or data, and has no favourite-team step", as
   assert.match(gate, /storage\.set\(ONBOARDING_STORAGE_KEY, serializeOnboardingCompleted\(\)\)/);
   // Steps aside (not completed) when navigation leaves Home.
   assert.match(gate, /if \(state === "visible" && shouldYieldToNavigation\(pathname\)\) \{\s*setState\("hidden"\);/);
-  // Motion honours reduced motion; the splash never auto-advances under a screen reader.
+  // Motion honours reduced motion.
   assert.match(flow, /useReducedMotion\(\)/);
-  assert.match(flow, /if \(cancelled \|\| screenReader\) return;/);
+  // The splash is no longer a first-run step (it is the every-launch LaunchSplash).
+  assert.doesNotMatch(flow, /SplashStep|"splash"/);
 });
 
 test("the native splash stays up until onboarding is decided, then the overlay hides the app from assistive tech", async () => {
@@ -101,6 +109,7 @@ test("the native splash stays up until onboarding is decided, then the overlay h
   // Held while the launch is unresolved, but never deadlocked by maintenance replacing the navigator.
   assert.match(layout, /if \(isReady && fontsSettled && \(!onboarding\.deciding \|\| maintenance\)\) \{\s*SplashScreen\.hide\(\);/);
   assert.match(layout, /const maintenance = useSyncExternalStore\(subscribeMaintenance, getMaintenanceSnapshot, getMaintenanceSnapshot\);/);
-  assert.match(chrome, /importantForAccessibility=\{onboarding\.visible \? "no-hide-descendants" : "auto"\}/);
-  assert.match(chrome, /accessibilityElementsHidden=\{onboarding\.visible\}/);
+  assert.match(chrome, /const covered = onboarding\.visible \|\| \(splash\.visible && !splash\.leaving\);/);
+  assert.match(chrome, /importantForAccessibility=\{covered \? "no-hide-descendants" : "auto"\}/);
+  assert.match(chrome, /accessibilityElementsHidden=\{covered\}/);
 });

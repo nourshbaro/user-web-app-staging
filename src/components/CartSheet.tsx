@@ -1,5 +1,5 @@
 import { BottomSheetModal } from "@/components/BottomSheetModal";
-import { CartLineItem } from "@/components/cart/CartLineItem";
+import { CartGroupCard, CartLineItem } from "@/components/cart/CartLineItem";
 import { CartNotice } from "@/components/cart/CartNotice";
 import { ReservationStatus } from "@/components/cart/ReservationStatus";
 import { AppText, SkeletonBlock, SkeletonGroup, StatePanel } from "@/components/foundation";
@@ -90,13 +90,15 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
             />
           ) : null}
 
-          {groupedItems.map((line) => {
+          <CartGroupCard>
+          {groupedItems.map((line, index) => {
             const zone = line.zone_name ?? i18n.t("cart.zoneFallback");
             return (
               <CartLineItem
                 key={line.key}
                 line={line}
                 showMatch
+                first={index === 0}
                 busy={actions.pendingLineKey === line.key}
                 disabled={blocked}
                 onChangeQuantity={(quantity) => void actions.setQuantity(line, quantity)}
@@ -104,6 +106,7 @@ export function CartSheet({ visible, onClose }: CartSheetProps) {
               />
             );
           })}
+          </CartGroupCard>
 
           <View
             style={[local.total, { borderTopColor: theme.colors.border }]}

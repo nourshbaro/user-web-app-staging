@@ -25,7 +25,10 @@ test("the hero renders backend match fields through the shared Phase 2 labels", 
   assert.match(hero, /<StatusBadge label=\{labels\.statusLabel\} tone=\{labels\.statusTone\}/);
   // No second status mapping or kickoff parser, and no fabricated match facts.
   assert.doesNotMatch(hero, /matchStatusPresentation|new Date|Date\.parse|formatTime|formatCalendarDate/);
-  assert.doesNotMatch(hero, /score|attendance|competition|favou?rite|soldOut|sold out/i);
+  assert.doesNotMatch(hero, /attendance|favou?rite|soldOut|sold out/i);
+  // Scores, competition and matchday come only through the single-match facts (no raw reads, no defaults).
+  assert.doesNotMatch(hero, /match\.(home_score|away_score|competition|matchday|clock|stats|events)/);
+  assert.doesNotMatch(hero, /\?\? 0|\|\| 0/);
   assert.doesNotMatch(hero, /matchesService|useCart|useState|useEffect|router\./);
 });
 
@@ -37,7 +40,8 @@ test("ticket option and seat components are presentation-only", () => {
 });
 
 test("GA quantity controls are named, expose the quantity, and use semantic disabled state", () => {
-  const stepper = section(options, "export function GaZoneStepper", "export function ReservedZoneStatus");
+  const stepper = options.slice(options.indexOf("export function GaZoneStepper"));
+  assert.ok(stepper.length < options.length, "GaZoneStepper exists");
   assert.match(stepper, /tickets\.stepper\.decrease/);
   assert.match(stepper, /tickets\.stepper\.increase/);
   assert.match(stepper, /accessibilityLabel=\{i18n\.plural\("tickets\.stepper\.value", quantity\)\}/);
@@ -47,10 +51,51 @@ test("GA quantity controls are named, expose the quantity, and use semantic disa
   assert.match(route, /<GaZoneStepper[\s\S]{0,240}disabled=\{isCommitting\}/);
 });
 
-test("zone cards expose selection to native and web; reserved cards are one button, GA cards never nest the stepper", () => {
-  const card = section(options, "export function ZoneOptionCard", "export function GaZoneStepper");
-  assert.equal((card.match(/aria-selected=\{selected\}/g) ?? []).length, 2);
-  assert.match(route, /pressTarget=\{zone\.has_seats \? "card" : "details"\}/);
+test("zone rows are single radios in a radiogroup and never nest the GA stepper", () => {
+  const row = section(options, "export function ZoneRow", "export function RadioMark");
+  assert.match(options, /accessibilityRole="radiogroup"/);
+  assert.equal((row.match(/<Pressable/g) ?? []).length, 1, "the whole row is one control");
+  assert.match(row, /accessibilityRole="radio"/);
+  assert.match(row, /aria-checked=\{selected\}/);
+  assert.doesNotMatch(row, /GaZoneStepper|onIncrement|onDecrement/);
+  // Every zone kind selects through the same handler; the list is real zones only.
+  assert.match(route, /zones\.map\(\(zone, index\) => \{[\s\S]*?<ZoneRow[\s\S]*?onPress=\{\(\) => selectZone\(zone\)\}/);
+  assert.match(route, /const selected = selectedZone\?\.id === zone\.id;/);
+});
+
+test("the zone kind decides the interaction: GA gets the local stepper, reserved opens the real seat picker", () => {
+  const gaBar = section(route, "const zoneBar = ", "return (");
+  // Reserved: "Choose seats" only opens the picker view; it never mutates the cart.
+  assert.match(gaBar, /selectedZone\.has_seats && !needsCartReconcile \?[\s\S]*?label: i18n\.t\("tickets\.chooseSeats"\),\s*onPress: \(\) => setSeatPickerOpen\(true\),/);
+  // GA: the stepper edits the draft for the selected zone, confirmed by the one primary action.
+  assert.match(gaBar, /selectedZone\.has_seats \? null : \([\s\S]*?<GaZoneStepper[\s\S]*?quantity=\{getDraftQuantity\(selectedZone\.id\)\}[\s\S]*?onIncrement=\{\(\) => incrementGaDraft\(selectedZone\)\}/);
+  assert.match(gaBar, /primaryAction=\{primaryAction\}/);
+  // No invented cap: the only quantity rule is the existing non-negative draft.
+  assert.doesNotMatch(route + options, /MAX_(TICKETS|QUANTITY)|maxQuantity|quantity >= \d/);
+  // The picker view shows the real seat map and confirms through the same action.
+  const picker = section(route, "if (showSeatPicker && selectedZone) {", "const zoneBar = ");
+  assert.match(picker, /<SeatMap\s+seats=\{visibleSeats\}/);
+  assert.match(picker, /selectedIds=\{seatDraft\.actionableIds\}/);
+  assert.match(picker, /primaryAction=\{primaryAction\}/);
+  assert.match(picker, /onBack=\{\(\) => setSeatPickerOpen\(false\)\}/);
+  assert.match(route, /BackHandler\.addEventListener\("hardwareBackPress", \(\) => \{\s*setSeatPickerOpen\(false\);\s*return true;/);
+});
+
+test("the stadium map is collapsed by default and Show/Hide is presentation-only", () => {
+  assert.match(route, /const \[stadiumExpanded, setStadiumExpanded\] = useState\(false\);/);
+  assert.match(route, /onToggle=\{\(\) => setStadiumExpanded\(\(value\) => !value\)\}/);
+  const toggle = section(route, "function MapToggle(", "const mapToggleStyles");
+  assert.match(toggle, /aria-expanded=\{expanded\}/);
+  assert.match(toggle, /stadium\.hide[\s\S]*stadium\.show/);
+  // Visibility never feeds a request: neither loader nor the map-size probe depends on it.
+  const loadMatch = section(route, "const loadMatch = useCallback(", "useEffect(() => {");
+  assert.doesNotMatch(loadMatch, /stadiumExpanded/);
+  const mapSize = section(route, "function useMapViewHeight(", "function NativeStadiumImage(");
+  assert.doesNotMatch(mapSize, /stadiumExpanded|expanded/);
+  assert.match(route, /const mapViewHeight = useMapViewHeight\(mapImageUrl, zones\);/);
+  assert.doesNotMatch(route, /matchesService\.\w+\([^)]*stadiumExpanded/);
+  // Real geometry stays physical inside the map card.
+  assert.match(route, /zones\.length && stadiumExpanded \? \(\s*<PhysicalLayout/);
 });
 
 test("the only cart mutations go through the verified confirmation, via CartContext", () => {
@@ -78,7 +123,12 @@ test("drafts clear, success shows and Cart opens only on a confirmed outcome", (
   for (const effect of ["setDraftQuantities(new Map())", "setSelectedSeats([])", "selection.done.title", 'router.navigate("/cart")']) {
     assert.ok(success.includes(effect), effect);
   }
-  const afterSuccess = commit.slice(commit.indexOf("return;", commit.indexOf("if (effects.success) {")));
+  // A match that left sale discards its stale draft (nothing was sent); that is the only other clearing path.
+  const discard = section(commit, "if (effects.discardDraft) {", "return;");
+  assert.match(discard, /setDraftQuantities\(new Map\(\)\)/);
+  assert.match(discard, /selection\.notOnSale\.title/);
+  assert.doesNotMatch(discard, /router\.|selection\.done/);
+  const afterSuccess = commit.slice(commit.indexOf("return;", commit.indexOf("if (effects.discardDraft) {")));
   assert.doesNotMatch(afterSuccess, /setDraftQuantities|setSelectedSeats\(|selection\.done|router\./);
   assert.match(afterSuccess, /if \(effects\.needsReconcile\) cart\.requireCartReconciliation\("unconfirmed-mutation"\)/);
   assert.match(afterSuccess, /selection\.unconfirmed\.message/);

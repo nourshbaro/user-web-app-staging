@@ -1,7 +1,7 @@
-import { AppText, DirectionalChevron } from "@/components/foundation";
+import { AppText } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
 import { useI18n } from "@/i18n/I18nProvider";
-import { radius, size, spacing } from "@/lib/designTokens";
+import { size, spacing } from "@/lib/designTokens";
 import { SymbolView } from "expo-symbols";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
@@ -13,120 +13,77 @@ import { Pressable, View } from "react-native";
  * owns everything they show.
  */
 
-type ZoneOptionCardProps = {
+/** v3 grouped zone list: one card, hairline rows, radio semantics. */
+export function ZoneList({ label, children }: { label: string; children: ReactNode }) {
+  const theme = useTheme();
+  return (
+    <View
+      accessibilityRole="radiogroup"
+      accessibilityLabel={label}
+      style={[local.list, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}
+    >
+      {children}
+    </View>
+  );
+}
+
+type ZoneRowProps = {
   name: string;
-  kindLabel: string;
+  /** "Reserved seating" / "General admission", plus any in-cart or draft note. */
+  detail: string;
   priceLabel: string;
-  unitLabel: string;
-  capacityLabel?: string | null;
-  /** Map legend colour for this zone (links the card to its polygon). Decorative. */
-  legendColor: string;
   selected: boolean;
-  /** Reserved zones: the whole card is one button. GA zones: only the details area is. */
-  pressTarget: "card" | "details";
+  first: boolean;
   onPress: () => void;
   accessibilityLabel: string;
   accessibilityHint?: string;
-  /** Trailing control: GA stepper or reserved-seat status. */
-  end: ReactNode;
-  /** Optional line under the row (e.g. in-cart quantity, subtotal). */
-  footer?: ReactNode;
 };
 
-export function ZoneOptionCard({
-  name,
-  kindLabel,
-  priceLabel,
-  unitLabel,
-  capacityLabel,
-  legendColor,
-  selected,
-  pressTarget,
-  onPress,
-  accessibilityLabel,
-  accessibilityHint,
-  end,
-  footer,
-}: ZoneOptionCardProps) {
+/**
+ * One zone in the v3 "Choose where to sit" list. The whole row is a single
+ * radio; it holds no nested controls (the GA quantity stepper lives in the
+ * screen's action bar for the selected zone).
+ */
+export function ZoneRow({ name, detail, priceLabel, selected, first, onPress, accessibilityLabel, accessibilityHint }: ZoneRowProps) {
   const theme = useTheme();
   const brand = theme.colors.tones.brand;
-
-  const details = (
-    <View style={local.details}>
-      <AppText variant="cardTitle" numberOfLines={2}>{name}</AppText>
-      <View style={local.metaRow}>
-        <View style={[local.kindPill, { backgroundColor: theme.colors.surfaceSecondary }]}>
-          <SymbolView
-            name={
-              (pressTarget === "card"
-                ? { ios: "chair", android: "event_seat", web: "event_seat" }
-                : { ios: "person.2", android: "groups", web: "groups" }) as never
-            }
-            size={size.iconSm - 2}
-            tintColor={theme.colors.textMuted}
-            fallback={<View />}
-          />
-          <AppText variant="caption" tone="muted" numberOfLines={1}>{kindLabel}</AppText>
-        </View>
-        {capacityLabel ? <AppText variant="caption" tone="muted" numberOfLines={1}>{capacityLabel}</AppText> : null}
-      </View>
-      <View style={local.priceRow}>
-        <AppText variant="numeric">{priceLabel}</AppText>
-        <AppText variant="caption" tone="muted">{unitLabel}</AppText>
-      </View>
-    </View>
-  );
-
-  const cardStyle = [
-    local.card,
-    {
-      backgroundColor: selected ? theme.colors.selectedSurface : theme.colors.surface,
-      borderColor: selected ? brand.fg : theme.colors.border,
-      borderWidth: selected ? 2 : 1,
-    },
-  ];
-
-  const stripe = <View style={[local.stripe, { backgroundColor: legendColor }]} />;
-
-  if (pressTarget === "card") {
-    return (
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel}
-        accessibilityHint={accessibilityHint}
-        accessibilityState={{ selected }}
-        aria-selected={selected}
-        style={({ pressed }) => [cardStyle, pressed && local.pressed]}
-      >
-        <View style={local.row}>
-          {stripe}
-          {details}
-          <View style={local.end}>{end}</View>
-        </View>
-        {footer}
-      </Pressable>
-    );
-  }
-
   return (
-    <View style={cardStyle}>
-      <View style={local.row}>
-        {stripe}
-        <Pressable
-          onPress={onPress}
-          accessibilityRole="button"
-          accessibilityLabel={accessibilityLabel}
-          accessibilityHint={accessibilityHint}
-          accessibilityState={{ selected }}
-          aria-selected={selected}
-          style={({ pressed }) => [local.detailsPress, pressed && local.pressed]}
-        >
-          {details}
-        </Pressable>
-        <View style={local.end}>{end}</View>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ checked: selected }}
+      aria-checked={selected}
+      style={({ pressed }) => [
+        local.row,
+        !first && { borderTopWidth: 1, borderTopColor: theme.colors.hairline },
+        { backgroundColor: selected ? brand.bg : "transparent" },
+        pressed && !selected && { backgroundColor: theme.colors.surfaceSecondary },
+      ]}
+    >
+      <RadioMark selected={selected} />
+      <View style={local.copy}>
+        <AppText variant="bodyStrong" numberOfLines={2}>{name}</AppText>
+        <AppText variant="meta" tone="muted" numberOfLines={2} style={local.detail}>{detail}</AppText>
       </View>
-      {footer}
+      <AppText variant="bodyStrong" style={local.price}>{priceLabel}</AppText>
+    </Pressable>
+  );
+}
+
+/** 22pt radio ring with a 10pt dot: shape, not colour alone, marks selection. */
+export function RadioMark({ selected }: { selected: boolean }) {
+  const theme = useTheme();
+  const ring = selected ? theme.colors.actionPrimary : theme.colors.textMuted;
+  return (
+    <View
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+      style={[local.radio, { borderColor: ring }]}
+    >
+      {selected ? <View style={[local.radioDot, { backgroundColor: theme.colors.actionPrimary }]} /> : null}
     </View>
   );
 }
@@ -155,8 +112,17 @@ export function GaZoneStepper({
   const i18n = useI18n();
   const minusDisabled = disabled || quantity <= 0;
 
+  const glyph = (name: { ios: string; android: string; web: string }, inactive: boolean) => (
+    <SymbolView
+      name={name as never}
+      size={size.iconMd}
+      tintColor={inactive ? theme.colors.disabledText : theme.colors.textStrong}
+      fallback={<AppText variant="action" style={{ color: inactive ? theme.colors.disabledText : theme.colors.textStrong }}>{name.web === "add" ? "+" : "−"}</AppText>}
+    />
+  );
+
   return (
-    <View style={local.stepper}>
+    <View style={[local.stepper, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
       <Pressable
         onPress={onDecrement}
         disabled={minusDisabled}
@@ -164,24 +130,15 @@ export function GaZoneStepper({
         accessibilityLabel={i18n.t("tickets.stepper.decrease", { zone: zoneName })}
         accessibilityState={{ disabled: minusDisabled }}
         aria-disabled={minusDisabled}
-        style={({ pressed }) => [
-          local.stepperButton,
-          { borderColor: theme.colors.border, backgroundColor: theme.colors.surface },
-          minusDisabled && { backgroundColor: theme.colors.disabledSurface, borderColor: theme.colors.disabledSurface },
-          pressed && !minusDisabled && local.pressed,
-        ]}
+        style={({ pressed }) => [local.stepperButton, pressed && !minusDisabled && local.pressed]}
       >
-        <SymbolView
-          name={{ ios: "minus", android: "remove", web: "remove" }}
-          size={size.iconMd}
-          tintColor={minusDisabled ? theme.colors.disabledText : theme.colors.textStrong}
-          fallback={<View />}
-        />
+        {glyph({ ios: "minus", android: "remove", web: "remove" }, minusDisabled)}
       </Pressable>
       <View style={local.stepperValue}>
         <AppText
-          variant="numeric"
+          variant="bodyStrong"
           align="center"
+          style={local.quantity}
           accessibilityLabel={i18n.plural("tickets.stepper.value", quantity)}
           accessibilityLiveRegion="polite"
         >
@@ -195,95 +152,47 @@ export function GaZoneStepper({
         accessibilityLabel={i18n.t("tickets.stepper.increase", { zone: zoneName })}
         accessibilityState={{ disabled }}
         aria-disabled={disabled}
-        style={({ pressed }) => [
-          local.stepperButton,
-          { borderColor: theme.colors.actionPrimary, backgroundColor: theme.colors.actionPrimary },
-          disabled && { backgroundColor: theme.colors.disabledSurface, borderColor: theme.colors.disabledSurface },
-          pressed && !disabled && { backgroundColor: theme.colors.actionPrimaryPressed },
-        ]}
+        style={({ pressed }) => [local.stepperButton, pressed && !disabled && local.pressed]}
       >
-        <SymbolView
-          name={{ ios: "plus", android: "add", web: "add" }}
-          size={size.iconMd}
-          tintColor={disabled ? theme.colors.disabledText : theme.colors.onActionPrimary}
-          fallback={<View />}
-        />
+        {glyph({ ios: "plus", android: "add", web: "add" }, disabled)}
       </Pressable>
     </View>
   );
 }
 
-/**
- * Status shown at the end of a reserved-seating zone card. Display only: the
- * card itself is the button that selects the zone.
- */
-export function ReservedZoneStatus({
-  selected,
-  pendingCount,
-  inCartCount,
-}: {
-  selected: boolean;
-  pendingCount: number;
-  inCartCount: number;
-}) {
-  const theme = useTheme();
-  const i18n = useI18n();
-
-  if (pendingCount > 0) {
-    return <StatusChip tone="brand" label={i18n.plural("tickets.selected", pendingCount)} />;
-  }
-  if (inCartCount > 0 && !selected) {
-    return <StatusChip tone="success" label={i18n.plural("tickets.inCart", inCartCount)} />;
-  }
-  return (
-    <View style={local.cta}>
-      <AppText variant="label" tone="brand" numberOfLines={1}>
-        {selected ? i18n.t("tickets.chooseSeats") : i18n.t("tickets.viewSeats")}
-      </AppText>
-      <DirectionalChevron kind="forward" size={14} color={theme.colors.tones.brand.fg} />
-    </View>
-  );
-}
-
-function StatusChip({ tone, label }: { tone: "brand" | "success"; label: string }) {
-  const theme = useTheme();
-  const colors = theme.colors.tones[tone];
-  return (
-    <View style={[local.chip, { backgroundColor: colors.bg, borderColor: colors.border }]}>
-      <AppText variant="caption" style={{ color: colors.fg, fontWeight: "700" }} numberOfLines={1}>{label}</AppText>
-    </View>
-  );
-}
-
 const local = {
-  card: { borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm, overflow: "hidden" as const },
-  row: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md },
-  stripe: { width: 4, alignSelf: "stretch" as const, borderRadius: radius.xs },
-  details: { flex: 1, minWidth: 0, gap: spacing.xs },
-  detailsPress: { flex: 1, minWidth: 0, minHeight: size.touchTargetMin, justifyContent: "center" as const },
-  metaRow: { flexDirection: "row" as const, flexWrap: "wrap" as const, alignItems: "center" as const, gap: spacing.sm },
-  kindPill: {
+  // v3 zone list: one card, radius 20.
+  list: { borderRadius: 20, overflow: "hidden" as const },
+  row: {
+    minHeight: 64,
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    gap: spacing.xs,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
-  priceRow: { flexDirection: "row" as const, flexWrap: "wrap" as const, alignItems: "baseline" as const, gap: spacing.xs },
-  // Never squeezed by a long zone name: the details column absorbs the width instead.
-  end: { flexShrink: 0, alignItems: "flex-end" as const },
-  pressed: { opacity: 0.85 },
-  stepper: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.xs },
-  stepperButton: {
-    width: size.touchTargetMin,
-    height: size.touchTargetMin,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
+  copy: { flex: 1, minWidth: 0, gap: 2 },
+  detail: { fontWeight: "400" as const },
+  // Never squeezed by a long zone name: the name column absorbs the width instead.
+  price: { flexShrink: 0, fontVariant: ["tabular-nums" as const] },
+  radio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
-  stepperValue: { minWidth: 32 },
-  cta: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.xs, minHeight: size.touchTargetMin },
-  chip: { borderRadius: radius.pill, borderWidth: 1, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs },
+  radioDot: { width: 10, height: 10, borderRadius: 5 },
+  pressed: { opacity: 0.6 },
+  // v3 stepper: radius 12, card surface with shadow; buttons grown to the 44pt target.
+  stepper: { flexDirection: "row" as const, alignItems: "center" as const, borderRadius: 12 },
+  stepperButton: {
+    width: size.touchTargetMin,
+    height: size.touchTargetMin,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
+  stepperValue: { minWidth: 28 },
+  quantity: { fontSize: 17, fontVariant: ["tabular-nums" as const] },
 };

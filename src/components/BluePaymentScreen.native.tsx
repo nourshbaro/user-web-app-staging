@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/AppHeader";
-import { AppText, StatePanel } from "@/components/foundation";
+import { PaymentOutcomePanel, UnknownOutcomeSteps } from "@/components/checkout/PaymentOutcome";
+import { AppText } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
@@ -265,8 +266,8 @@ export default function BluePaymentScreen() {
 
         {error ? (
           <View style={[local.overlay, { backgroundColor: theme.colors.bg }]}>
-            <StatePanel
-              variant={recoverToTickets ? "info" : "error"}
+            <PaymentOutcomePanel
+              variant={recoverToTickets ? "unknown" : "unavailable"}
               title={recoverToTickets ? i18n.t("payment.unknown.title") : i18n.t("payment.unavailable.title")}
               message={recoverToTickets ? error : `${error} ${i18n.t("payment.blue.reservationNote")}`}
               action={
@@ -297,7 +298,9 @@ export default function BluePaymentScreen() {
                     }
                   : undefined
               }
-            />
+            >
+              {recoverToTickets ? <UnknownOutcomeSteps /> : null}
+            </PaymentOutcomePanel>
           </View>
         ) : null}
       </View>

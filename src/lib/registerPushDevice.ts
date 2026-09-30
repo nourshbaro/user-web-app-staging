@@ -8,6 +8,7 @@ import {
 } from "@/lib/notifications";
 import { registerAnonymousDevice, registerAuthenticatedDevice } from "@/services/auth";
 import { captureAuthenticationSnapshot } from "@/services/api";
+import { shouldRequestPermissionOnTurnOn } from "@/lib/onboarding";
 
 // Sends whichever token is current under whatever session is current *right
 // now* — anonymous when logged out, authenticated when logged in. Re-sending
@@ -62,7 +63,9 @@ export async function registerPushDeviceIfPermitted() {
  * registers exactly as a previously granted launch would.
  */
 export async function optInToPushNotifications(): Promise<NotificationPermissionState> {
-  const permission = await requestNotificationPermission();
+  // Already granted: never ask the OS again; just keep the registration.
+  const current = await getNotificationPermissionStatus();
+  const permission = shouldRequestPermissionOnTurnOn(current) ? await requestNotificationPermission() : current;
   if (permission === "granted") await registerPushDevice();
   return permission;
 }

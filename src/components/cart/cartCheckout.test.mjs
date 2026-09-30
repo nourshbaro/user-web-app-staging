@@ -65,7 +65,10 @@ test("unknown outcomes block further cart actions until a confirmed refresh", ()
 });
 
 test("Cart shows the owner's total, blocks checkout when expired or unconfirmed, and never clears", () => {
-  assert.match(cartScreen, /totalValue=\{formatMoney\(cart\.total, cart\.currency\)\}/);
+  // The only total shown is the owner's authoritative cart.total.
+  assert.match(cartScreen, /const totalLabel = formatMoney\(cart\.total, cart\.currency\);/);
+  assert.match(cartScreen, /<AppText variant="displayNumeral" style=\{local\.totalValue\}>\{totalLabel\}<\/AppText>/);
+  assert.doesNotMatch(cartScreen, /reduce\(|\.subtotal \+|unit_price \*/, "no client-side total");
   assert.match(cartScreen, /const checkoutBlocked =\s*viewState !== "active" \|\| cart\.isLoading \|\| actions\.busy \|\| actions\.needsCartCheck;/);
   assert.match(cartScreen, /if \(checkoutBlocked\) return;\s*router\.replace\("\/checkout\/ticket-holders"\);/);
   assert.match(cartSheet, /if \(blocked\) return;\s*onClose\(\);\s*router\.navigate\("\/checkout\/ticket-holders"\);/);
@@ -286,5 +289,43 @@ test("AppHeader's optional backDisabled makes back inert and announced; other ca
 test("no fabricated payment, order or ticket data enters Cart or Checkout", () => {
   for (const source of [hook, cartScreen, cartSheet, lineItem, orderSummary, holdersBlock, holdersScreen, checkout, methods, card, blue]) {
     assert.doesNotMatch(source, /Math\.random|qrCells|mock|order_id: "|setTimeout\([^)]*\d{3,}/);
+  }
+});
+
+test("choosing a payment method never starts a payment; only the explicit action does", () => {
+  // The option only reports the choice back to Checkout.
+  assert.match(methods, /onPress=\{\(\) => onSelect\(method\.id\)\}/);
+  assert.doesNotMatch(methods, /router\.|checkoutService|submit|Handoff|acquirePaymentAttempt/);
+  assert.match(checkout, /onSelect=\{setPaymentMethod\}/);
+  // Both handoffs live only in the explicit action's handler.
+  const handle = section(checkout, "const handleContinue = () => {", "const payLabel");
+  assert.match(handle, /if \(paymentMethod === "cybersource"\) \{[\s\S]*?pathname: "\/checkout\/card\/payment"/);
+  assert.match(handle, /void submitBlue\(\);/);
+  assert.equal((checkout.match(/void submitBlue\(\)/g) ?? []).length, 1, "BLUE starts from one place");
+  assert.equal((checkout.match(/createCardPaymentHandoff\(/g) ?? []).length, 1, "Card starts from one place");
+  assert.equal((checkout.match(/onPress: handleContinue/g) ?? []).length, 1, "one explicit Pay action");
+  // Selecting Card may prepare the secure form, never submit.
+  const prepare = section(checkout, "if (!shouldInitializeCaptureContext(", "return () => {");
+  assert.doesNotMatch(prepare, /submit|createCardPaymentHandoff|router\./);
+});
+
+test("no card fields are drawn by the app: card entry stays in CyberSource's form", () => {
+  for (const source of [checkout, methods]) {
+    assert.doesNotMatch(source, /TextInput|cardNumber|card number|cvv|cvc|expiry date|MM\s*\/\s*YY/i);
+  }
+});
+
+test("the holder form has exactly one field per physical ticket slot", () => {
+  assert.match(holdersScreen, /group\.zones\.flatMap\(\(zone\) => zone\.entries\)\.map\(\(\{ slot, index \}, row\) => \{/);
+  assert.equal((holdersScreen.match(/<HolderField\b/g) ?? []).length, 1);
+  assert.match(holdersScreen, /const completeness = holderCompleteness\(ticketSlots, holderNames\);/);
+  // Continue always validates and moves focus to the first unnamed ticket.
+  assert.match(holdersScreen, /onPress: finish,/);
+});
+
+test("expiry and result copy never claim that no payment or order exists", async () => {
+  const { en } = await import("../../i18n/messages/en.ts");
+  for (const key of ["cart.expiredNotice.title", "cart.expiredNotice.message", "cart.expired.title", "cart.expired.message", "result.failed.message"]) {
+    assert.doesNotMatch(en[key], /no payment was taken|no order was created|not charged/i, key);
   }
 });

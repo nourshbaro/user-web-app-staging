@@ -27,6 +27,77 @@ export type ApiMatch = {
   /** Backend scores: numbers once a match has a result (e.g. `completed`), otherwise null. */
   home_score?: number | null;
   away_score?: number | null;
+  /**
+   * Scheduled-list live fields (`GET /matches/scheduled?status=live`). The
+   * list is FLAT; the single-match response nests them under `clock`
+   * (`ApiMatchDetail`). Never assume one shape from the other.
+   */
+  clock_minute?: number | null;
+  clock_running?: boolean | null;
+  clock_updated_at?: string | null;
+};
+
+export type ApiCompetition = {
+  id: number;
+  name: string;
+  short_name?: string | null;
+  slug?: string | null;
+  logo?: string | null;
+};
+
+export type ApiSeason = {
+  id: number;
+  label: string;
+  is_current?: boolean;
+};
+
+/** Live clock on the single-match response. `minute` is null when the backend has none. */
+export type ApiMatchClock = {
+  minute: number | null;
+  running: boolean;
+};
+
+/** Per-team statistic pair; either side may be null (not supplied — never zero). */
+export type ApiStatPair = { home: number | null; away: number | null } | null;
+
+export type ApiMatchStats = {
+  possession?: ApiStatPair;
+  shots?: ApiStatPair;
+  shots_on_target?: ApiStatPair;
+  corners?: ApiStatPair;
+  fouls?: ApiStatPair;
+};
+
+export type ApiEventPlayer = { id: number; name: string; shirt_number?: number | null };
+
+/**
+ * One single-match event (confirmed shape, 2026-09-30, match 16). Only
+ * `type: "goal"` has been seen; other types must degrade without meaning.
+ */
+export type ApiMatchEvent = {
+  id: number;
+  type: string;
+  team?: { id: number; name: string; short_name?: string | null; logo?: string | null } | null;
+  player?: ApiEventPlayer | null;
+  player_in?: ApiEventPlayer | null;
+  player_out?: ApiEventPlayer | null;
+  minute?: number | null;
+  extra_minute?: number | null;
+};
+
+/**
+ * `GET /matches/single/{id}` (confirmed 2026-09-30). A superset of the list
+ * match: competition, season, matchday, nested live clock, events and stats.
+ */
+export type ApiMatchDetail = ApiMatch & {
+  competition?: ApiCompetition | null;
+  season?: ApiSeason | null;
+  matchday?: number | null;
+  round_name?: string | null;
+  matchday_label?: string | null;
+  clock?: ApiMatchClock | null;
+  events?: ApiMatchEvent[] | null;
+  stats?: ApiMatchStats | null;
 };
 
 export type PortalMatchTeam = {

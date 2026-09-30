@@ -95,9 +95,10 @@ test("3. a genuinely resolved Home launch shows onboarding to an eligible signed
   assert.equal(beforeReady, null);
   assert.deepEqual(decision, { show: true, offerNotifications: true });
   assert.equal(launch.listenerCount(), 0, "the ready listener is removed");
-  // Pre-prompt only while the OS can still ask.
+  // The pre-prompt is part of first run whenever push exists, even if the OS
+  // already decided (it was silently skipped before); "Turn on" then does not re-ask.
   const granted = await run(coldStart({ resolved: "index" }), { readPermission: async () => "granted" });
-  assert.deepEqual(granted.decision, { show: true, offerNotifications: false });
+  assert.deepEqual(granted.decision, { show: true, offerNotifications: true });
   const expoGo = await run(coldStart({ resolved: "index" }), { pushRuntimeSupported: false });
   assert.deepEqual(expoGo.decision, { show: true, offerNotifications: false });
 });

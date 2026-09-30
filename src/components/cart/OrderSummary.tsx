@@ -19,12 +19,12 @@ export function OrderSummary({ lines, totalLabel }: { lines: CartDisplayItem[]; 
   const groups = groupLinesByMatch(lines);
 
   return (
-    <View style={[local.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+    <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
       <SectionHeader title={i18n.t("checkout.summary.title")} />
       {groups.map((group) => {
         const subtotal = group.lines.length > 1 ? groupSubtotal(group.lines) : null;
         return (
-          <View key={group.matchId} style={[local.group, { borderTopColor: theme.colors.divider }]}>
+          <View key={group.matchId} style={[local.group, { borderTopColor: theme.colors.hairline }]}>
             <AppText variant="bodyStrong" numberOfLines={2}>
               {group.matchTitle ?? i18n.t("cart.matchFallback", { id: group.matchId })}
             </AppText>
@@ -56,16 +56,16 @@ export function OrderSummary({ lines, totalLabel }: { lines: CartDisplayItem[]; 
           </View>
         );
       })}
-      <View style={[local.totalRow, { borderTopColor: theme.colors.border }]} accessible accessibilityLabel={`${i18n.t("checkout.total")}, ${totalLabel}`}>
-        <AppText variant="sectionTitle">{i18n.t("checkout.total")}</AppText>
-        <AppText variant="numeric">{totalLabel}</AppText>
+      <View style={[local.totalRow, { borderTopColor: theme.colors.hairline }]} accessible accessibilityLabel={`${i18n.t("checkout.total")}, ${totalLabel}`}>
+        <AppText variant="bodyStrong" style={local.totalTitle}>{i18n.t("checkout.total")}</AppText>
+        <AppText variant="displayNumeral" style={local.totalValue}>{totalLabel}</AppText>
       </View>
     </View>
   );
 }
 
 const local = {
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.lg, gap: spacing.md },
+  card: { borderRadius: radius.xl, padding: spacing.lg, gap: spacing.md },
   group: { gap: spacing.sm, borderTopWidth: 1, paddingTop: spacing.md },
   row: { flexDirection: "row" as const, alignItems: "flex-start" as const, gap: spacing.md },
   rowCopy: { flex: 1, minWidth: 0 },
@@ -78,4 +78,7 @@ const local = {
     borderTopWidth: 1,
     paddingTop: spacing.md,
   },
+  totalTitle: { fontSize: 16, lineHeight: 21 },
+  // v3 checkout total: 25pt display numerals.
+  totalValue: { fontSize: 25, lineHeight: 30, flexShrink: 1 },
 };

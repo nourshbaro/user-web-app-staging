@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/AppHeader";
 import { CybersourceUnifiedCheckout } from "@/components/CybersourceUnifiedCheckout";
+import { PaymentOutcomePanel, UnknownOutcomeSteps } from "@/components/checkout/PaymentOutcome";
 import { AppText, StatePanel } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
 import { useCart } from "@/context/CartContext";
@@ -303,8 +304,8 @@ export function CardPaymentScreen() {
       <View style={[local.paymentArea, { paddingBottom: insets.bottom }]}>
         {failure || sessionMismatch ? (
           <View style={local.messageArea}>
-            <StatePanel
-              variant={failure?.kind === "unknown" || failure?.kind === "locked" ? "info" : "error"}
+            <PaymentOutcomePanel
+              variant={failure?.kind === "unknown" || failure?.kind === "locked" ? "unknown" : "failed"}
               title={
                 failure?.kind === "unknown" || failure?.kind === "locked"
                   ? i18n.t("payment.unknown.title")
@@ -325,7 +326,9 @@ export function CardPaymentScreen() {
                   ? { label: i18n.t("payment.back"), onPress: returnToCheckout }
                   : undefined
               }
-            />
+            >
+              {failure?.kind === "unknown" || failure?.kind === "locked" ? <UnknownOutcomeSteps /> : null}
+            </PaymentOutcomePanel>
           </View>
         ) : captureContext ? (
           <View style={local.paymentArea}>

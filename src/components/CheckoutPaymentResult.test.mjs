@@ -16,45 +16,51 @@ async function importTypeScript(url) {
 }
 
 const componentSource = await readFile(new URL("./CheckoutPaymentResult.tsx", import.meta.url), "utf8");
+const outcomeSource = await readFile(new URL("./checkout/PaymentOutcome.tsx", import.meta.url), "utf8");
+const catalogSource = await readFile(new URL("../i18n/messages/en.ts", import.meta.url), "utf8");
 const successRouteSource = await readFile(new URL("../app/checkout/success.tsx", import.meta.url), "utf8");
 const failedRouteSource = await readFile(new URL("../app/checkout/failed.tsx", import.meta.url), "utf8");
 const {
   getCheckoutResultMetadata,
   getCheckoutResultPresentation,
+  getCheckoutResultProviderKey,
 } = await importTypeScript(new URL("../lib/checkoutResultPresentation.ts", import.meta.url));
 const { parseCheckoutResultParams } = await importTypeScript(
   new URL("../lib/checkoutResultParams.ts", import.meta.url),
 );
+const { en } = await importTypeScript(new URL("../i18n/messages/en.ts", import.meta.url));
 
-test("success headings are provider-aware with a safe unknown fallback", () => {
-  assert.equal(getCheckoutResultPresentation("success", "blue").title, "Blue Wallet payment successful");
-  assert.equal(getCheckoutResultPresentation("success", "cybersource").title, "Card payment successful");
-  assert.equal(getCheckoutResultPresentation("success", "unknown").title, "Payment successful");
+test("success and failure use the v3 headings from the catalog", () => {
+  assert.equal(en[getCheckoutResultPresentation("success").titleKey], "Payment confirmed");
+  assert.equal(en[getCheckoutResultPresentation("failed").titleKey], "Payment didn't go through");
+  assert.ok(catalogSource.includes('"result.success.title"'));
 });
 
-test("failure headings are provider-aware with a safe unknown fallback", () => {
-  assert.equal(getCheckoutResultPresentation("failed", "blue").title, "Blue Wallet payment failed");
-  assert.equal(getCheckoutResultPresentation("failed", "cybersource").title, "Card payment failed");
-  assert.equal(getCheckoutResultPresentation("failed", "unknown").title, "Payment failed");
+test("result copy never invents success details or claims no order exists", () => {
+  const success = en[getCheckoutResultPresentation("success").messageKey];
+  const failed = en[getCheckoutResultPresentation("failed").messageKey];
+  // Success does not promise email delivery or ticket issue the backend did not report.
+  assert.doesNotMatch(success, /sent to your email|have been issued/i);
+  // A provider failure never asserts that no order or no payment exists.
+  assert.doesNotMatch(failed, /no order was created|no payment was taken|not charged/i);
+  assert.doesNotMatch(en["payment.unknown.title"], /fail|declin/i, "unknown is never a failure");
 });
 
-test("announcement text is the safe provider-aware heading only", () => {
-  const result = getCheckoutResultPresentation("failed", "blue");
-  assert.equal(result.title, "Blue Wallet payment failed");
-  assert.doesNotMatch(result.title, /order|reference|declined/i);
+test("the provider is shown as Paid with only when it is known", () => {
+  assert.equal(en[getCheckoutResultProviderKey("blue")], "BLUE Wallet");
+  assert.equal(en[getCheckoutResultProviderKey("cybersource")], "Card");
+  assert.equal(getCheckoutResultProviderKey("unknown"), null);
+  assert.match(componentSource, /succeeded && providerKey \?/);
 });
 
-test("success and failure actions preserve labels and destinations", () => {
-  assert.deepEqual(
-    getCheckoutResultPresentation("success", "blue").secondaryAction,
-    { title: "View tickets", href: "/tickets" },
-  );
-  assert.deepEqual(
-    getCheckoutResultPresentation("failed", "cybersource").secondaryAction,
-    { title: "Browse matches", href: "/matches" },
-  );
-  assert.match(componentSource, /title="Return home"/);
+test("success and failure actions keep their destinations", () => {
+  assert.deepEqual(getCheckoutResultPresentation("success").primaryAction, { labelKey: "result.success.tickets", href: "/tickets" });
+  assert.deepEqual(getCheckoutResultPresentation("failed").primaryAction, { labelKey: "result.failed.browse", href: "/matches" });
+  for (const outcome of ["success", "failed"]) {
+    assert.deepEqual(getCheckoutResultPresentation(outcome).secondaryAction, { labelKey: "result.home", href: "/" });
+  }
   assert.match(componentSource, /router\.replace\("\/"\)/);
+  assert.match(componentSource, /router\.replace\(presentation\.primaryAction\.href\)/);
 });
 
 test("order number takes precedence over order ID", () => {
@@ -63,12 +69,12 @@ test("order number takes precedence over order ID", () => {
     order_number: "ORDER-NUMBER",
     order_id: "ORDER-ID",
   });
-  assert.deepEqual(metadata, [{ label: "Order", value: "ORDER-NUMBER" }]);
+  assert.deepEqual(metadata, [{ labelKey: "result.detail.order", value: "ORDER-NUMBER", mono: true }]);
 });
 
 test("order ID is displayed when order number is absent", () => {
   const metadata = getCheckoutResultMetadata({ provider: "blue", order_id: "ORDER-ID" });
-  assert.deepEqual(metadata, [{ label: "Order", value: "ORDER-ID" }]);
+  assert.deepEqual(metadata, [{ labelKey: "result.detail.order", value: "ORDER-ID", mono: true }]);
 });
 
 test("reference, payment reference, and status parsing remain unchanged", () => {
@@ -78,8 +84,8 @@ test("reference, payment reference, and status parsing remain unchanged", () => 
     status: "paid",
   });
   assert.deepEqual(getCheckoutResultMetadata(parsed), [
-    { label: "Reference", value: "PAYMENT-REFERENCE" },
-    { label: "Status", value: "paid" },
+    { labelKey: "result.detail.reference", value: "PAYMENT-REFERENCE", mono: true },
+    { labelKey: "result.detail.status", value: "paid", mono: false },
   ]);
 });
 
@@ -105,25 +111,16 @@ test("production result component centers available space while retaining scroll
 });
 
 test("result icon is decorative while the heading remains accessible", () => {
-  assert.match(componentSource, /accessible=\{false\}/);
-  assert.match(componentSource, /accessibilityElementsHidden/);
-  assert.match(componentSource, /importantForAccessibility="no-hide-descendants"/);
-  assert.match(componentSource, /accessibilityRole="header"/);
+  const icon = outcomeSource.slice(outcomeSource.indexOf("export function PaymentOutcomeIcon"), outcomeSource.indexOf("export function PaymentOutcomePanel"));
+  assert.match(icon, /accessible=\{false\}/);
+  assert.match(icon, /accessibilityElementsHidden/);
+  assert.match(icon, /importantForAccessibility="no-hide-descendants"/);
+  assert.match(outcomeSource, /accessibilityRole="header"/);
+  // The pop-in honours reduced motion.
+  assert.match(icon, /if \(reducedMotion\) \{\s*scale\.setValue\(1\);/);
 });
 
 test("result announcement is guarded against unrelated rerenders", () => {
-  assert.match(componentSource, /AccessibilityInfo\.announceForAccessibility\(presentation\.title\)/);
+  assert.match(componentSource, /AccessibilityInfo\.announceForAccessibility\(title\)/);
   assert.match(componentSource, /announcedResultRef\.current === announcementKey/);
-});
-
-test("CyberSource uses the same presentation and metadata configuration", () => {
-  const presentation = getCheckoutResultPresentation("success", "cybersource");
-  const metadata = getCheckoutResultMetadata({
-    provider: "cybersource",
-    order_number: "ORDER",
-    reference: "REFERENCE",
-    status: "paid",
-  });
-  assert.equal(presentation.title, "Card payment successful");
-  assert.equal(metadata.length, 3);
 });

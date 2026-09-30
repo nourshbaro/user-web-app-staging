@@ -157,7 +157,7 @@ export async function decideLaunchOnboarding(deps: LaunchCheckDependencies): Pro
   }
   if (launchTarget) return { show: false, reason: "direct-entry" };
 
-  let permission: "granted" | "denied" | "undetermined" = "denied";
+  let permission: "granted" | "denied" | "undetermined" | null = null;
   try {
     permission = await deps.readPermission();
   } catch {
@@ -168,7 +168,7 @@ export async function decideLaunchOnboarding(deps: LaunchCheckDependencies): Pro
   if (!isHomeRouteName(deps.navigation.getCurrentRoute()?.name)) {
     return { show: false, reason: "direct-entry" };
   }
-  return { show: true, offerNotifications: shouldOfferNotificationStep(permission, deps.pushRuntimeSupported) };
+  return { show: true, offerNotifications: permission !== null && shouldOfferNotificationStep(permission, deps.pushRuntimeSupported) };
 }
 
 /**
@@ -180,15 +180,37 @@ export function shouldYieldToNavigation(pathname: string) {
   return pathname !== "/";
 }
 
-export type OnboardingStep = "splash" | "intro" | "notifications";
+/**
+ * First-run steps (v3). The branded splash is NOT a step: it is the launch
+ * splash shown on every launch (`src/lib/launchSplash.ts`), never persisted.
+ */
+export type OnboardingStep = "intro" | "notifications";
 
 export const INTRO_PAGE_COUNT = 3;
 
 /**
- * The notification pre-prompt is offered only when the OS can still ask:
- * permission never decided and a push runtime present. Granted users keep
- * their existing registration; denied users cannot be re-prompted in-app.
+ * The v3 notification pre-prompt is part of the first-run sequence whenever
+ * the build has a push runtime. It used to require an "undetermined"
+ * permission, which silently skipped it on any device whose OS had already
+ * decided (Android 12 and below grant at install; earlier builds prompted at
+ * startup). The permission state now only decides what "Turn on" does
+ * (`shouldRequestPermissionOnTurnOn`), never whether the step appears.
  */
-export function shouldOfferNotificationStep(permission: "granted" | "denied" | "undetermined", pushRuntimeSupported: boolean) {
-  return pushRuntimeSupported && permission === "undetermined";
+export function shouldOfferNotificationStep(_permission: "granted" | "denied" | "undetermined", pushRuntimeSupported: boolean) {
+  return pushRuntimeSupported;
+}
+
+/** "Turn on notifications" asks the OS only when permission is not already granted. */
+export function shouldRequestPermissionOnTurnOn(permission: "granted" | "denied" | "undetermined") {
+  return permission !== "granted";
+}
+
+/**
+ * First-run order: intro → notification pre-prompt (when offered) → done
+ * (Home). There is no authentication step: sign-in stays in the normal
+ * app / Profile journey.
+ */
+export function nextOnboardingStep(step: OnboardingStep, offerNotifications: boolean): OnboardingStep | "done" {
+  if (step === "intro") return offerNotifications ? "notifications" : "done";
+  return "done";
 }

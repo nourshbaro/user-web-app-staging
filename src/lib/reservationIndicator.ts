@@ -8,19 +8,29 @@
  */
 
 /**
- * Routes that already present the reservation countdown themselves (so a
- * second timer would repeat it), or that must keep the provider/transaction
- * surface free: the cart, ticket holders, checkout, payment and result
- * screens, and Match Details (its header shows the owner's countdown).
+ * Routes that present the reservation countdown themselves (so a second timer
+ * would repeat it), or that must keep the provider/transaction surface free:
+ * the Cart (its v3 countdown card), the Card and BLUE payment screens, and the
+ * payment result screens. Match Details, ticket holders and Checkout show this
+ * indicator as their one countdown (v3).
  */
 const OWN_COUNTDOWN_OR_TRANSACTION_ROUTES = [
   /^\/cart$/,
-  /^\/checkout(\/.*)?$/,
-  /^\/match\/[^/]+$/,
+  /^\/checkout\/(card|blue)(\/.*)?$/,
+  /^\/checkout\/(success|failed)$/,
 ];
 
 export function reservationIndicatorAllowedOn(pathname: string) {
   return !OWN_COUNTDOWN_OR_TRANSACTION_ROUTES.some((route) => route.test(pathname));
+}
+
+/**
+ * Inside the checkout flow (ticket holders, Checkout) the indicator is
+ * read-only: it never offers a jump to the Cart while a submission could be
+ * in progress.
+ */
+export function reservationIndicatorInteractive(pathname: string) {
+  return !/^\/checkout(\/.*)?$/.test(pathname);
 }
 
 export type ReservationIndicatorInput = {

@@ -324,3 +324,39 @@ export function paymentFailureKind(facts: { status: number | null; transport: "n
   if (facts.status !== null && facts.status >= 400 && facts.status < 500) return "notCompleted";
   return "unknown";
 }
+
+/* ------------------------------------------------------------------------ *
+ * Checkout Back (header and Android hardware).
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Leaving Checkout is unsafe while a submission is in flight or a payment
+ * handoff (BLUE page launch / web redirect) has started: the attempt's result
+ * could otherwise land on a screen that no longer owns it. Reads the
+ * existing synchronous guards only; no new lock.
+ */
+export function checkoutBackBlocked({ submitInFlight, handoffStarted }: { submitInFlight: boolean; handoffStarted: boolean }) {
+  return submitInFlight || handoffStarted;
+}
+
+/**
+ * One Back policy for both entry points. The header ignores a blocked press;
+ * the hardware handler always consumes the event (Checkout never falls back
+ * to the default pop) and navigates only when leaving is allowed.
+ */
+export function checkoutBackHandlers(isBlocked: () => boolean, leave: () => void) {
+  const attempt = () => {
+    if (isBlocked()) return false;
+    leave();
+    return true;
+  };
+  return {
+    header: () => {
+      attempt();
+    },
+    hardware: () => {
+      attempt();
+      return true;
+    },
+  };
+}

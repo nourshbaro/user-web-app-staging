@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { reservationIndicatorAllowedOn, shouldShowReservationIndicator } from "./reservationIndicator.ts";
+import { reservationIndicatorAllowedOn, reservationIndicatorInteractive, shouldShowReservationIndicator } from "./reservationIndicator.ts";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const strip = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
@@ -18,21 +18,49 @@ test("shown only while the cart owner reports an active reservation", () => {
 });
 
 test("appears on normal screens and stays off screens that own a countdown or a transaction", () => {
-  for (const pathname of ["/", "/matches", "/tickets", "/competitions", "/profile", "/settings", "/about", "/edit-profile", "/auth"]) {
+  // v3: Match Details, ticket holders and Checkout use this indicator as their one countdown.
+  for (const pathname of ["/", "/matches", "/tickets", "/competitions", "/profile", "/settings", "/about", "/edit-profile", "/auth", "/match/42", "/checkout/ticket-holders", "/checkout"]) {
     assert.equal(reservationIndicatorAllowedOn(pathname), true, pathname);
   }
+  // Cart has its own countdown card; payment and result screens stay free of it.
   for (const pathname of [
     "/cart",
-    "/checkout",
-    "/checkout/ticket-holders",
     "/checkout/card/payment",
     "/checkout/blue/payment",
     "/checkout/success",
     "/checkout/failed",
     "/checkout/blue/success",
-    "/match/42",
+    "/checkout/blue/failed",
   ]) {
     assert.equal(reservationIndicatorAllowedOn(pathname), false, pathname);
+  }
+});
+
+test("inside the checkout flow the indicator is read-only (no jump to Cart mid-submission)", async () => {
+  assert.equal(reservationIndicatorInteractive("/match/42"), true);
+  assert.equal(reservationIndicatorInteractive("/"), true);
+  assert.equal(reservationIndicatorInteractive("/checkout"), false);
+  assert.equal(reservationIndicatorInteractive("/checkout/ticket-holders"), false);
+  const chrome = strip(await read("../components/AppChrome.tsx"));
+  assert.match(chrome, /onPress=\{reservationIndicatorInteractive\(pathname\) \? openCart : undefined\}/);
+  const bar = strip(await read("../components/cart/ReservationHoldBar.tsx"));
+  assert.match(bar, /\{onPress \? \(\s*<Pressable/);
+  assert.match(bar, /accessibilityRole="timer"/);
+});
+
+test("one countdown surface per screen, all derived from CartContext.secondsLeft", async () => {
+  const match = strip(await read("../app/match/[id].tsx"));
+  const holders = strip(await read("../app/checkout/ticket-holders.tsx"));
+  const checkout = strip(await read("../app/checkout.tsx"));
+  const cart = strip(await read("../app/cart.tsx"));
+  // Screens that rely on the global indicator show no second timer of their own.
+  for (const [name, source] of [["match", match], ["holders", holders], ["checkout", checkout]]) {
+    assert.doesNotMatch(source, /showTimer|CartTimerPill|<ReservationStatus|<CartTimer/, name);
+  }
+  // Cart shows exactly one countdown, from the owner's value.
+  assert.equal(cart.match(/<ReservationStatus secondsLeft=\{cart\.secondsLeft\}/g)?.length, 1);
+  for (const source of [match, holders, checkout, cart]) {
+    assert.doesNotMatch(source, /expires_?at|expiresAt|setInterval/);
   }
 });
 
