@@ -32,12 +32,13 @@
 | ----- | ------ |
 | `npx tsc --noEmit` | PASS |
 | `npx expo lint` | 0 errors, 5 existing unused-variable warnings |
-| Tests (`AGENTS.md` §13 command, incl. untracked) | 70 files, **713 / 713 pass** |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | **750/750 tests passing (74 files)** |
 | `git diff --check` | clean |
 | Web export (server output, incl. `/api`) | PASS |
 | Android + iOS Metro export | PASS (7 font files bundled) |
 | Web runtime (dev server, headless Chrome, staging data) | PASS: Home and Matches at 390 px and 820 px, light and dark, reduced motion; tab order and `aria-selected`; `/tournament` → `/competitions` |
 | Native runtime (onboarding, notification prompt timing, hold bar, fonts) | NOT VERIFIED — the Android emulator did not come online in this environment |
+| Android filter-chip runtime | NOT VERIFIED in an installed development build; the original press-release crash fix is covered by React Native renderer regression testing |
 | Reservation indicator runtime | NOT VERIFIED (needs a signed-in staging cart) |
 | iOS runtime | NOT VERIFIED (Windows environment) |
 
@@ -63,6 +64,30 @@ Runtime checks still owed for Phase 4:
 - Reserved seats: still no seated staging fixture.
 
 ---
+
+## v3 fidelity pass (Batches 1–3, after the Codex checkpoint)
+
+- **Rule:** LFA Screen v3 is reproduced as the visual spec (re-read through
+  the design MCP); production stays authoritative for data and behaviour.
+- **Global:** v3 palette in both themes (neutral-black dark; legacy roles
+  mapped), v3 shadows instead of borders, v3 type sizes, Button / sheet /
+  state-card / tab-bar chrome per v3.
+- **Data (confirmed contract):** `/matches/scheduled?status=live|completed`
+  → Matches Upcoming / Live / Results and Home Live now / Latest result;
+  backend scores only. Home My Tickets card from the portal (signed in).
+- **Onboarding / hold bar / Home / Matches** restyled to v3 measurements.
+- **Documented discrepancies (production or accessibility wins):** light
+  `textMuted` #6C6F7C for AA; no backdrop blur on the iOS tab bar; 16:9 ad
+  frame (no creative cropping); real logos on a light plate; locale time
+  formats (en-US 12h); no search button (no feature); no "this week / this
+  month", competition filter or live count on "Show matches" (unsupported
+  by the API); "All teams / All stadiums" chips for radio semantics;
+  onboarding uses drawn art (the v3 photo is an unlicensed placeholder);
+  Live now / Latest result are display-only (no result screen yet); the hold
+  bar stays off Match / Cart / Checkout until those are redesigned (Batch 4+);
+  44pt minimum touch targets where v3 draws smaller controls.
+- **Web check vs a local render of v3 (headless Chrome, staging data):**
+  Home, Matches (all three tabs), filter sheet, Competitions, light/dark.
 
 ## Batches 1–3 outcome (v3)
 

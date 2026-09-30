@@ -31,12 +31,12 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#F5F6F8",
+          "backgroundColor": "#F4F4F6",
           "image": "./assets/images/lfa-logo.png",
           "imageWidth": 180,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#0F172A",
+            "backgroundColor": "#0B0B0E",
             "image": "./assets/images/lfa-logo.png"
           }
         }

@@ -30,7 +30,10 @@ test("until fonts load (or if loading fails) text uses the platform font with it
 
 test("Barlow Condensed is selective: only display variants use it", () => {
   const display = Object.entries(typography).filter(([, token]) => token.family === "display").map(([name]) => name).sort();
-  assert.deepEqual(display, ["displayCountdown", "displayKickoff", "displayNumeral", "displaySection", "displayTitle"]);
+  assert.deepEqual(display, [
+    "displayCountdown", "displayDay", "displayHero", "displayKickoff", "displayNumeral",
+    "displayPrompt", "displayScore", "displaySection", "displaySheet", "displaySheetOption", "displayTitle",
+  ]);
   for (const name of ["body", "bodyStrong", "meta", "label", "caption", "action", "cardTitle"]) {
     assert.equal(typography[name].family, undefined, name);
   }

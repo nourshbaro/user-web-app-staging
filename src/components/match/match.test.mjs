@@ -31,21 +31,28 @@ test("each card is one named button with a hint; its CTA is visual, not a nested
     assert.match(code, /accessibilityRole="button"/, name);
     assert.match(code, /accessibilityHint=\{i18n\.t\("match\.openHint"\)\}/, name);
   }
-  assert.match(card, /accessibilityLabel=\{i18n\.t\("match\.a11y"/);
+  // Scored rows (backend score present) use the score variant of the same label.
+  assert.match(card, /accessibilityLabel=\{i18n\.t\(labels\.score \? "match\.a11yScore" : "match\.a11y"/);
   assert.match(featured, /accessibilityLabel=\{i18n\.t\("match\.featured\.a11y"/);
 });
 
-test("cards use backend fields through shared labels, semantic tokens and direction-aware chevrons", () => {
+test("cards use backend fields through shared labels, semantic tokens and direction-aware chevrons", async () => {
   const labels = [card, featured].join("\n");
   assert.match(labels, /matchLabels\(match, i18n\)/);
   assert.match(labels, /<DirectionalChevron kind="forward"/);
   assert.doesNotMatch(labels, /theme\.colors\.(muted|ink|primary|panel|line)\b/, "no legacy colour roles in redesigned cards");
   assert.doesNotMatch(labels, /#[0-9A-Fa-f]{3,8}\b/, "no hard-coded colours");
-  assert.doesNotMatch(labels, /live|score|result|sold out/i);
+  assert.doesNotMatch(labels, /sold out|minute|home_score|away_score/i, "no fabricated states; scores only via matchLabels");
+  // Live and scores come only from backend fields, through the shared labels.
+  const shared = await read("./matchLabels.ts");
+  assert.match(shared, /const score = matchScore\(match\);/);
+  assert.match(card, /\{labels\.score \?\? labels\.time\}/);
+  assert.match(card, /labels\.isLive \? \(\s*<LiveBadge label=\{labels\.statusLabel\} \/>/);
 });
 
 test("card entrance motion respects the OS reduce-motion setting", () => {
-  assert.match(card, /entering=\{FadeInDown\.duration\(\d+\)\.reduceMotion\(ReduceMotion\.System\)\}/);
+  // v3 staggered entrance (delay per row), still skipped under reduced motion.
+  assert.match(card, /entering=\{FadeInDown\.delay\(entranceDelay\(index\)\)\.duration\(\d+\)\.reduceMotion\(ReduceMotion\.System\)\}/);
   assert.doesNotMatch(card, /withRepeat|Animated\.loop/);
 });
 
@@ -67,7 +74,8 @@ test("the scheduled-matches owner keeps the existing service, cache and stale-re
   assert.match(hook, /requestAuthority\.begin\(/);
   assert.match(hook, /if \(!requestAuthority\.isCurrent\(ticket\)\) return;/);
   assert.match(hook, /requestAuthority\.invalidate\(filterIdentity\)/);
-  assert.match(hook, /const refresh = useCallback\(\(\) => \{\s*setRefreshing\(true\);\s*void load\(true\);/);
+  // A disabled instance never requests; otherwise pull-to-refresh is a forced load.
+  assert.match(hook, /const refresh = useCallback\(\(\) => \{[\s\S]*?if \(!enabled\) return;\s*setRefreshing\(true\);\s*void load\(true\);/);
 });
 
 test("Home: banner, featured next match by a transparent rule, upcoming list, and honest states", () => {
@@ -84,7 +92,8 @@ test("Home: banner, featured next match by a transparent rule, upcoming list, an
   assert.match(home, /<MatchListSkeleton[^>]*withFeatured/);
   assert.match(home, /variant="error"[\s\S]*?action=\{\{ label: t\("common\.retry"\), onPress: data\.retry \}\}/);
   assert.match(home, /variant="empty" title=\{t\("matches\.empty\.title"\)\}/);
-  assert.match(home, /refreshControl=\{<RefreshControl refreshing=\{data\.refreshing\} onRefresh=\{data\.refresh\} \/>\}/);
+  assert.match(home, /refreshControl=\{<RefreshControl refreshing=\{data\.refreshing\} onRefresh=\{refreshAll\} \/>\}/);
+  assert.match(home, /const refreshAll = \(\) => \{\s*data\.refresh\(\);\s*live\.refresh\(\);\s*completed\.refresh\(\);\s*void tickets\.reload\(\);/);
 });
 
 test("Home's 'All matches' switches tabs with the same replace semantics as the tab bar", () => {
@@ -97,7 +106,9 @@ test("Home's 'All matches' switches tabs with the same replace semantics as the 
 test("Matches distinguishes filtered-empty (with Clear) from globally empty, and errors (with Retry)", () => {
   assert.match(matchesRoute, /<MatchesList \/>/);
   assert.match(list, /state === "filtered-empty"[\s\S]*?title=\{t\("matches\.filteredEmpty\.title"\)\}[\s\S]*?action=\{\{ label: t\("filters\.clear"\), onPress: clearFilters \}\}/);
-  assert.match(list, /state === "empty"[\s\S]*?title=\{t\("matches\.empty\.title"\)\}/);
+  // Global empty copy is per tab (Upcoming / Live / Results).
+  assert.match(list, /state === "empty"[\s\S]*?title=\{t\(EMPTY_COPY\[tab\]\.title\)\}/);
+  assert.match(list, /upcoming: \{ title: "matches\.empty\.title"/);
   assert.match(list, /state === "error"[\s\S]*?action=\{\{ label: t\("common\.retry"\), onPress: data\.retry \}\}/);
   assert.match(list, /state === "loading"[\s\S]*?<MatchListSkeleton/);
 });
@@ -109,17 +120,20 @@ test("opening a match keeps the existing route and push semantics", () => {
 test("bottom navigation shows visible labels with a non-colour selected indicator", () => {
   const nav = ui.slice(ui.indexOf("function BottomNavigation"), ui.indexOf("export function useResponsive"));
   assert.match(nav, /<Text\s+numberOfLines=\{1\}[\s\S]*?maxFontSizeMultiplier=\{1\.3\}[\s\S]*?>\s*\{label\}\s*<\/Text>/);
-  assert.match(nav, /active && \{ backgroundColor: theme\.colors\.selectedSurface \}/);
-  // Selected also reads heavier (semantic font helper), never colour alone.
-  assert.match(nav, /fontStyleFor\("text", active \? "700" : "500", meta\.script\)/);
+  // Android: v3 indicator pill behind the selected icon; every platform: heavier weight. Never colour alone.
+  assert.match(nav, /backgroundColor: theme\.colors\.selectedSurface/);
+  assert.match(nav, /fontStyleFor\("text", active \? \(ANDROID_NAV \? "700" : "600"\) : "500", meta\.script\)/);
+  // The selection bounce is skipped under reduced motion.
+  assert.match(nav, /if \(!active \|\| reducedMotion\) \{\s*bounce\.setValue\(1\);/);
   assert.match(nav, /aria-selected=\{active\}/);
   assert.match(nav, /onNavigate\(tab\.href\);/);
   assert.match(ui, /bottomNavItem: \{[\s\S]*?minHeight: size\.touchTarget/);
 });
 
-test("tab swipe and entrance motion are RTL-aware and entrance honours reduced motion", () => {
+test("tab swipe is RTL-aware; the v3 entrance is direction-neutral and honours reduced motion", () => {
   assert.match(ui, /navigateAdjacent\(swipeTabStep\(translationX, isRTL\)\)/);
-  assert.match(ui, /tabEntranceOffset\(getPrimaryTabTransitionDirection\(\), isRTL\)/);
+  // v3 `lfEnter`: vertical rise, identical in LTR and RTL.
+  assert.match(ui, /transform: \[\{ translateY: entrance\.interpolate\(\{ inputRange: \[0, 1\], outputRange: \[TAB_ENTER_RISE, 0\] \}\) \}\]/);
   assert.match(ui, /if \(!hasBottomNavigation \|\| reducedMotion\) \{\s*entrance\.setValue\(1\);/);
 });
 
@@ -134,12 +148,17 @@ test("featured aging: one boundary timer plus foreground re-evaluation, never a 
   assert.doesNotMatch(code, /setInterval|matchesService|useScheduledMatches|load\(|refresh\(/);
 });
 
-test("filter changes invalidate the in-flight request synchronously, before state changes", () => {
-  const change = list.slice(list.indexOf("const changeFilters"), list.indexOf("const clearFilters"));
-  assert.ok(change.indexOf("invalidate(next);") >= 0);
-  assert.ok(change.indexOf("invalidate(next);") < change.indexOf("setFilters(next);"));
+test("filter and tab changes invalidate the in-flight request synchronously, before state changes", () => {
+  const change = list.slice(list.indexOf("const changeSelection"), list.indexOf("const changeFilters"));
+  const invalidateAt = change.indexOf("invalidate(matchQueryFor(next.filters, next.tab));");
+  assert.ok(invalidateAt >= 0);
+  assert.ok(invalidateAt < change.indexOf("setFilters(next.filters);"));
+  assert.ok(invalidateAt < change.indexOf("setTab(next.tab);"));
+  // Every path (chips, tabs, sheet, clear) goes through changeSelection.
+  assert.match(list, /const changeFilters = useCallback\(\(next: MatchFilters\) => changeSelection\(\{ filters: next, tab \}\), \[changeSelection, tab\]\);/);
   assert.match(list, /const clearFilters = useCallback\(\(\) => changeFilters\(\{\}\), \[changeFilters\]\);/);
-  assert.doesNotMatch(list, /onChange=\{setFilters\}/);
+  assert.match(list, /onApply=\{\(next\) => \{\s*changeSelection\(next\);/);
+  assert.doesNotMatch(list, /onChange=\{setFilters\}|setTab\((?!next\.tab)/);
   assert.match(hook, /const invalidate = useCallback\(\(nextFilters: MatchFilters\) => \{\s*requestAuthority\.invalidate\(matchFilterIdentity\(nextFilters\)\);/);
 });
 
@@ -151,8 +170,9 @@ test("the hook only returns results/errors tagged with the current filter identi
   assert.match(hook, /const loading = loadingFlag \|\| \(!view\.hasItemsForSelection && view\.error === null\);/);
 });
 
-test("the filter sheet's final action says what it does (filters apply immediately)", async () => {
+test("the filter sheet's final action says what it does (v3: Show matches applies the draft)", async () => {
   const catalog = await read("../../i18n/messages/en.ts");
-  assert.match(catalog, /"filters\.done": "Done",/);
+  assert.match(catalog, /"filters\.apply": "Show matches",/);
+  assert.match(catalog, /"filters\.reset": "Reset",/);
   assert.match(catalog, /"match\.status\.unknown": "Status unavailable",/);
 });

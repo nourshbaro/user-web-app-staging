@@ -14,6 +14,9 @@ import {
   type BannerTransitionOwnership,
 } from "@/lib/appBannerCarousel";
 import { APP_BANNER_REQUEST_KEY, adsService } from "@/services/ads";
+import { useI18n } from "@/i18n/I18nProvider";
+import { fontStyleFor } from "@/lib/fontFamilies";
+import Svg, { LinearGradient, Rect, Stop } from "react-native-svg";
 import type { AppBannerAd } from "@/types/ads";
 import { Image } from "expo-image";
 import { router, type Href } from "expo-router";
@@ -31,6 +34,7 @@ import {
   Linking,
   Pressable,
   StyleSheet,
+  Text,
   View,
   type LayoutChangeEvent,
 } from "react-native";
@@ -88,7 +92,7 @@ export function AppBanner() {
           style={[
             styles.frame,
             styles.skeleton,
-            { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line },
+            { backgroundColor: theme.colors.bgAlt },
           ]}
         />
       </View>
@@ -521,7 +525,7 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
       <GestureDetector gesture={bannerPanGesture}>
         <View
           onLayout={handleLayout}
-          style={[styles.frame, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}
+          style={[styles.frame, { backgroundColor: theme.colors.bgAlt, boxShadow: theme.colors.shadowCard }]}
         >
           {viewportWidth > 0 && availableBanners.length > 1 ? (
             <Animated.View
@@ -621,8 +625,58 @@ function BannerRotation({ banners }: { banners: DisplayBanner[] }) {
               />
             </View>
           ) : null}
+          <BannerCaption title={banner.title} />
         </View>
       </GestureDetector>
+      {availableBanners.length > 1 ? (
+        <View style={styles.dots} accessible={false} importantForAccessibility="no-hide-descendants">
+          {availableBanners.map((item, index) => (
+            <View
+              key={item.id}
+              style={[
+                styles.dot,
+                index === safeActiveIndex
+                  ? { width: 16, backgroundColor: theme.colors.textStrong }
+                  : { backgroundColor: theme.colors.border },
+              ]}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * v3 caption: bottom gradient with the ad's backend title and an "Ad" badge.
+ * Decorative for assistive tech (the image/link already carries the title)
+ * and never intercepts presses.
+ */
+function BannerCaption({ title }: { title: string }) {
+  const { t, meta } = useI18n();
+  return (
+    <View
+      pointerEvents="none"
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+      style={styles.caption}
+    >
+      <View style={StyleSheet.absoluteFill}>
+      <Svg width="100%" height="100%" preserveAspectRatio="none">
+        <LinearGradient id="bannerShade" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0.4" stopColor="#000000" stopOpacity={0} />
+          <Stop offset="1" stopColor="#000000" stopOpacity={0.62} />
+        </LinearGradient>
+        <Rect width="100%" height="100%" fill="url(#bannerShade)" />
+      </Svg>
+      </View>
+      <View style={styles.captionRow}>
+        <Text numberOfLines={2} style={[styles.captionTitle, fontStyleFor("text", "700", meta.script)]}>{title}</Text>
+        <View style={styles.adBadge}>
+          <Text style={[styles.adBadgeText, fontStyleFor("text", "600", meta.script)]}>{t("home.ad.badge")}</Text>
+        </View>
+      </View>
     </View>
   );
 }
@@ -710,14 +764,56 @@ function openAdLink(link: NonNullable<ReturnType<typeof classifyAdLink>>) {
 const styles = StyleSheet.create({
   placement: {
     width: "100%",
-    marginTop: 8,
   },
+  // v3: radius 22, `--shadow`, no border. The 16:9 frame is kept (v3 uses a
+  // fixed 150pt height) so backend ad creatives are never cropped.
   frame: {
     width: "100%",
     aspectRatio: 16 / 9,
-    borderRadius: 8,
-    borderWidth: 1,
+    borderRadius: 22,
     overflow: "hidden",
+  },
+  caption: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 2,
+    justifyContent: "flex-end",
+  },
+  captionRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+  },
+  captionTitle: {
+    flexShrink: 1,
+    maxWidth: 260,
+    color: "#FFFFFF",
+    fontSize: 17,
+    lineHeight: 21,
+  },
+  adBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  adBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  dots: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 5,
+    marginTop: 10,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   skeleton: {
     opacity: 0.7,

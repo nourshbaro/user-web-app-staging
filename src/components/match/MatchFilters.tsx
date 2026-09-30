@@ -1,171 +1,142 @@
 import { BottomSheetModal } from "@/components/BottomSheetModal";
 import { AppText, DirectionalChevron } from "@/components/foundation";
+import { LiveDot } from "@/components/match/LiveBadge";
+import { dateChipStyle, filterChipStyle } from "@/components/match/filterChipStyle";
 import { Button, useTheme } from "@/components/ui";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useI18n } from "@/i18n/I18nProvider";
+import type { MessageKey } from "@/i18n/messages/en";
 import { radius, size, spacing } from "@/lib/designTokens";
 import { fontStyleFor } from "@/lib/fontFamilies";
-import { formatAccessibleCalendarDate, formatDayOfMonth, formatMonthYear, formatWeekdayShort, parseCalendarDate } from "@/lib/format";
+import { formatAccessibleCalendarDate, formatCalendarDate, formatDayOfMonth, formatMonthYear, formatWeekdayShort, parseCalendarDate } from "@/lib/format";
 import { getDateTriggerLabel, isDropdownOptionSelected } from "@/lib/matchFilterAccessibility";
 import {
   activeFilterCount,
   addMonths,
+  dateStripForTab,
   getCalendarDays,
   isBeforeDay,
   isSameDay,
-  matchDateStrip,
+  MATCH_TABS,
   startOfMonth,
   startOfToday,
   toDateInputValue,
+  type MatchTab,
 } from "@/lib/matchDiscovery";
 import type { FilterOption, MatchFilters } from "@/types";
 import { SymbolView } from "expo-symbols";
-import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Animated, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from "react-native";
 
 type FilterOptions = { teams: FilterOption[]; stadiums: FilterOption[] };
 
-function optionName(options: FilterOption[], slug?: string) {
-  return slug ? options.find((option) => option.slug === slug)?.name ?? slug : undefined;
-}
+const TAB_LABELS: Record<MatchTab, MessageKey> = {
+  upcoming: "matches.tab.upcoming",
+  live: "matches.tab.live",
+  results: "matches.tab.results",
+};
 
 /**
- * Filter entry point + visible active-filter state. Filter values are owned by
- * the Matches screen; this bar only reports intent through callbacks.
+ * v3 Upcoming / Live / Results segmented control. Each segment selects the
+ * backend query owned by the Matches screen; this control holds no data. The
+ * Live dot appears only when the backend reports live matches.
  */
-export function MatchFilterBar({
-  filters,
-  options,
-  sheetOpen,
-  summary,
-  onOpen,
-  onChange,
-  onClear,
-}: {
-  filters: MatchFilters;
-  options: FilterOptions;
-  sheetOpen: boolean;
-  /** Result summary owned by the screen (e.g. "12 matches"); omitted while loading. */
-  summary?: string;
-  onOpen: () => void;
-  onChange: (next: MatchFilters) => void;
-  onClear: () => void;
-}) {
+export function MatchTabs({ value, liveAvailable, onChange }: { value: MatchTab; liveAvailable: boolean; onChange: (tab: MatchTab) => void }) {
   const theme = useTheme();
-  const { t, plural } = useI18n();
-  const count = activeFilterCount(filters);
-  // The date is always visible (and removable) in the date strip, so only team/venue get chips here.
-  const chips = [
-    filters.team ? { key: "team" as const, label: optionName(options.teams, filters.team) ?? filters.team } : null,
-    filters.stadium ? { key: "stadium" as const, label: optionName(options.stadiums, filters.stadium) ?? filters.stadium } : null,
-  ].filter((chip): chip is { key: "team" | "stadium"; label: string } => chip !== null);
+  const { t, meta, isRTL } = useI18n();
+  const reducedMotion = useReducedMotion();
+  const [width, setWidth] = useState(0);
+  const index = MATCH_TABS.indexOf(value);
+  const [thumb] = useState(() => new Animated.Value(index));
+
+  useEffect(() => {
+    if (reducedMotion) {
+      thumb.setValue(index);
+      return;
+    }
+    // v3: the thumb slides with a slight overshoot.
+    Animated.spring(thumb, { toValue: index, useNativeDriver: true, speed: 16, bounciness: 6 }).start();
+  }, [index, reducedMotion, thumb]);
+
+  const segment = width > 0 ? (width - 8) / MATCH_TABS.length : 0;
 
   return (
-    <View style={local.bar}>
-      <View style={local.row}>
-        {summary ? (
-          <AppText variant="meta" tone="muted" numberOfLines={1} style={local.summary}>{summary}</AppText>
-        ) : (
-          <View style={local.summary} />
-        )}
-
-        {count ? (
-          <Pressable
-            onPress={onClear}
-            accessibilityRole="button"
-            accessibilityLabel={t("filters.clear")}
-            hitSlop={8}
-            style={({ pressed }) => [local.clearLink, pressed && { opacity: 0.7 }]}
-          >
-            <AppText variant="label" tone="brand">{t("filters.clearShort")}</AppText>
-          </Pressable>
-        ) : null}
-
-        <Pressable
-          onPress={onOpen}
-          accessibilityRole="button"
-          accessibilityLabel={count ? plural("filters.openActive", count) : t("filters.open")}
-          aria-expanded={sheetOpen}
-          style={({ pressed }) => [
-            local.filterButton,
+    <View
+      accessibilityRole="tablist"
+      accessibilityLabel={t("matches.tabs.a11y")}
+      onLayout={(event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)}
+      style={[local.tabs, { backgroundColor: theme.colors.segment }]}
+    >
+      {segment > 0 ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            local.thumb,
             {
-              // Active filters invert the button (shape, fill and count), not colour alone.
-              backgroundColor: count ? theme.colors.textStrong : theme.colors.surface,
-              borderColor: count ? theme.colors.textStrong : theme.colors.border,
-              opacity: pressed ? 0.85 : 1,
+              width: segment,
+              backgroundColor: theme.colors.surface,
+              // The segment row mirrors in RTL, so the thumb travels the other way.
+              transform: [{ translateX: thumb.interpolate({ inputRange: [0, 1], outputRange: [0, isRTL ? -segment : segment] }) }],
             },
           ]}
-        >
-          <SymbolView
-            accessible={false}
-            name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as never}
-            size={16}
-            tintColor={count ? theme.colors.surface : theme.colors.textStrong}
-            fallback={<View />}
-          />
-          <AppText variant="label" style={{ color: count ? theme.colors.surface : theme.colors.textStrong }}>
-            {count ? t("filters.openCount", { count }) : t("filters.open")}
-          </AppText>
-        </Pressable>
-      </View>
-
-      {chips.length ? (
-        <View style={local.chips}>
-          {chips.map((chip) => (
-            <Pressable
-              key={chip.key}
-              onPress={() => onChange({ ...filters, [chip.key]: undefined })}
-              accessibilityRole="button"
-              accessibilityLabel={t("filters.removeChip", { label: chip.label })}
-              style={({ pressed }) => [
-                local.chip,
-                { backgroundColor: theme.colors.tones.brand.bg, borderColor: theme.colors.tones.brand.border, opacity: pressed ? 0.8 : 1 },
+        />
+      ) : null}
+      {MATCH_TABS.map((tab) => {
+        const selected = tab === value;
+        const showLive = tab === "live" && liveAvailable;
+        return (
+          <Pressable
+            key={tab}
+            onPress={() => {
+              if (!selected) onChange(tab);
+            }}
+            accessibilityRole="tab"
+            accessibilityLabel={showLive ? t("matches.tab.liveNow") : t(TAB_LABELS[tab])}
+            aria-selected={selected}
+            style={local.tab}
+          >
+            {showLive ? <LiveDot /> : null}
+            <Text
+              numberOfLines={1}
+              style={[
+                local.tabText,
+                fontStyleFor("text", selected ? "600" : "500", meta.script),
+                { color: selected ? theme.colors.textStrong : theme.colors.textMuted },
               ]}
             >
-              <AppText variant="caption" tone="brand" numberOfLines={1} style={local.chipText}>{chip.label}</AppText>
-              <SymbolView
-                accessible={false}
-                name={{ ios: "xmark", android: "close", web: "close" } as never}
-                size={12}
-                tintColor={theme.colors.tones.brand.fg}
-                fallback={<Text accessible={false} style={{ color: theme.colors.tones.brand.fg }}>×</Text>}
-              />
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+              {t(TAB_LABELS[tab])}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
 
-/** Days shown in the compact strip (today + 13); later dates are in the sheet's calendar. */
-const DATE_STRIP_DAYS = 14;
-
 /**
- * Compact date navigation (v3). Every chip maps to the existing backend
- * `date` filter (one calendar day) or clears it ("All"); nothing is filtered
- * on the device. "More dates" opens the sheet's full calendar.
+ * v3 date chips: "All" plus one chip per day. Every chip maps to the existing
+ * backend `date` filter (one calendar day) or clears it; nothing is filtered on
+ * the device. The dot marks days the backend returned fixtures for.
  */
 export function MatchDateStrip({
+  tab,
   value,
+  datesWithFixtures,
   onSelect,
-  onMore,
 }: {
+  tab: MatchTab;
   value?: string;
+  /** Days with fixtures in the current tab's results (real data only). */
+  datesWithFixtures: ReadonlySet<string>;
   onSelect: (date?: string) => void;
-  onMore: () => void;
 }) {
-  const theme = useTheme();
   const { t } = useI18n();
-  const days = matchDateStrip(startOfToday(), DATE_STRIP_DAYS, value);
+  const days = dateStripForTab(tab, startOfToday(), value);
+  if (!days.length) return null;
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={local.strip}
-      accessibilityLabel={t("filters.date")}
-    >
-      <DateChip selected={!value} label={t("filters.allDates")} accessibilityLabel={t("filters.anyDate")} onPress={() => onSelect(undefined)} />
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={local.strip} accessibilityLabel={t("filters.date")}>
+      <DateChip selected={!value} label={t("filters.allDates")} accessibilityLabel={t("filters.anyDate")} wide onPress={() => onSelect(undefined)} />
       {days.map((day) => {
         const date = parseCalendarDate(day);
         if (!date) return null;
@@ -175,29 +146,12 @@ export function MatchDateStrip({
             selected={value === day}
             weekday={formatWeekdayShort(date)}
             label={formatDayOfMonth(date)}
+            hasFixtures={datesWithFixtures.has(day)}
             accessibilityLabel={formatAccessibleCalendarDate(date)}
             onPress={() => onSelect(day)}
           />
         );
       })}
-      <Pressable
-        onPress={onMore}
-        accessibilityRole="button"
-        accessibilityLabel={t("filters.moreDates")}
-        style={({ pressed }) => [
-          local.dateChip,
-          { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, opacity: pressed ? 0.85 : 1 },
-        ]}
-      >
-        <SymbolView
-          accessible={false}
-          name={{ ios: "calendar", android: "calendar_month", web: "calendar_month" } as never}
-          size={18}
-          tintColor={theme.colors.textStrong}
-          fallback={<View />}
-        />
-        <AppText variant="caption" tone="muted" numberOfLines={1}>{t("filters.more")}</AppText>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -206,17 +160,21 @@ function DateChip({
   selected,
   weekday,
   label,
+  hasFixtures = false,
+  wide = false,
   accessibilityLabel,
   onPress,
 }: {
   selected: boolean;
   weekday?: string;
   label: string;
+  hasFixtures?: boolean;
+  wide?: boolean;
   accessibilityLabel: string;
   onPress: () => void;
 }) {
   const theme = useTheme();
-  const fg = selected ? theme.colors.surface : theme.colors.textStrong;
+  const fg = selected ? theme.colors.background : theme.colors.textStrong;
   return (
     <Pressable
       onPress={onPress}
@@ -225,73 +183,203 @@ function DateChip({
       aria-selected={selected}
       style={({ pressed }) => [
         local.dateChip,
-        {
-          // Selected = filled (ink) chip, not colour alone.
-          backgroundColor: selected ? theme.colors.textStrong : theme.colors.surface,
-          borderColor: selected ? theme.colors.textStrong : theme.colors.border,
-          opacity: pressed ? 0.85 : 1,
-        },
+        wide && local.dateChipWide,
+        // v3: selected = filled ink chip (not colour alone); unselected cards carry `--shadow`.
+        dateChipStyle({ selected, pressed, colors: theme.colors }),
       ]}
     >
       {weekday ? (
-        <AppText variant="caption" numberOfLines={1} style={{ color: fg }}>{weekday}</AppText>
+        <AppText variant="caption" numberOfLines={1} style={[local.weekday, { color: fg }]}>{weekday}</AppText>
       ) : null}
       <AppText variant={weekday ? "displayNumeral" : "label"} numberOfLines={1} style={{ color: fg }}>{label}</AppText>
+      {weekday ? (
+        <View style={[local.fixtureDot, { backgroundColor: hasFixtures ? (selected ? theme.colors.background : theme.colors.actionPrimary) : "transparent" }]} />
+      ) : null}
     </Pressable>
   );
 }
 
 /**
- * Focused filter surface. Each selection is reported immediately through
- * `onChange` (as before), so the screen's request authority keeps owning the
- * fetch; the sheet holds only presentation state (the visible calendar month).
+ * v3 summary row: result summary, Clear, and the Filters entry. Applied
+ * filter values are owned by the Matches screen; this bar only reports intent.
  */
-export function MatchFiltersSheet({
-  visible,
+export function MatchFilterBar({
   filters,
-  options,
-  onChange,
+  sheetOpen,
+  summary,
+  onOpen,
   onClear,
-  onClose,
 }: {
-  visible: boolean;
   filters: MatchFilters;
-  options: FilterOptions;
-  onChange: (next: MatchFilters) => void;
+  sheetOpen: boolean;
+  /** Result summary owned by the screen (e.g. "12 matches · Nejmeh"); omitted while loading. */
+  summary?: string;
+  onOpen: () => void;
   onClear: () => void;
-  onClose: () => void;
 }) {
-  const { t } = useI18n();
+  const theme = useTheme();
+  const { t, plural } = useI18n();
   const count = activeFilterCount(filters);
 
   return (
-    <BottomSheetModal visible={visible} onClose={onClose} title={t("filters.sheetTitle")} scrollable wide>
+    <View style={local.row}>
+      {summary ? (
+        <AppText variant="meta" tone="muted" numberOfLines={1} style={local.summary}>{summary}</AppText>
+      ) : (
+        <View style={local.summary} />
+      )}
+
+      {count ? (
+        <Pressable
+          onPress={onClear}
+          accessibilityRole="button"
+          accessibilityLabel={t("filters.clear")}
+          hitSlop={8}
+          style={({ pressed }) => [local.clearLink, pressed && { opacity: 0.7 }]}
+        >
+          <AppText variant="meta" style={{ color: theme.colors.brandInk }}>{t("filters.clearShort")}</AppText>
+        </Pressable>
+      ) : null}
+
+      <Pressable
+        onPress={onOpen}
+        accessibilityRole="button"
+        accessibilityLabel={count ? plural("filters.openActive", count) : t("filters.open")}
+        aria-expanded={sheetOpen}
+        hitSlop={5}
+        style={({ pressed }) => [
+          local.filterButton,
+          {
+            // Active filters invert the button (fill and count), not colour alone.
+            backgroundColor: count ? theme.colors.textStrong : theme.colors.surface,
+            boxShadow: theme.colors.shadowCard,
+            opacity: pressed ? 0.85 : 1,
+          },
+        ]}
+      >
+        <SymbolView
+          accessible={false}
+          name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" } as never}
+          size={15}
+          tintColor={count ? theme.colors.background : theme.colors.textStrong}
+          fallback={<View />}
+        />
+        <AppText variant="meta" style={{ color: count ? theme.colors.background : theme.colors.textStrong }}>
+          {count ? t("filters.openCount", { count }) : t("filters.open")}
+        </AppText>
+      </Pressable>
+    </View>
+  );
+}
+
+export type MatchFilterSelection = { filters: MatchFilters; tab: MatchTab };
+
+/**
+ * v3 filter sheet. It edits a draft (presentation state) initialised from the
+ * applied selection each time it opens; "Show matches" hands the draft to the
+ * Matches screen, which owns the applied values and the request. Reset
+ * restores the defaults in the draft. Supported filters only: date (one
+ * calendar day, the backend `date` parameter), status (the tab), team and
+ * stadium. There is no competition filter: `/matches/scheduled` has none.
+ */
+export function MatchFiltersSheet({
+  visible,
+  value,
+  options,
+  onApply,
+  onClose,
+}: {
+  visible: boolean;
+  value: MatchFilterSelection;
+  options: FilterOptions;
+  onApply: (next: MatchFilterSelection) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState<MatchFilterSelection>(value);
+  const [pickingDate, setPickingDate] = useState(() => Boolean(value.filters.date && value.filters.date !== toDateInputValue(startOfToday())));
+  const today = toDateInputValue(startOfToday());
+  const setFilters = (next: Partial<MatchFilters>) => setDraft((current) => ({ ...current, filters: { ...current.filters, ...next } }));
+
+  return (
+    <BottomSheetModal
+      visible={visible}
+      onClose={onClose}
+      title={t("filters.sheetTitle")}
+      titleVariant="display"
+      headerAction={{
+        label: t("filters.reset"),
+        onPress: () => {
+          setPickingDate(false);
+          setDraft({ filters: {}, tab: "upcoming" });
+        },
+      }}
+      footer={<Button title={t("filters.apply")} onPress={() => onApply(draft)} />}
+      scrollable
+      wide
+    >
       <View style={local.sheetBody}>
+        <View style={local.group} accessibilityRole="radiogroup" accessibilityLabel={t("filters.dateSection")}>
+          <SectionTitle>{t("filters.dateSection")}</SectionTitle>
+          <View style={local.options}>
+            <OptionPill
+              label={t("filters.anyDate")}
+              selected={!draft.filters.date && !pickingDate}
+              onPress={() => {
+                setPickingDate(false);
+                setFilters({ date: undefined });
+              }}
+            />
+            <OptionPill
+              label={t("filters.today")}
+              selected={draft.filters.date === today && !pickingDate}
+              onPress={() => {
+                setPickingDate(false);
+                setFilters({ date: today });
+              }}
+            />
+            <OptionPill
+              label={draft.filters.date && pickingDate ? formatCalendarDate(draft.filters.date) : t("filters.pickDate")}
+              selected={pickingDate}
+              onPress={() => setPickingDate(true)}
+            />
+          </View>
+          {pickingDate ? (
+            // Upcoming starts today; Live and Results may be any day.
+            <DateFilter value={draft.filters.date} allowPast={draft.tab !== "upcoming"} onSelect={(date) => setFilters({ date })} />
+          ) : null}
+        </View>
+
+        <View style={local.group} accessibilityRole="radiogroup" accessibilityLabel={t("filters.statusSection")}>
+          <SectionTitle>{t("filters.statusSection")}</SectionTitle>
+          <View style={local.options}>
+            {MATCH_TABS.map((tab) => (
+              <OptionPill key={tab} label={t(TAB_LABELS[tab])} selected={draft.tab === tab} onPress={() => setDraft((current) => ({ ...current, tab }))} />
+            ))}
+          </View>
+        </View>
+
         <OptionGroup
           label={t("filters.team")}
           allLabel={t("filters.allTeams")}
           options={options.teams}
-          selected={filters.team}
-          onSelect={(team) => onChange({ ...filters, team })}
+          selected={draft.filters.team}
+          onSelect={(team) => setFilters({ team })}
         />
         <OptionGroup
-          label={t("filters.venue")}
+          label={t("filters.stadiumSection")}
           allLabel={t("filters.allVenues")}
           options={options.stadiums}
-          selected={filters.stadium}
-          onSelect={(stadium) => onChange({ ...filters, stadium })}
+          selected={draft.filters.stadium}
+          onSelect={(stadium) => setFilters({ stadium })}
         />
-        <DateFilter
-          value={filters.date}
-          onSelect={(date) => onChange({ ...filters, date })}
-        />
-        <View style={local.sheetActions}>
-          {count ? <Button title={t("filters.clear")} variant="secondary" onPress={onClear} /> : null}
-          <Button title={t("filters.done")} onPress={onClose} />
-        </View>
       </View>
     </BottomSheetModal>
   );
+}
+
+function SectionTitle({ children }: { children: string }) {
+  return <AppText variant="overline" tone="muted" accessibilityRole="header">{children}</AppText>;
 }
 
 function OptionGroup({
@@ -310,7 +398,7 @@ function OptionGroup({
   const rows = [{ name: allLabel, slug: undefined as string | undefined }, ...options.map((option) => ({ name: option.name, slug: option.slug }))];
   return (
     <View style={local.group} accessibilityRole="radiogroup" accessibilityLabel={label}>
-      <AppText variant="label" tone="muted" accessibilityRole="header">{label}</AppText>
+      <SectionTitle>{label}</SectionTitle>
       <View style={local.options}>
         {rows.map((row) => (
           <OptionPill
@@ -325,6 +413,7 @@ function OptionGroup({
   );
 }
 
+/** v3 chip: 38pt, radius 12; selected = filled ink with heavier text (not colour alone). */
 function OptionPill({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
   const theme = useTheme();
   const { meta } = useI18n();
@@ -334,168 +423,162 @@ function OptionPill({ label, selected, onPress }: { label: string; selected: boo
       accessibilityRole="radio"
       accessibilityLabel={label}
       aria-checked={selected}
+      hitSlop={3}
       style={({ pressed }) => [
         local.pill,
-        {
-          backgroundColor: selected ? theme.colors.textStrong : theme.colors.surface,
-          borderColor: selected ? theme.colors.textStrong : theme.colors.border,
-          opacity: pressed ? 0.85 : 1,
-        },
+        // Never `transform: undefined` (see filterChipStyle): it crashed the renderer on release.
+        filterChipStyle({ selected, pressed, colors: theme.colors }),
       ]}
     >
-      {selected ? (
-        // A checkmark marks the selection in addition to colour.
-        <SymbolView accessible={false} name={{ ios: "checkmark", android: "check", web: "check" } as never} size={14} tintColor={theme.colors.surface} fallback={<View />} />
-      ) : null}
-      <Text numberOfLines={1} style={[local.pillText, fontStyleFor("text", "600", meta.script), { color: selected ? theme.colors.surface : theme.colors.textStrong }]}>
+      <Text
+        numberOfLines={1}
+        style={[local.pillText, fontStyleFor("text", selected ? "600" : "500", meta.script), { color: selected ? theme.colors.background : theme.colors.textStrong }]}
+      >
         {label}
       </Text>
     </Pressable>
   );
 }
 
-function DateFilter({ value, onSelect }: { value?: string; onSelect: (value?: string) => void }) {
+function DateFilter({ value, allowPast, onSelect }: { value?: string; allowPast: boolean; onSelect: (value?: string) => void }) {
   const theme = useTheme();
   const { t } = useI18n();
   const todayDate = startOfToday();
   const selectedDate = parseCalendarDate(value);
   const [month, setMonth] = useState(() => startOfMonth(selectedDate ?? todayDate));
   const days = getCalendarDays(month);
-  const canGoPrevious = startOfMonth(addMonths(month, -1)).getTime() >= startOfMonth(todayDate).getTime();
+  // Upcoming dates start today; Results can browse back.
+  const canGoPrevious = allowPast || startOfMonth(addMonths(month, -1)).getTime() >= startOfMonth(todayDate).getTime();
   // Weekday headers from a known Sunday (2023-01-01) in the app locale.
   const weekdays = Array.from({ length: 7 }, (_, index) => formatWeekdayShort(new Date(2023, 0, 1 + index)));
 
   return (
-    <View style={local.group}>
-      <AppText variant="label" tone="muted" accessibilityRole="header" accessibilityLabel={getDateTriggerLabel(selectedDate)}>
-        {t("filters.date")}
-      </AppText>
-      <View style={local.options}>
-        <OptionPill label={t("filters.anyDate")} selected={!value} onPress={() => onSelect(undefined)} />
+    <View style={[local.calendar, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]} accessibilityLabel={getDateTriggerLabel(selectedDate)}>
+      <View style={local.calendarHeader}>
+        <Pressable
+          disabled={!canGoPrevious}
+          onPress={() => setMonth(addMonths(month, -1))}
+          accessibilityRole="button"
+          accessibilityLabel={t("filters.previousMonth")}
+          aria-disabled={!canGoPrevious}
+          style={[local.calendarNav, { opacity: canGoPrevious ? 1 : 0.35 }]}
+        >
+          <DirectionalChevron kind="back" color={theme.colors.textStrong} />
+        </Pressable>
+        <AppText variant="cardTitle" align="center">{formatMonthYear(month)}</AppText>
+        <Pressable
+          onPress={() => setMonth(addMonths(month, 1))}
+          accessibilityRole="button"
+          accessibilityLabel={t("filters.nextMonth")}
+          style={local.calendarNav}
+        >
+          <DirectionalChevron kind="forward" color={theme.colors.textStrong} />
+        </Pressable>
       </View>
 
-      <View style={[local.calendar, { borderColor: theme.colors.border }]}>
-        <View style={local.calendarHeader}>
-          <Pressable
-            disabled={!canGoPrevious}
-            onPress={() => setMonth(addMonths(month, -1))}
-            accessibilityRole="button"
-            accessibilityLabel={t("filters.previousMonth")}
-            aria-disabled={!canGoPrevious}
-            style={[local.calendarNav, { opacity: canGoPrevious ? 1 : 0.35 }]}
-          >
-            <DirectionalChevron kind="back" color={theme.colors.textStrong} />
-          </Pressable>
-          <AppText variant="cardTitle" align="center">{formatMonthYear(month)}</AppText>
-          <Pressable
-            onPress={() => setMonth(addMonths(month, 1))}
-            accessibilityRole="button"
-            accessibilityLabel={t("filters.nextMonth")}
-            style={local.calendarNav}
-          >
-            <DirectionalChevron kind="forward" color={theme.colors.textStrong} />
-          </Pressable>
-        </View>
+      <View style={local.weekRow} accessible={false} importantForAccessibility="no-hide-descendants">
+        {weekdays.map((day, index) => (
+          <Text key={index} style={[local.weekLabel, { color: theme.colors.textMuted }]}>{day}</Text>
+        ))}
+      </View>
 
-        <View style={local.weekRow} accessible={false} importantForAccessibility="no-hide-descendants">
-          {weekdays.map((day, index) => (
-            <Text key={index} style={[local.weekLabel, { color: theme.colors.textMuted }]}>{day}</Text>
-          ))}
-        </View>
-
-        <View style={local.calendarGrid}>
-          {days.map((date, index) => {
-            if (!date) {
-              return <View key={`blank-${index}`} accessible={false} style={local.calendarDay} />;
-            }
-            const disabled = isBeforeDay(date, todayDate);
-            const selected = Boolean(selectedDate && isSameDay(date, selectedDate));
-            return (
-              <Pressable
-                key={toDateInputValue(date)}
-                disabled={disabled}
-                onPress={() => onSelect(toDateInputValue(date))}
-                accessibilityRole="button"
-                accessibilityLabel={formatAccessibleCalendarDate(date)}
-                aria-selected={selected}
-                aria-disabled={disabled}
+      <View style={local.calendarGrid}>
+        {days.map((date, index) => {
+          if (!date) {
+            return <View key={`blank-${index}`} accessible={false} style={local.calendarDay} />;
+          }
+          const disabled = !allowPast && isBeforeDay(date, todayDate);
+          const selected = Boolean(selectedDate && isSameDay(date, selectedDate));
+          return (
+            <Pressable
+              key={toDateInputValue(date)}
+              disabled={disabled}
+              onPress={() => onSelect(toDateInputValue(date))}
+              accessibilityRole="button"
+              accessibilityLabel={formatAccessibleCalendarDate(date)}
+              aria-selected={selected}
+              aria-disabled={disabled}
+              style={[
+                local.calendarDay,
+                selected && { backgroundColor: theme.colors.textStrong },
+                disabled && local.calendarDayDisabled,
+              ]}
+            >
+              <Text
                 style={[
-                  local.calendarDay,
-                  selected && { backgroundColor: theme.colors.actionPrimary },
-                  disabled && local.calendarDayDisabled,
+                  local.calendarDayText,
+                  { color: selected ? theme.colors.background : disabled ? theme.colors.textMuted : theme.colors.textStrong },
+                  selected && local.calendarDaySelected,
                 ]}
               >
-                <Text
-                  style={[
-                    local.calendarDayText,
-                    { color: selected ? theme.colors.onActionPrimary : disabled ? theme.colors.textMuted : theme.colors.textStrong },
-                    selected && local.calendarDaySelected,
-                  ]}
-                >
-                  {date.getDate()}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+                {date.getDate()}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
     </View>
   );
 }
 
 const local = {
-  bar: { gap: spacing.sm },
-  row: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md },
-  summary: { flex: 1, minWidth: 0 },
-  filterButton: {
+  // v3 segmented control: 4pt track padding, radius 14; 36pt segments; radius 10 thumb.
+  tabs: { flexDirection: "row" as const, padding: 4, borderRadius: 14, position: "relative" as const },
+  thumb: {
+    position: "absolute" as const,
+    top: 4,
+    bottom: 4,
+    start: 4,
+    borderRadius: 10,
+    boxShadow: "0px 1px 4px rgba(0,0,0,0.12)",
+  },
+  tab: {
+    flex: 1,
     minHeight: size.touchTargetMin,
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    gap: spacing.sm,
+    justifyContent: "center" as const,
+    gap: 6,
+  },
+  tabText: { fontSize: 14, lineHeight: 19 },
+  row: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.sm },
+  summary: { flex: 1, minWidth: 0 },
+  // v3: 34pt, radius 12, `--shadow`; kept at the 44pt touch target via hitSlop.
+  filterButton: {
+    minHeight: 34,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 6,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
-    borderWidth: 1,
   },
-  clearLink: { minHeight: size.touchTargetMin, justifyContent: "center" as const },
-  strip: { flexDirection: "row" as const, gap: spacing.sm, paddingVertical: spacing.xxs },
+  clearLink: { minHeight: size.touchTargetMin, justifyContent: "center" as const, paddingHorizontal: 6 },
+  // v3 date strip: 8pt gaps; 48x62 chips, radius 16 ("All" 52 wide).
+  strip: { flexDirection: "row" as const, gap: spacing.sm, paddingVertical: spacing.xs, paddingHorizontal: 2 },
   dateChip: {
-    minWidth: 52,
-    minHeight: 62,
+    width: 48,
+    height: 62,
     alignItems: "center" as const,
     justifyContent: "center" as const,
     gap: 2,
-    paddingHorizontal: spacing.sm,
     borderRadius: radius.lg,
-    borderWidth: 1,
   },
-  chips: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: spacing.sm },
-  chip: {
-    minHeight: 32,
-    maxWidth: "100%" as const,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-  },
-  chipText: { flexShrink: 1 },
-  sheetBody: { gap: spacing.xl, paddingBottom: spacing.sm },
-  sheetActions: { gap: spacing.sm },
-  group: { gap: spacing.sm },
+  dateChipWide: { width: 52 },
+  weekday: { fontSize: 11, lineHeight: 14, opacity: 0.7 },
+  fixtureDot: { width: 4, height: 4, borderRadius: 2 },
+  sheetBody: { gap: spacing.lg, paddingBottom: spacing.sm },
+  group: { gap: 10, paddingTop: spacing.xs },
   options: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: spacing.sm },
   pill: {
-    minHeight: size.touchTargetMin,
+    minHeight: 38,
     maxWidth: "100%" as const,
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    gap: spacing.xs,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.pill,
-    borderWidth: 1,
+    paddingHorizontal: 14,
+    borderRadius: radius.md,
   },
   pillText: { fontSize: 14, lineHeight: 19, flexShrink: 1 },
-  calendar: { borderWidth: 1, borderRadius: radius.md, padding: spacing.md, gap: spacing.sm },
+  calendar: { borderRadius: radius.xl, padding: spacing.md, gap: spacing.sm },
   calendarHeader: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const },
   calendarNav: { width: size.touchTargetMin, height: size.touchTargetMin, alignItems: "center" as const, justifyContent: "center" as const },
   weekRow: { flexDirection: "row" as const },

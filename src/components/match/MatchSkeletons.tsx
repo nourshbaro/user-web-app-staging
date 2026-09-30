@@ -5,7 +5,7 @@ import { View } from "react-native";
 
 /** Hero-shaped placeholder for the featured match. */
 export function FeaturedMatchSkeleton() {
-  return <SkeletonBlock height={236} borderRadius={radius.xxl} />;
+  return <SkeletonBlock height={236} borderRadius={radius.hero} />;
 }
 
 /** Placeholder with the outline of a `MatchCard` row inside a grouped card. */
@@ -71,7 +71,7 @@ export function MatchListSkeleton({
     <SkeletonGroup label={label}>
       {withFeatured ? <FeaturedMatchSkeleton /> : null}
       <SkeletonBlock width="35%" height={14} />
-      <View style={[local.group, { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairline }]}>
+      <View style={[local.group, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
         {Array.from({ length: count }, (_, index) => (
           <MatchRowSkeleton key={index} first={index === 0} />
         ))}
@@ -81,7 +81,7 @@ export function MatchListSkeleton({
 }
 
 const local = {
-  group: { borderRadius: radius.xl, borderWidth: 1, overflow: "hidden" as const },
+  group: { borderRadius: radius.xl, overflow: "hidden" as const },
   rowItem: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md, padding: spacing.lg },
   rowTeams: { flex: 1, gap: spacing.sm },
   rowTeam: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.sm },

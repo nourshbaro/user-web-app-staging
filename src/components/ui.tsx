@@ -1,5 +1,5 @@
 import { storage } from "@/lib/storage";
-import { adjacentPrimaryTab, getPrimaryTabTransitionDirection, PRIMARY_TAB_ROUTES, setPrimaryTabTransitionDirection, shouldShowBottomNavigation, swipeTabStep, tabEntranceOffset, type PrimaryTabRoute } from "@/lib/navigationPresentation";
+import { adjacentPrimaryTab, PRIMARY_TAB_ROUTES, setPrimaryTabTransitionDirection, shouldShowBottomNavigation, swipeTabStep, type PrimaryTabRoute } from "@/lib/navigationPresentation";
 import { darkColors, getThemeColors, lightColors, type ThemeMode } from "@/lib/themePalette";
 import { router, usePathname } from "expo-router";
 import { SymbolView } from "expo-symbols";
@@ -9,7 +9,7 @@ import { radius, size, spacing, typography } from "@/lib/designTokens";
 import { fontStyleFor } from "@/lib/fontFamilies";
 import { createContext, forwardRef, PropsWithChildren, useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 import type { RefObject } from "react";
-import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, TextInput, TextInputProps, useColorScheme, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Animated, Easing, Platform, Pressable, StyleSheet, Text, TextInput, TextInputProps, useColorScheme, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { scheduleOnRN } from "react-native-worklets";
@@ -17,8 +17,17 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 
 const THEME_KEY = "lfa_theme";
 
-/** Visible-label tab row: 30pt icon pill + 14pt label + spacing, ≥ the 48pt touch target. */
-const BOTTOM_NAV_ROW_HEIGHT = 58;
+const BUTTON_RADIUS = Platform.OS === "android" ? 20 : 14;
+
+/** v3 `lfEnter` for tab switches. */
+const TAB_ENTER_MS = 280;
+const TAB_ENTER_RISE = 10;
+
+/** v3 tab bar: Android uses the Material-style indicator pill; iOS and web the flat icon row. */
+const ANDROID_NAV = Platform.OS === "android";
+
+/** Visible-label tab row (v3): icon + label + spacing, ≥ the 48pt touch target. */
+const BOTTOM_NAV_ROW_HEIGHT = ANDROID_NAV ? 58 : 50;
 
 function bottomNavBottomPadding(bottomInset: number) {
   return Math.max(bottomInset, spacing.sm);
@@ -136,7 +145,8 @@ export function Screen({ children }: { children: React.ReactNode }) {
       return;
     }
     entrance.setValue(0);
-    Animated.timing(entrance, { toValue: 1, duration: 190, useNativeDriver: true }).start();
+    // v3 `lfEnter`: fade + 10pt rise over 280ms (direction-neutral, so identical in RTL).
+    Animated.timing(entrance, { toValue: 1, duration: TAB_ENTER_MS, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }).start();
   }, [entrance, hasBottomNavigation, pathname, reducedMotion]);
 
   return (
@@ -147,7 +157,7 @@ export function Screen({ children }: { children: React.ReactNode }) {
           paddingTop: Math.max(insets.top, 14),
           paddingBottom: hasBottomNavigation ? bottomNavHeight(insets.bottom) + spacing.sm : Math.max(insets.bottom, 12),
           opacity: entrance,
-          transform: [{ translateX: entrance.interpolate({ inputRange: [0, 1], outputRange: [tabEntranceOffset(getPrimaryTabTransitionDirection(), isRTL), 0] }) }],
+          transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [TAB_ENTER_RISE, 0] }) }],
         },
       ]}>
         {children}
@@ -165,7 +175,10 @@ export function Card({ children }: { children: React.ReactNode }) {
 type ButtonProps = {
   title: string;
   onPress?: () => void;
-  variant?: "primary" | "secondary" | "danger";
+  /** `ghost`: v3 text button (no fill), e.g. "Not now" / "Skip". */
+  variant?: "primary" | "secondary" | "danger" | "ghost";
+  /** Ghost text tone: `muted` (v3 Skip) or the default strong ink (v3 Not now). */
+  tone?: "strong" | "muted";
   disabled?: boolean;
   /** Owner's in-flight flag: shows a spinner, blocks presses, and reports busy to assistive tech. */
   loading?: boolean;
@@ -174,13 +187,17 @@ type ButtonProps = {
   accessibilityHint?: string;
 };
 
-export function Button({ title, onPress, variant = "primary", disabled, loading = false, accessibilityLabel, accessibilityHint }: ButtonProps) {
+export function Button({ title, onPress, variant = "primary", tone = "strong", disabled, loading = false, accessibilityLabel, accessibilityHint }: ButtonProps) {
   const theme = useTheme();
   const { meta } = useI18n();
+  const reducedMotion = useReducedMotion();
   const inactive = Boolean(disabled || loading);
-  const textColor = inactive
+  const ghost = variant === "ghost";
+  const textColor = inactive && !ghost
     ? theme.colors.disabledText
-    : variant === "secondary"
+    : ghost
+      ? (tone === "muted" ? theme.colors.textMuted : theme.colors.textStrong)
+      : variant === "secondary"
       ? theme.colors.onActionSecondary
       : variant === "danger"
         ? theme.colors.onActionDestructive
@@ -199,12 +216,14 @@ export function Button({ title, onPress, variant = "primary", disabled, loading 
         theme.styles.button,
         variant === "secondary" && theme.styles.buttonSecondary,
         variant === "danger" && theme.styles.buttonDanger,
-        inactive && theme.styles.buttonDisabled,
-        pressed && !inactive && { opacity: 0.82 },
+        ghost && theme.styles.buttonGhost,
+        inactive && (ghost ? { opacity: 0.4 } : theme.styles.buttonDisabled),
+        // v3 press: a slight scale-down (opacity under reduced motion); instant, never delays onPress.
+        pressed && !inactive && (reducedMotion ? { opacity: 0.82 } : { transform: [{ scale: 0.98 }] }),
       ]}
     >
       {loading ? <ActivityIndicator size="small" color={textColor} accessibilityElementsHidden importantForAccessibility="no" /> : null}
-      <Text style={[theme.styles.buttonText, fontStyleFor("text", typography.action.fontWeight, meta.script), { color: textColor }]}>{title}</Text>
+      <Text style={[theme.styles.buttonText, fontStyleFor("text", ghost ? "500" : typography.action.fontWeight, meta.script), { color: textColor }]}>{title}</Text>
     </Pressable>
   );
 }
@@ -264,7 +283,7 @@ export function Loading({ label }: { label?: string } = {}) {
 function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; onNavigate: (route: PrimaryTabRoute) => void }) {
   const pathname = usePathname();
   const theme = useTheme();
-  const { t, meta } = useI18n();
+  const { t } = useI18n();
 
   // Same order as PRIMARY_TAB_ROUTES (reading order; swipe follows it).
   const tabs: { labelKey: MessageKey; href: PrimaryTabRoute; icon: any }[] = [
@@ -276,58 +295,114 @@ function BottomNavigation({ bottomInset, onNavigate }: { bottomInset: number; on
   ];
 
   return (
-    <>
-      <View
-        style={[
-          theme.styles.bottomNav,
-          {
-            paddingBottom: bottomNavBottomPadding(bottomInset),
-            backgroundColor: theme.colors.surface,
-            borderTopColor: theme.colors.hairline,
-          },
-        ]}
-      >
-        <View accessibilityRole="tablist" accessibilityLabel={t("nav.primary")} style={theme.styles.bottomNavRow}>
-          {tabs.map((tab) => {
-            const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
-            const label = t(tab.labelKey);
-            const color = active ? theme.colors.tones.brand.fg : theme.colors.textMuted;
-            return (
-              <Pressable
-                key={tab.href}
-                onPress={() => {
-                  if (active) return;
-                  onNavigate(tab.href);
-                }}
-                style={theme.styles.bottomNavItem}
-                accessibilityRole="tab"
-                accessibilityLabel={label}
-                aria-selected={active}
-              >
-                {/* Selected = indicator pill + weight + colour, never colour alone. */}
-                <View style={[theme.styles.bottomNavIconWrap, active && { backgroundColor: theme.colors.selectedSurface }]}>
-                  <SymbolView
-                    name={tab.icon as any}
-                    size={22}
-                    tintColor={color}
-                    fallback={<Text style={[theme.styles.bottomNavFallback, { color }]}>{label.slice(0, 1)}</Text>}
-                  />
-                </View>
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.8}
-                  maxFontSizeMultiplier={1.3}
-                  // Selected = heavier weight too (never colour alone).
-                  style={[theme.styles.bottomNavText, fontStyleFor("text", active ? "700" : "500", meta.script), { color }]}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+    <View
+      style={[
+        theme.styles.bottomNav,
+        {
+          paddingBottom: bottomNavBottomPadding(bottomInset),
+          // v3: translucent `--bar` with a hairline edge on iOS/web; flat `--card2` on Android.
+          backgroundColor: ANDROID_NAV ? theme.colors.panelSoft : theme.colors.bar,
+          borderTopColor: ANDROID_NAV ? "transparent" : theme.colors.hairline,
+        },
+      ]}
+    >
+      <View accessibilityRole="tablist" accessibilityLabel={t("nav.primary")} style={theme.styles.bottomNavRow}>
+        {tabs.map((tab) => {
+          const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
+          const label = t(tab.labelKey);
+          return (
+            <Pressable
+              key={tab.href}
+              onPress={() => {
+                if (active) return;
+                onNavigate(tab.href);
+              }}
+              style={theme.styles.bottomNavItem}
+              accessibilityRole="tab"
+              accessibilityLabel={label}
+              aria-selected={active}
+            >
+              <TabItem active={active} label={label} icon={tab.icon} />
+            </Pressable>
+          );
+        })}
       </View>
+    </View>
+  );
+}
+
+/**
+ * One tab's icon and visible label, per v3: iOS shows a 26pt icon (no pill)
+ * and a 10pt label; Android a 64x32 indicator pill that grows in behind the
+ * icon and a 12pt label. The newly selected icon gives a short bounce. All
+ * motion is skipped under reduced motion. Selection is also shown by weight
+ * and (Android) the pill, never colour alone.
+ */
+function TabItem({ active, label, icon }: { active: boolean; label: string; icon: unknown }) {
+  const theme = useTheme();
+  const { meta } = useI18n();
+  const reducedMotion = useReducedMotion();
+  const [bounce] = useState(() => new Animated.Value(1));
+  const [indicator] = useState(() => new Animated.Value(active ? 1 : 0));
+  const color = active ? theme.colors.actionPrimary : theme.colors.textMuted;
+
+  useEffect(() => {
+    if (!active || reducedMotion) {
+      bounce.setValue(1);
+      indicator.setValue(active ? 1 : 0);
+      return;
+    }
+    indicator.setValue(0);
+    Animated.parallel([
+      Animated.sequence([
+        Animated.timing(bounce, { toValue: 0.84, duration: 150, useNativeDriver: true }),
+        Animated.spring(bounce, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 12 }),
+      ]),
+      Animated.timing(indicator, { toValue: 1, duration: 280, useNativeDriver: false }),
+    ]).start();
+  }, [active, bounce, indicator, reducedMotion]);
+
+  const glyph = (
+    <Animated.View style={{ transform: [{ scale: bounce }] }}>
+      <SymbolView
+        name={icon as any}
+        size={ANDROID_NAV ? 22 : 26}
+        tintColor={color}
+        fallback={<Text style={[theme.styles.bottomNavFallback, { color }]}>{label.slice(0, 1)}</Text>}
+      />
+    </Animated.View>
+  );
+
+  return (
+    <>
+      {ANDROID_NAV ? (
+        <View style={theme.styles.bottomNavIconWrap}>
+          {/* Selected = indicator pill + weight + colour, never colour alone. */}
+          {active ? (
+            <Animated.View
+              style={[
+                theme.styles.bottomNavIndicator,
+                {
+                  backgroundColor: theme.colors.selectedSurface,
+                  opacity: indicator,
+                  width: indicator.interpolate({ inputRange: [0, 1], outputRange: [28, 64] }),
+                },
+              ]}
+            />
+          ) : null}
+          {glyph}
+        </View>
+      ) : glyph}
+      <Text
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.8}
+        maxFontSizeMultiplier={1.3}
+        // Selected = heavier weight too (never colour alone).
+        style={[theme.styles.bottomNavText, fontStyleFor("text", active ? (ANDROID_NAV ? "700" : "600") : "500", meta.script), { color }]}
+      >
+        {label}
+      </Text>
     </>
   );
 }
@@ -373,7 +448,8 @@ function createStyles(palette: typeof lightColors) {
     chipText: { color: palette.ink, fontSize: 13, fontWeight: "600" },
     button: {
       minHeight: size.controlHeight,
-      borderRadius: radius.md,
+      // v3 `--btnR`: 14 on iOS, 20 on Android.
+      borderRadius: BUTTON_RADIUS,
       backgroundColor: palette.actionPrimary,
       flexDirection: "row",
       alignItems: "center",
@@ -383,6 +459,7 @@ function createStyles(palette: typeof lightColors) {
       paddingVertical: spacing.sm,
     },
     buttonSecondary: { backgroundColor: palette.actionSecondary, borderWidth: 1, borderColor: palette.border },
+    buttonGhost: { backgroundColor: "transparent" },
     buttonDanger: { backgroundColor: palette.actionDestructive },
     buttonDisabled: { backgroundColor: palette.disabledSurface, borderColor: palette.disabledSurface },
     // Color is applied per state in <Button>; text may wrap for long (e.g. Arabic) labels.
@@ -403,8 +480,8 @@ function createStyles(palette: typeof lightColors) {
       left: 0,
       right: 0,
       bottom: 0,
-      borderTopWidth: 1,
-      paddingTop: spacing.xs,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingTop: ANDROID_NAV ? spacing.md : 7,
       alignItems: "center",
     },
     bottomNavRow: {
@@ -425,8 +502,8 @@ function createStyles(palette: typeof lightColors) {
       paddingHorizontal: spacing.xxs,
     },
     bottomNavIconWrap: {
-      width: 56,
-      height: 30,
+      width: 64,
+      height: 32,
       borderRadius: radius.pill,
       alignItems: "center",
       justifyContent: "center",
@@ -453,10 +530,16 @@ function createStyles(palette: typeof lightColors) {
     bottomNavItemActive: {
       backgroundColor: isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.08)",
     },
+    bottomNavIndicator: {
+      position: "absolute",
+      top: 0,
+      bottom: 0,
+      borderRadius: 16,
+    },
     bottomNavText: {
       maxWidth: "100%",
-      fontSize: 11,
-      lineHeight: 14,
+      fontSize: ANDROID_NAV ? 12 : 10,
+      lineHeight: ANDROID_NAV ? 15 : 13,
       textAlign: "center",
     },
     bottomNavFallback: {

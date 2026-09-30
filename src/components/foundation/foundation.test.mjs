@@ -11,6 +11,7 @@ const statePanel = await read("./StatePanel.tsx");
 const skeleton = await read("./Skeleton.tsx");
 const direction = await read("./direction.tsx");
 const appText = await read("./AppText.tsx");
+const appTextBase = await read("./appTextStyle.ts");
 const matchDetail = await read("../../app/match/[id].tsx");
 const layout = await read("../../app/_layout.tsx");
 
@@ -97,8 +98,10 @@ test("skeletons honor reduced motion and group into one loading element", () => 
 });
 
 test("text alignment is natural (no hard-coded left/right) in the typography primitive", () => {
-  assert.match(appText, /textAlign: align === "center" \? "center" : "auto"/);
-  assert.doesNotMatch(appText, /textAlign: "(left|right)"/);
+  // The base style lives in the pure appTextStyle helper (diff-safe; see filterChipCrash.test).
+  assert.match(appTextBase, /textAlign: align === "center" \? \("center" as const\) : \("auto" as const\)/);
+  assert.doesNotMatch(appText + appTextBase, /textAlign: "(left|right)"/);
+  assert.match(appText, /appTextBaseStyle\(\{/);
   assert.match(direction, /PHYSICAL_LAYOUT_STYLE/);
 });
 

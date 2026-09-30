@@ -112,21 +112,35 @@ export function matchListState({
 }
 
 /**
- * Only statuses the backend actually returns are mapped. `scheduled` maps to
- * the scheduled presentation only when the backend says so. A blank/missing
- * status is `unknown` (neutral, never assumed to be scheduled); any other
- * value is shown as the backend's own word with a neutral tone — never
- * reinterpreted as live, finished or sold out.
+ * Only statuses the backend actually returns are mapped: `scheduled`,
+ * `live` and `completed` (the values `/matches/scheduled?status=` accepts).
+ * A blank/missing status is `unknown` (neutral, never assumed to be
+ * scheduled); any other value is shown as the backend's own word with a
+ * neutral tone — never reinterpreted as live, finished or sold out.
  */
 export function matchStatusPresentation(status: string | null | undefined): {
-  known: "scheduled" | "unknown" | null;
+  known: "scheduled" | "live" | "completed" | "unknown" | null;
   tone: StatusTone;
   raw: string;
 } {
   const raw = (status ?? "").trim();
   if (raw === "") return { known: "unknown", tone: "neutral", raw: "" };
-  if (raw.toLowerCase() === "scheduled") return { known: "scheduled", tone: "info", raw: "scheduled" };
+  const normalized = raw.toLowerCase();
+  if (normalized === "scheduled") return { known: "scheduled", tone: "info", raw: "scheduled" };
+  if (normalized === "live") return { known: "live", tone: "live", raw: "live" };
+  if (normalized === "completed") return { known: "completed", tone: "neutral", raw: "completed" };
   return { known: null, tone: "neutral", raw: raw.replace(/[_-]+/g, " ") };
+}
+
+/**
+ * The backend score as "home–away", only when BOTH scores are real numbers in
+ * the response. Never derived, defaulted to 0, or shown for a partial score.
+ */
+export function matchScore(match: { home_score?: number | null; away_score?: number | null }): string | null {
+  const home = match.home_score;
+  const away = match.away_score;
+  if (typeof home !== "number" || typeof away !== "number" || !Number.isFinite(home) || !Number.isFinite(away)) return null;
+  return `${home}–${away}`;
 }
 
 /** Short crest fallback when the backend has no logo: short name, else initials. */
@@ -234,10 +248,74 @@ export function groupMatchesByDate<T extends Pick<ApiMatch, "match_date">>(match
  * selected date outside the strip is kept visible (first) so the current
  * filter is never hidden.
  */
-export function matchDateStrip(today: Date, count: number, selected?: string): string[] {
-  const days = Array.from({ length: count }, (_, offset) =>
-    toDateInputValue(new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)),
+export function matchDateStrip(today: Date, count: number, selected?: string, startOffset = 0): string[] {
+  const days = Array.from({ length: count }, (_, index) =>
+    toDateInputValue(new Date(today.getFullYear(), today.getMonth(), today.getDate() + startOffset + index)),
   );
   if (selected && !days.includes(selected)) return [selected, ...days];
   return days;
+}
+
+/**
+ * Home "Latest result": the completed fixture with the most recent valid
+ * kickoff. Fixtures with an unknown kickoff are used only if no fixture has a
+ * known one (never preferred over a dated result).
+ */
+export function latestCompletedMatch<T extends Pick<ApiMatch, "match_date" | "kickoff_at">>(matches: readonly T[]): T | null {
+  const sorted = sortMatchesByKickoff(matches);
+  const dated = sorted.filter((match) => matchKickoffTime(match) !== null);
+  return dated[dated.length - 1] ?? sorted[0] ?? null;
+}
+
+/** The v3 Matches segments. Each maps to one backend `status` query. */
+export type MatchTab = "upcoming" | "live" | "results";
+
+export const MATCH_TABS: readonly MatchTab[] = ["upcoming", "live", "results"];
+
+/** `/matches/scheduled` status for a tab: Upcoming is the default list (no status). */
+export function statusForTab(tab: MatchTab): MatchFilters["status"] {
+  return tab === "live" ? "live" : tab === "results" ? "completed" : undefined;
+}
+
+/**
+ * The one backend query for the applied filters and tab. Every tab sends an
+ * explicitly selected date (the backend accepts `status=live&date=…`); v3 only
+ * hides the Live date STRIP, so a Live date comes from the filter sheet.
+ */
+export function matchQueryFor(filters: MatchFilters, tab: MatchTab): MatchFilters {
+  return {
+    team: filters.team,
+    stadium: filters.stadium,
+    date: filters.date,
+    status: statusForTab(tab),
+  };
+}
+
+/**
+ * v3 date strips: Upcoming shows today and the next 12 days; Results the 7
+ * days before today; Live has none. A selected date outside the strip stays
+ * visible (first).
+ */
+export function dateStripForTab(tab: MatchTab, today: Date, selected?: string): string[] {
+  if (tab === "live") return [];
+  return tab === "results" ? matchDateStrip(today, 7, selected, -7) : matchDateStrip(today, 13, selected);
+}
+
+/** Calendar dates ("YYYY-MM-DD") that have at least one fixture, from real results. */
+export function datesWithMatches(matches: readonly Pick<ApiMatch, "match_date">[]): Set<string> {
+  const dates = new Set<string>();
+  for (const match of matches) {
+    if (parseStrictCalendarDate(match.match_date)) dates.add(match.match_date.slice(0, 10));
+  }
+  return dates;
+}
+
+/**
+ * Whether the Live-availability probe (`status=live`, no filters) is a
+ * DIFFERENT request from the visible query. On an unfiltered Live tab they are
+ * identical, so the visible rows answer "is anything live?" and the probe must
+ * not request (or force-refresh) the same thing again.
+ */
+export function needsSeparateLiveProbe(tab: MatchTab, query: MatchFilters) {
+  return !(tab === "live" && !query.team && !query.stadium && !query.date);
 }

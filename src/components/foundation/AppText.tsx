@@ -2,6 +2,7 @@ import { useTheme } from "@/components/ui";
 import { useI18n } from "@/i18n/I18nProvider";
 import { lineHeightForScript, typography, type TypographyToken, type TypographyVariant } from "@/lib/designTokens";
 import { fontStyleFor } from "@/lib/fontFamilies";
+import { appTextBaseStyle } from "@/components/foundation/appTextStyle";
 import type { ThemeColors } from "@/lib/themePalette";
 import type { Ref } from "react";
 import { Text, type TextProps } from "react-native";
@@ -41,16 +42,14 @@ export function AppText({ variant = "body", tone = "strong", align = "start", st
     <Text
       {...props}
       style={[
-        {
-          fontSize: token.fontSize,
+        appTextBaseStyle({
+          token,
           lineHeight: lineHeightForScript(token, meta.script),
-          ...fontStyleFor(token.family ?? "text", token.fontWeight, meta.script),
-          fontVariant: token.fontVariant ? [...token.fontVariant] : undefined,
+          fontStyle: fontStyleFor(token.family ?? "text", token.fontWeight, meta.script),
           color: toneColor(theme.colors, tone),
-          textAlign: align === "center" ? "center" : "auto",
-          // Uppercase display titles are Latin-only: Arabic script has no case.
-          textTransform: token.uppercase && meta.script === "latin" ? "uppercase" : undefined,
-        },
+          align,
+          latin: meta.script === "latin",
+        }),
         style,
       ]}
     />

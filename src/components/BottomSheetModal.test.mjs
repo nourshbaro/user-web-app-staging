@@ -40,6 +40,12 @@ async function harness(platformOS = "ios") {
       styles: { muted: {} },
       colors: { bg: "white", line: "gray", panel: "white", ink: "black", muted: "gray" },
     });
+    export const useI18n = () => ({ meta: { script: "latin" } });
+    export const typography = {
+      displaySheet: { fontSize: 30, lineHeight: 36, fontWeight: "700" },
+      displaySheetOption: { fontSize: 23, lineHeight: 28, fontWeight: "700" },
+    };
+    export const fontStyleFor = () => ({});
     export const scheduleOnRN = (fn, ...args) => fn(...args);
     const chainable = () => {
       const obj = {};

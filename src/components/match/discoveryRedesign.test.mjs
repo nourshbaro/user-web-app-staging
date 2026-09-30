@@ -36,7 +36,9 @@ test("the date strip is consecutive days from today and never hides the selected
 });
 
 test("date chips drive the existing backend date filter through the synchronous invalidation path", () => {
-  assert.match(list, /<MatchDateStrip\s+value=\{filters\.date\}\s+onSelect=\{\(date\) => changeFilters\(\{ \.\.\.filters, date \}\)\}/);
+  assert.match(list, /<MatchDateStrip\s+tab=\{tab\}\s+value=\{query\.date\}\s+datesWithFixtures=\{dotDates\}\s+onSelect=\{\(date\) => changeFilters\(\{ \.\.\.filters, date \}\)\}/);
+  // Dots come only from real results for the tab (no extra request, no guessing).
+  assert.match(list, /dates: datesWithMatches\(data\.matches\)/);
   assert.match(filters, /onPress=\{\(\) => onSelect\(day\)\}/);
   assert.match(filters, /onPress=\{\(\) => onSelect\(undefined\)\}/);
   // Selection state reaches assistive tech on web and native.
@@ -45,20 +47,39 @@ test("date chips drive the existing backend date filter through the synchronous 
   assert.doesNotMatch(list, /matches\.filter\(|data\.matches\.filter\(/);
 });
 
-test("Matches shows scheduled fixtures only: no fabricated live, results or competition filter", () => {
-  for (const source of [list, filters]) {
-    // ("results" alone is the existing list-state name, so it is not matched here.)
-    assert.doesNotMatch(source, /"live"|isLive|matches\.(live|results)|mTab|compF|competition/i);
-  }
+test("Matches tabs map to the confirmed backend statuses; no competition filter, nothing fabricated", async () => {
+  const discovery = await read("../../lib/matchDiscovery.ts");
+  // Upcoming = default scheduled list, Live = status=live, Results = status=completed.
+  assert.match(discovery, /return tab === "live" \? "live" : tab === "results" \? "completed" : undefined;/);
+  const service = await read("../../services/matches.ts");
+  assert.match(service, /if \(filters\.status\) params\.set\("status", filters\.status\);/);
+  // Status composes server-side; the list never filters rows on the device.
+  assert.doesNotMatch(list, /matches\.filter\(|\.status === "live"|minute/);
+  // No competition filter: /matches/scheduled has no such parameter.
+  for (const source of [list, filters]) assert.doesNotMatch(source, /competition|compF/i);
   assert.match(list, /groupMatchesByDate\(matches\)/);
   assert.match(list, /heading=\{group\.date \? formatLongCalendarDate\(group\.date\) : t\("matches\.dateTbc"\)\}/);
 });
 
-test("Home renders only production data: no live, results, scores or extra portal requests", () => {
-  assert.doesNotMatch(home, /live|result|score|profileService|portal|apiRequest|Service\./i);
-  // The My Tickets shortcut is a tab switch, not a data request.
-  const shortcut = home.slice(home.indexOf("function TicketsShortcut"));
+test("Home renders only backend data through the existing owners (no fabricated live data)", async () => {
+  // Live now / Latest result: the same scheduled-matches owner with the backend status filter.
+  assert.match(home, /const LIVE_FILTERS: MatchFilters = \{ status: "live" \};/);
+  assert.match(home, /const COMPLETED_FILTERS: MatchFilters = \{ status: "completed" \};/);
+  assert.match(home, /const live = useScheduledMatches\(LIVE_FILTERS\);/);
+  assert.match(home, /const completed = useScheduledMatches\(COMPLETED_FILTERS\);/);
+  // Sections render only when the backend returned such matches.
+  assert.match(home, /\{liveMatch \? \(/);
+  assert.match(home, /\{latestResult \? \(/);
+  // No direct requests from the screen; no minutes/events/statistics.
+  assert.doesNotMatch(home, /apiRequest|profileService|matchesService|minute|statistic|timeline/i);
+  // The My Tickets card: portal data via its owner hook, and a tab switch.
+  assert.match(home, /const tickets = useNextTicketMatch\(\);/);
+  const shortcut = home.slice(home.indexOf("function TicketsCard"));
   assert.match(shortcut, /onPress=\{\(\) => switchTab\("\/tickets"\)\}/);
+  const owner = await read("../../hooks/useNextTicketMatch.ts");
+  assert.match(owner, /profileService\s*\.matches\("upcoming"\)/);
+  assert.match(owner, /const current = \(\) => request\.isCurrent\(ticket\) && generation === getUserScopedCacheGeneration\(\);/);
+  assert.match(owner, /if \(!owner\) return;/);
   assert.match(home, /function switchTab\(route: PrimaryTabRoute\) \{\s*setPrimaryTabTransitionDirection\(1\);\s*router\.replace\(route\);/);
   // Upcoming rows reuse the same owner-selected list.
   assert.match(home, /upcoming\.map\(\(match, index\) => \(\s*<MatchCard key=\{match\.id\} match=\{match\} variant="dated"/);

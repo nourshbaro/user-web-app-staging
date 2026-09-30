@@ -25,6 +25,10 @@ export const radius = {
   xl: 20,
   /** Hero surfaces. */
   xxl: 24,
+  /** v3 home hero. */
+  hero: 26,
+  /** v3 bottom sheets (top corners). */
+  sheet: 28,
   pill: 999,
 } as const;
 
@@ -49,7 +53,8 @@ export const size = {
   touchTarget: 48,
   /** Absolute minimum interactive size (Apple HIG 44pt); use hitSlop to reach it. */
   touchTargetMin: 44,
-  controlHeight: 48,
+  /** v3 primary buttons and fields are 52pt tall. */
+  controlHeight: 52,
   controlHeightCompact: 40,
   badgeHeight: 24,
   iconSm: 16,
@@ -119,16 +124,24 @@ export const typography = {
   caption: { fontSize: 12, lineHeight: 17, fontWeight: "500" },
   /** Small grouping heading (e.g. a date above a list of fixtures). */
   overline: { fontSize: 12, lineHeight: 17, fontWeight: "600", uppercase: true },
-  action: { fontSize: 16, lineHeight: 21, fontWeight: "700" },
+  /** v3 buttons: 17px / 600. */
+  action: { fontSize: 17, lineHeight: 22, fontWeight: "600" },
   numeric: { fontSize: 18, lineHeight: 24, fontWeight: "800", fontVariant: ["tabular-nums"] },
   numericLarge: { fontSize: 26, lineHeight: 32, fontWeight: "900", fontVariant: ["tabular-nums"] },
-  // Display role (Barlow Condensed): primary-tab titles, section titles,
-  // kickoff times, dates and countdown emphasis.
-  displayTitle: { fontSize: 38, lineHeight: 46, fontWeight: "700", family: "display", uppercase: true },
+  // Display role (Barlow Condensed), sized to LFA Screen v3: tab titles,
+  // splash/onboarding titles, sheet titles, section titles, kickoff times,
+  // scores, dates and countdown emphasis.
+  displayTitle: { fontSize: 40, lineHeight: 48, fontWeight: "700", family: "display", uppercase: true },
+  displayHero: { fontSize: 36, lineHeight: 44, fontWeight: "700", family: "display", uppercase: true },
+  displayPrompt: { fontSize: 34, lineHeight: 41, fontWeight: "700", family: "display", uppercase: true },
+  displaySheet: { fontSize: 30, lineHeight: 36, fontWeight: "700", family: "display", uppercase: true },
   displaySection: { fontSize: 26, lineHeight: 32, fontWeight: "700", family: "display", uppercase: true },
-  displayKickoff: { fontSize: 34, lineHeight: 41, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
+  displaySheetOption: { fontSize: 23, lineHeight: 28, fontWeight: "700", family: "display" },
+  displayScore: { fontSize: 36, lineHeight: 44, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
+  displayKickoff: { fontSize: 35, lineHeight: 42, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
+  displayDay: { fontSize: 24, lineHeight: 29, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
   displayNumeral: { fontSize: 22, lineHeight: 27, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
-  displayCountdown: { fontSize: 18, lineHeight: 22, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
+  displayCountdown: { fontSize: 17, lineHeight: 21, fontWeight: "700", family: "display", fontVariant: ["tabular-nums"] },
 } as const satisfies Record<string, TypographyToken>;
 
 export type TypographyVariant = keyof typeof typography;

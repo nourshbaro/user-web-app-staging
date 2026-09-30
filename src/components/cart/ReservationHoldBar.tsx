@@ -32,12 +32,12 @@ type Props = {
 export function ReservationHoldBar({ secondsLeft, topInset, onPress }: Props) {
   const theme = useTheme();
   const i18n = useI18n();
-  const urgency = reservationUrgency(secondsLeft);
-  const urgent = urgency === "low" || urgency === "critical";
+  // v3: the countdown turns pink in the final minute.
+  const urgent = reservationUrgency(secondsLeft) === "critical";
   const { minutes, seconds } = countdownParts(secondsLeft);
 
   return (
-    <View style={[local.strip, { paddingTop: topInset, backgroundColor: theme.colors.bg }]}>
+    <View style={[local.strip, { paddingTop: topInset, backgroundColor: theme.colors.background }]}>
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
@@ -56,8 +56,8 @@ export function ReservationHoldBar({ secondsLeft, topInset, onPress }: Props) {
               },
             ]}
           >
-            <PulseDot color={theme.colors.onHeroUrgent} />
-            <AppText variant="caption" tone="onHero" numberOfLines={1} style={local.label}>
+            <PulseDot color={theme.isDark ? theme.colors.primaryLight : theme.colors.primaryDark} />
+            <AppText variant="meta" tone="onHero" numberOfLines={1} style={local.label}>
               {i18n.t("reservation.indicator.label")}
             </AppText>
             <AppText
@@ -67,7 +67,7 @@ export function ReservationHoldBar({ secondsLeft, topInset, onPress }: Props) {
             >
               {minutesSeconds(secondsLeft)}
             </AppText>
-            <View style={[local.view, { backgroundColor: theme.colors.heroRaised }]}>
+            <View style={local.view}>
               <AppText variant="caption" tone="onHero">{i18n.t("reservation.indicator.view")}</AppText>
             </View>
           </View>
@@ -120,22 +120,24 @@ const local = {
     justifyContent: "center" as const,
     paddingHorizontal: spacing.lg,
   },
+  // v3: 30pt night pill, radius 15, padding 0 5 0 12, gap 9.
   pill: {
-    minHeight: 34,
+    minHeight: 30,
     maxWidth: "100%" as const,
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    gap: spacing.sm,
+    gap: 9,
     paddingStart: spacing.md,
-    paddingEnd: spacing.xs,
+    paddingEnd: 5,
     paddingVertical: spacing.xxs,
     borderRadius: radius.pill,
     borderWidth: 1,
   },
-  label: { flexShrink: 1 },
+  label: { flexShrink: 1, fontSize: 13, lineHeight: 17 },
   // Reserve the widest value so the pill never reflows every second.
   time: { minWidth: 44, textAlign: "center" as const },
-  view: { borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
+  // v3: 22pt chip, radius 11, rgba(255,255,255,.14), 12/600.
+  view: { minHeight: 22, justifyContent: "center" as const, borderRadius: 11, paddingHorizontal: 9, backgroundColor: "rgba(255,255,255,0.14)" },
   dotWrap: { width: 8, height: 8 },
   dot: { position: "absolute" as const, width: 8, height: 8, borderRadius: 4 },
 };

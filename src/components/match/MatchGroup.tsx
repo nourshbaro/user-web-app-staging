@@ -5,22 +5,18 @@ import type { PropsWithChildren } from "react";
 import { View } from "react-native";
 
 /**
- * Grouped card holding match rows (v3), with an optional heading above it
- * (e.g. the date the fixtures share). Layout only.
+ * Grouped card holding match rows (v3: radius 20, `--shadow`, no border),
+ * with an optional heading above it (e.g. the date the fixtures share).
+ * Layout only.
  */
 export function MatchGroup({ heading, children }: PropsWithChildren<{ heading?: string }>) {
   const theme = useTheme();
   return (
-    <View style={local.section}>
+    <View>
       {heading ? (
         <AppText variant="overline" tone="muted" accessibilityRole="header" style={local.heading}>{heading}</AppText>
       ) : null}
-      <View
-        style={[
-          local.card,
-          { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairline, boxShadow: `0 6px 20px ${theme.colors.shadow}` },
-        ]}
-      >
+      <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
         {children}
       </View>
     </View>
@@ -28,7 +24,7 @@ export function MatchGroup({ heading, children }: PropsWithChildren<{ heading?: 
 }
 
 const local = {
-  section: { gap: spacing.sm },
-  heading: { paddingHorizontal: spacing.xs },
-  card: { borderRadius: radius.xl, borderWidth: 1, overflow: "hidden" as const },
+  // v3: padding 18 20 8 (the list already applies the 16pt gutter).
+  heading: { paddingTop: 18, paddingBottom: spacing.sm, paddingHorizontal: spacing.xs },
+  card: { borderRadius: radius.xl, overflow: "hidden" as const },
 };

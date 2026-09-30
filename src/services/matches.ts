@@ -30,6 +30,7 @@ export const matchesService = {
     if (filters.team) params.set("team", filters.team);
     if (filters.stadium) params.set("stadium", filters.stadium);
     if (filters.date) params.set("date", filters.date);
+    if (filters.status) params.set("status", filters.status);
     const query = params.toString();
     const path = `/matches/scheduled${query ? `?${query}` : ""}`;
     return cached(path, async () => normalizeMatches(await apiRequest<unknown>(path)), force);

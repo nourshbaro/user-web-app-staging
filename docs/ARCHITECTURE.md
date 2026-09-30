@@ -276,11 +276,18 @@ Not used by any route (do not assume they own anything):
   - unknown kickoffs sort last and can never be featured or upcoming;
   - times are read as local wall-clock time, because the backend timezone
     contract is unresolved (`docs/API_INTEGRATION.md` §14).
-- **Home** (`src/components/HomeFeed.tsx`, v3 hierarchy):
-  - brand header (with the cart action), the featured-match hero, the ads
-    banner, a My Tickets shortcut (a tab switch; it loads nothing), then an
-    "Upcoming" section with "See all" (tab-replace to `/matches`);
-  - no live, results or score sections: the API used has no such data;
+- **Home** (`src/components/HomeFeed.tsx`, LFA Screen v3):
+  - brand header (initials avatar → Profile tab), the featured-match hero,
+    the ads banner, the My Tickets card, Live now, Latest result, then
+    "Upcoming" with "See all" (tab-replace to `/matches`);
+  - Live now / Latest result: `useScheduledMatches` with `status: "live"`
+    / `"completed"` (same service, cache and guards); shown only when the
+    backend returns such matches; backend scores only (`matchScore`), no
+    minutes, events or statistics; display-only (no result screen yet);
+  - My Tickets card: `useNextTicketMatch` (`profileService.matches("upcoming")`,
+    request authority + user-scoped generation, signed-in only) → "{n}
+    tickets for {home} v {away}"; otherwise the plain entry; always a tab
+    switch;
   - the featured match is **presentation-derived**, not backend metadata: the
     earliest valid kickoff not yet passed (`selectHomeMatches`);
   - Upcoming holds only further valid, not-yet-passed kickoffs, so Home shows
@@ -291,23 +298,27 @@ Not used by any route (do not assume they own anything):
     polling and no network request; it re-selects from loaded data;
   - states: skeletons, error with Retry, "No scheduled matches", and "No
     upcoming matches" (with a link to Matches).
-- **Matches** (`src/components/MatchesList.tsx`):
-  - filter values (team, stadium, date) are composition-level state and map
-    to the existing backend parameters;
-  - every change goes through `changeFilters`, which calls `invalidate`
-    before setting state;
-  - UI: a compact date strip (All + today and the next 13 days + "More
-    dates"; each chip is the existing `date` filter, never device-side
-    filtering), a filter bar (result summary, Clear, Filters with active
-    count, removable team/venue chips) and a filter sheet
-    (`BottomSheetModal`) with radio-style team/venue options and an inline
-    calendar;
-  - filters apply immediately, and "Done" only closes the sheet;
+- **Matches** (`src/components/MatchesList.tsx`, LFA Screen v3):
+  - applied filters (team, stadium, date) and the Upcoming / Live / Results
+    tab are composition-level state; `matchQueryFor` maps them to ONE
+    `/matches/scheduled` query: Upcoming omits `status`, Live sends
+    `status=live`, and Results sends `status=completed`. An explicitly selected
+    date is preserved and sent on every tab; team, stadium and date compose
+    with the supported status server-side;
+  - every change goes through `changeSelection`, which calls `invalidate`
+    before setting state (the status is part of the request identity);
+  - UI: v3 segmented control (Live dot only when the backend reports live
+    matches), date strip (Upcoming: today + 12 days; Results: the previous
+    7; none on Live, though a date selected in the filter sheet is still sent
+    to the backend; dots from the tab's real undated results), summary row
+    (count · filter names, Clear, Filters) and the v3 filter sheet (draft;
+    Date: Any / Today / Pick a date, Status, Team, Stadium; Reset; "Show
+    matches" applies);
   - states: skeletons, error with Retry, global empty vs filtered empty (with
     Clear), and results sorted by kickoff and grouped under their backend
     `match_date` (`groupMatchesByDate`; undated fixtures last, never re-dated);
-  - no Live/Results views and no competition filter (`/matches/scheduled`
-    supports neither);
+  - no competition filter (`/matches/scheduled` has no such parameter),
+    no date ranges (it filters one day), no minutes/events;
   - opening a card still pushes `/match/[id]`.
 - **Match presentation** (`src/components/match/*`: `MatchCard` (a row in a
   grouped `MatchGroup` card), `FeaturedMatchCard`, `PitchArt` (decorative),
@@ -680,8 +691,11 @@ retry, so recovery requires an app restart.
 ## 14. Theming, responsive, accessibility
 
 - **Colors** — `src/lib/themePalette.ts` (`lightColors`, `darkColors`):
-  - legacy roles (`bg`, `panel`, `ink`, `muted`, `primary`…) kept for
-    not-yet-redesigned screens;
+  - **values are LFA Screen v3's (`lfa3.css`) in both themes**, including
+    the neutral-black dark theme; legacy roles (`bg`, `panel`, `ink`,
+    `muted`, `primary`…) map onto the same v3 surfaces so
+    not-yet-redesigned screens share them. One documented adjustment: light
+    `textMuted` #6C6F7C (v3 #6F7280 is 4.3:1 on v3's background, below AA);
   - semantic roles (`background`, `surface`, `textStrong`, `textMuted`,
     `action*`/`on*`, `disabled*`, `selectedSurface`, `focusRing`, `hero`,
     `skeleton*`, `scrim`, `scanSurface`) and 8 status `tones`
@@ -690,14 +704,21 @@ retry, so recovery requires an app restart.
     (`src/lib/themeContrast.test.mjs`). The legacy `muted` does not.
   - Tones are presentation vocabulary; mapping a backend status to a tone
     belongs to the screen that owns the data.
-  - Match-day roles (v3, additive; existing values unchanged): `heroRaised`,
-    `heroHairline`, `onHeroUrgent`, `brandSurface`/`onBrandSurface`,
-    `segment`, `hairline`, `shadow`. The dark theme keeps its existing navy
-    surfaces (a neutral-black migration would change untouched screens).
+  - v3 roles: `heroRaised`, `heroHairline`, `onHeroUrgent`,
+    `brandSurface`/`brandGlow`/`brandDeep`/`onBrandSurface`, `segment`,
+    `hairline`, `crest`, `brandInk`, `bar`, and the v3 shadow lists
+    `shadowCard` (`--shadow`) / `shadowRaised` (`--shadow2`) used as
+    `boxShadow`; v3 cards and sheets carry shadows, not borders.
+  - Shared primitives follow v3: `Button` (52pt, 17/600, radius 14 iOS /
+    20 Android, scale press, `ghost` variant), `BottomSheetModal` (28pt top
+    radius, v3 handle/backdrop/shadow, display titles, optional header
+    action and sticky footer), `StatePanel` (v3 state card), tab bar (iOS:
+    translucent bar, 26pt icons, 10pt labels; Android: 64×32 indicator; a
+    selection bounce; no backdrop blur — no blur dependency).
 - **Scales** — `src/lib/designTokens.ts` (pure, theme-independent): `spacing`,
   `radius` (incl. `xl` 20 / `xxl` 24 for grouped cards and heroes), `motion`
   durations and `PRESSED_SCALE`, `size` (touch target 48 / 44 minimum,
-  control height 48), `breakpoints` (mirroring `useResponsive`),
+  control height 52 per v3), `breakpoints` (mirroring `useResponsive`),
   `layout`/`pageGutter`, and `typography` (letter-spacing never used because
   it breaks Arabic joining; tabular digits for prices, totals and timers).
 - **Typography families** — `src/lib/fontFamilies.ts`:

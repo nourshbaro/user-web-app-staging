@@ -4,7 +4,7 @@ import { TeamCrest } from "@/components/match/TeamCrest";
 import { matchLabels } from "@/components/match/matchLabels";
 import { useTheme } from "@/components/ui";
 import { useI18n } from "@/i18n/I18nProvider";
-import { radius, size, spacing } from "@/lib/designTokens";
+import { radius, spacing } from "@/lib/designTokens";
 import type { ApiMatch } from "@/types";
 import { SymbolView } from "expo-symbols";
 import { Pressable, View } from "react-native";
@@ -38,7 +38,7 @@ export function FeaturedMatchCard({ match, onPress }: Props) {
       accessibilityHint={i18n.t("match.openHint")}
       style={({ pressed }) => [
         local.hero,
-        { backgroundColor: theme.colors.hero, boxShadow: `0 18px 40px ${theme.colors.shadow}` },
+        { backgroundColor: theme.colors.hero, boxShadow: theme.colors.shadowRaised },
         pressFeedback(pressed),
       ]}
     >
@@ -49,8 +49,8 @@ export function FeaturedMatchCard({ match, onPress }: Props) {
       {/* The dark surface spans the content width; the match itself stays readable on tablets/desktop. */}
       <View style={local.inner}>
         <View style={local.topRow}>
-          <AppText variant="label" tone="onHeroMuted" numberOfLines={1}>{i18n.t("home.featured.label")}</AppText>
-          <AppText variant="label" tone="onHero" numberOfLines={1} style={local.date}>{labels.date}</AppText>
+          <AppText variant="label" tone="onHeroMuted" numberOfLines={1} style={local.metaText}>{i18n.t("home.featured.label")}</AppText>
+          <AppText variant="label" tone="onHero" numberOfLines={1} style={[local.date, local.metaText]}>{labels.date}</AppText>
         </View>
 
         <View style={local.teamsRow}>
@@ -77,8 +77,8 @@ export function FeaturedMatchCard({ match, onPress }: Props) {
           </View>
           {/* Visual call to action only: the whole hero is the single press target. */}
           <View style={[local.cta, { backgroundColor: theme.colors.actionPrimary }]}>
-            <AppText variant="label" style={{ color: theme.colors.onActionPrimary }}>{i18n.t("match.tickets")}</AppText>
-            <DirectionalChevron kind="forward" size={14} color={theme.colors.onActionPrimary} />
+            <AppText variant="bodyStrong" style={{ color: theme.colors.onActionPrimary }}>{i18n.t("match.tickets")}</AppText>
+            <DirectionalChevron kind="forward" size={16} color={theme.colors.onActionPrimary} />
           </View>
         </View>
       </View>
@@ -89,39 +89,45 @@ export function FeaturedMatchCard({ match, onPress }: Props) {
 function HeroTeam({ name, team }: { name: string; team: ApiMatch["home_team"] }) {
   return (
     <View style={local.team}>
-      <TeamCrest team={team} size={62} />
-      <AppText variant="bodyStrong" tone="onHero" align="center" numberOfLines={2}>{name}</AppText>
+      <TeamCrest team={team} size={62} onHero />
+      <AppText variant="bodyStrong" tone="onHero" align="center" numberOfLines={2} style={local.teamName}>{name}</AppText>
     </View>
   );
 }
 
 const local = {
-  hero: { borderRadius: radius.xxl, overflow: "hidden" as const },
+  // v3: radius 26, `--night`, `--shadow2`, 3pt red rule on top.
+  hero: { borderRadius: radius.hero, overflow: "hidden" as const },
   rule: { height: 3, width: "100%" as const },
   inner: {
     width: "100%" as const,
     maxWidth: 720,
     alignSelf: "center" as const,
     gap: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
+    paddingHorizontal: 18,
+    paddingTop: 18,
     paddingBottom: spacing.lg,
   },
+  metaText: { fontSize: 13, lineHeight: 18 },
+  teamName: { fontSize: 16, lineHeight: 21 },
   topRow: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const, gap: spacing.md },
   date: { flexShrink: 1 },
-  teamsRow: { flexDirection: "row" as const, alignItems: "flex-start" as const, gap: spacing.sm },
-  team: { flex: 1, minWidth: 0, alignItems: "center" as const, gap: spacing.sm },
-  center: { minWidth: 96, alignItems: "center" as const, paddingTop: spacing.sm },
+  // v3: 22pt between the top row and the teams (6 on top of the 16pt stack gap).
+  teamsRow: { flexDirection: "row" as const, alignItems: "flex-start" as const, gap: spacing.sm, marginTop: 6 },
+  team: { flex: 1, minWidth: 0, alignItems: "center" as const, gap: 10 },
+  center: { minWidth: 96, alignItems: "center" as const, paddingTop: spacing.md, gap: 2 },
   divider: { height: 1, width: "100%" as const },
   footer: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md },
   venueRow: { flex: 1, minWidth: 0, flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.xs },
   venueText: { flexShrink: 1 },
+  // v3: 36pt red pill, radius 12, 15/600 label (visual only; the hero is the press target).
   cta: {
-    minHeight: size.controlHeightCompact,
+    minHeight: 36,
     borderRadius: radius.md,
     flexDirection: "row" as const,
     alignItems: "center" as const,
     gap: spacing.xs,
-    paddingHorizontal: spacing.md,
+    paddingStart: spacing.lg,
+    paddingEnd: spacing.md,
   },
 };

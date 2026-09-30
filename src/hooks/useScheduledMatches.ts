@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 type FilterOptions = { teams: FilterOption[]; stadiums: FilterOption[] };
 
 export function matchFilterIdentity(filters: MatchFilters) {
-  return createRequestIdentity([filters.team, filters.stadium, filters.date]);
+  return createRequestIdentity([filters.team, filters.stadium, filters.date, filters.status]);
 }
 
 /**
@@ -26,7 +26,14 @@ export function matchFilterIdentity(filters: MatchFilters) {
  * selection is returned, so earlier results are never shown under newer
  * filters. No second cache or store is introduced.
  */
-export function useScheduledMatches(filters: MatchFilters, { withFilterOptions = false } = {}) {
+export function useScheduledMatches(
+  filters: MatchFilters,
+  {
+    withFilterOptions = false,
+    /** `false`: this instance loads nothing (e.g. a probe whose answer another query already provides). */
+    enabled = true,
+  }: { withFilterOptions?: boolean; enabled?: boolean } = {},
+) {
   const [snapshot, setSnapshot] = useState<MatchQuerySnapshot<ApiMatch>>(emptyMatchQuerySnapshot);
   /** When the current items were received; screens compare kickoffs without reading the clock during render. */
   const [loadedAt, setLoadedAt] = useState(0);
@@ -37,7 +44,7 @@ export function useScheduledMatches(filters: MatchFilters, { withFilterOptions =
   const filterIdentity = matchFilterIdentity(filters);
 
   const load = useCallback(async (forceRefresh = false) => {
-    const requestFilters = { team: filters.team, stadium: filters.stadium, date: filters.date };
+    const requestFilters = { team: filters.team, stadium: filters.stadium, date: filters.date, status: filters.status };
     const identity = matchFilterIdentity(requestFilters);
     const ticket = requestAuthority.begin(identity);
     if (!forceRefresh) setLoadingFlag(true);
@@ -60,7 +67,7 @@ export function useScheduledMatches(filters: MatchFilters, { withFilterOptions =
         setRefreshing(false);
       }
     }
-  }, [filters.date, filters.stadium, filters.team, requestAuthority, withFilterOptions]);
+  }, [filters.date, filters.stadium, filters.status, filters.team, requestAuthority, withFilterOptions]);
 
   useEffect(() => {
     requestAuthority.mount();
@@ -68,12 +75,13 @@ export function useScheduledMatches(filters: MatchFilters, { withFilterOptions =
   }, [requestAuthority]);
 
   useEffect(() => {
+    if (!enabled) return;
     const timeout = setTimeout(() => void load(), 0);
     return () => {
       clearTimeout(timeout);
       requestAuthority.invalidate(filterIdentity);
     };
-  }, [filterIdentity, load, requestAuthority]);
+  }, [enabled, filterIdentity, load, requestAuthority]);
 
   /**
    * Synchronously voids any in-flight request before the caller switches to
@@ -84,16 +92,32 @@ export function useScheduledMatches(filters: MatchFilters, { withFilterOptions =
   }, [requestAuthority]);
 
   const refresh = useCallback(() => {
+    // A disabled instance never requests (it would duplicate the query that answers for it).
+    if (!enabled) return;
     setRefreshing(true);
     void load(true);
-  }, [load]);
+  }, [enabled, load]);
 
   /** Retry after an error: a normal (non-forced) load through the same service path. */
   const retry = useCallback(() => void load(), [load]);
 
+  /**
+   * Background revalidation (focus, foreground, the Live interval): a forced
+   * reload through the same authority and snapshot rules, with no loading or
+   * pull-to-refresh indicator, so existing rows never flicker. A failure keeps
+   * the rows and surfaces the usual retry.
+   */
+  const revalidate = useCallback(() => {
+    if (enabled) void load(true);
+  }, [enabled, load]);
+
   const view = matchQueryView(snapshot, filterIdentity);
   // Nothing (neither results nor an error) yet for this selection = still loading.
   const loading = loadingFlag || (!view.hasItemsForSelection && view.error === null);
+
+  if (!enabled) {
+    return { matches: [] as ApiMatch[], loadedAt: 0, filterOptions, loading: false, refreshing: false, error: null, refresh, retry, invalidate, revalidate };
+  }
 
   return {
     matches: view.items,
@@ -105,5 +129,6 @@ export function useScheduledMatches(filters: MatchFilters, { withFilterOptions =
     refresh,
     retry,
     invalidate,
+    revalidate,
   };
 }

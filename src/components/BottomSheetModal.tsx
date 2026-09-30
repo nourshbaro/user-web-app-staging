@@ -17,6 +17,9 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/components/ui";
+import { useI18n } from "@/i18n/I18nProvider";
+import { typography } from "@/lib/designTokens";
+import { fontStyleFor } from "@/lib/fontFamilies";
 
 const DRAG_DISMISS_THRESHOLD = 120;
 const DRAG_DISMISS_VELOCITY = 0.6;
@@ -86,6 +89,12 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
   contentContainerStyle?: StyleProp<ViewStyle>;
   /** Fires once the native modal has actually finished presenting (RN Modal's `onShow`) — the right time to focus an input, since the child can mount before presentation completes. */
   onPresented?: () => void;
+  /** v3 title style: `display` = the large condensed uppercase title (e.g. Filters); default = the condensed option-sheet title. */
+  titleVariant?: "display" | "standard";
+  /** One text action in the header (v3 "Reset"). When set it replaces the X; swipe and backdrop still dismiss. */
+  headerAction?: { label: string; onPress: () => void; accessibilityHint?: string };
+  /** Sticky footer below the body (v3 apply bar), separated by a hairline. */
+  footer?: React.ReactNode;
 }>(function BottomSheetModal({
   visible,
   onClose,
@@ -99,8 +108,13 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
   keyboardAware = false,
   contentContainerStyle,
   onPresented,
+  titleVariant = "standard",
+  headerAction,
+  footer,
 }, ref) {
   const theme = useTheme();
+  const { meta } = useI18n();
+  const titleToken = titleVariant === "display" ? typography.displaySheet : typography.displaySheetOption;
   const insets = useSafeAreaInsets();
   // Only the Animated.Value needs a stable identity across renders (it
   // drives the sheet's ongoing transform/animation) — `useState`'s lazy
@@ -254,7 +268,7 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
         // up above it, shrinking its own `maxHeight: "92%"` accordingly.
         behavior={keyboardAware && Platform.OS === "ios" ? "padding" : undefined}
       >
-        <View style={[local.overlay, theme.isDark && local.overlayDark]}>
+        <View style={local.overlay}>
           <Pressable
             style={local.backdrop}
             accessibilityLabel="Dismiss"
@@ -268,32 +282,53 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
               wide && local.sheetWide,
               {
                 backgroundColor: theme.colors.bg,
-                borderColor: theme.colors.line,
-                paddingBottom: Math.max(insets.bottom, 16),
+                paddingBottom: footer ? 0 : Math.max(insets.bottom, 16),
               },
               animatedSheetStyle,
             ]}
           >
             <GestureDetector gesture={dismissGesture}>
               <View>
-                <View style={[local.handle, { backgroundColor: theme.colors.muted }]} />
-                <View style={[local.header, { borderBottomColor: theme.colors.line }]}>
+                <View style={[local.handle, { backgroundColor: theme.colors.border }]} />
+                <View style={local.header}>
                   <View style={local.headerCopy}>
-                    <Text style={[local.title, { color: theme.colors.ink }]}>{title}</Text>
+                    <Text
+                      accessibilityRole="header"
+                      style={[
+                        { fontSize: titleToken.fontSize, lineHeight: titleToken.lineHeight, color: theme.colors.ink },
+                        fontStyleFor("display", titleToken.fontWeight, meta.script),
+                        // Uppercase display titles are Latin-only (Arabic has no case).
+                        titleVariant === "display" && meta.script === "latin" ? local.titleUpper : null,
+                      ]}
+                    >
+                      {title}
+                    </Text>
                     {subtitle ? <Text style={[theme.styles.muted, local.subtitle]}>{subtitle}</Text> : null}
                   </View>
-                  {dismissible ? (
+                  {headerAction ? (
+                    <Pressable
+                      onPress={headerAction.onPress}
+                      accessibilityRole="button"
+                      accessibilityLabel={headerAction.label}
+                      accessibilityHint={headerAction.accessibilityHint}
+                      hitSlop={10}
+                      style={local.headerAction}
+                    >
+                      <Text style={[local.headerActionText, fontStyleFor("text", "600", meta.script), { color: theme.colors.brandInk }]}>{headerAction.label}</Text>
+                    </Pressable>
+                  ) : dismissible ? (
                     <Pressable
                       onPress={requestClose}
                       accessibilityRole="button"
                       accessibilityLabel={closeLabel}
-                      hitSlop={10}
-                      style={[local.closeButton, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}
+                      // v3's 32pt button with a 44pt touch target.
+                      hitSlop={6}
+                      style={[local.closeButton, { backgroundColor: theme.colors.bgAlt }]}
                     >
                       <SymbolView
                         name={{ ios: "xmark", android: "close", web: "close" }}
                         size={16}
-                        tintColor={theme.colors.ink}
+                        tintColor={theme.colors.textMuted}
                         fallback={<View />}
                       />
                     </Pressable>
@@ -302,6 +337,9 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
               </View>
             </GestureDetector>
             {body}
+            {footer ? (
+              <View style={[local.footer, { borderTopColor: theme.colors.hairline, paddingBottom: Math.max(insets.bottom, 16) + 14 }]}>{footer}</View>
+            ) : null}
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
@@ -311,12 +349,12 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
 
 const local = {
   keyboardAvoider: { flex: 1 },
+  // v3 backdrop: rgba(0,0,0,.4) in both themes.
   overlay: {
     flex: 1,
     justifyContent: "flex-end" as const,
-    backgroundColor: "rgba(21,26,44,0.48)",
+    backgroundColor: "rgba(0,0,0,0.4)",
   },
-  overlayDark: { backgroundColor: "rgba(0,0,0,0.78)" },
   backdrop: {
     position: "absolute" as const,
     top: 0,
@@ -326,17 +364,12 @@ const local = {
   },
   sheet: {
     maxHeight: "92%" as const,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    // v3 sheet: 28pt top corners, no border, soft upward shadow.
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     paddingHorizontal: 16,
-    paddingTop: 10,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    shadowColor: "#000000",
-    shadowOpacity: 0.45,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: -8 },
-    elevation: 24,
+    paddingTop: 8,
+    boxShadow: "0px -10px 40px rgba(0,0,0,0.2)",
   },
   sheetWide: {
     alignSelf: "center" as const,
@@ -348,23 +381,25 @@ const local = {
   // contribution to that intrinsic-height calculation the way `flex: 1`
   // (flexBasis: 0) would — which is what collapsed the body previously.
   scrollBody: { flexShrink: 1 },
-  handle: { width: 42, height: 4, borderRadius: 2, opacity: 0.45, alignSelf: "center" as const, marginBottom: 10 },
+  handle: { width: 36, height: 5, borderRadius: 3, alignSelf: "center" as const, marginBottom: 12 },
   header: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
     justifyContent: "space-between" as const,
     gap: 12,
-    borderBottomWidth: 1,
+    paddingHorizontal: 4,
     paddingBottom: 12,
   },
   headerCopy: { flex: 1, minWidth: 0 },
-  title: { fontSize: 20, fontWeight: "900" as const, lineHeight: 26 },
+  titleUpper: { textTransform: "uppercase" as const },
+  headerAction: { minHeight: 44, justifyContent: "center" as const },
+  headerActionText: { fontSize: 15, lineHeight: 20 },
+  footer: { marginHorizontal: -16, paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1 },
   subtitle: { lineHeight: 18, marginTop: 2 },
   closeButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },

@@ -135,11 +135,21 @@ All four are cached in a module-level map for 5 minutes, keyed by path;
 - Both screens call `matchesService.list` / `.filters` through
   `useScheduledMatches`; no new endpoint was introduced.
 - The Matches filters map to the existing `team`, `stadium` and `date` (YYYY-MM-DD) parameters.
-- **Observed fields (staging):** `id`, `match_date` ("YYYY-MM-DD"), clock-only
-  `kickoff_at` ("HH:MM:SS"), `status` (only `"scheduled"` observed), `stadium`,
-  and `home_team`/`away_team` (`name`, `short_name`, `logo`).
-- The response has no live, score, result, competition, standings, favourite
-  or availability/sold-out data; the app does not derive any of these.
+- **`status` (confirmed by the user; verified on staging 2026-09-29):**
+  `?status=live` and `?status=completed`; omitted = the scheduled list.
+  Any other value → 422 "The selected status is invalid." `team`, `stadium`
+  and `date` compose with `status` server-side. Used by Matches (Upcoming /
+  Live / Results) and Home (Live now, Latest result).
+- **Observed fields (staging):** a bare array of `id`, `match_date`
+  ("YYYY-MM-DD"), clock-only `kickoff_at` ("HH:MM:SS"), `status`
+  (`scheduled`, `live`, `completed`), `home_score`/`away_score` (numbers on
+  results and live matches, otherwise null), `matchday`, `round_name`,
+  `stadium` {`id`, `name`}, and `home_team`/`away_team` (`name`,
+  `short_name`, `logo`). The client models only `home_score`/`away_score`
+  beyond the existing fields.
+- No live minute, events, statistics, competition, favourite or
+  availability/sold-out data; the app does not derive any of these.
+  `/matches/scheduled/filters` lists teams/stadiums of scheduled fixtures.
 
 ### Cart — `src/services/cart.ts` (`cartService`)
 | Method & path | Body | Notes |
@@ -327,7 +337,7 @@ than adding a parallel one.
 - Backend behavior on BLUE callback, and how web BLUE results are finalized.
 - The meaning of the `password` header and of `remember` on login.
 - Ticket `status` value set; whether "used" is `status` or `checked_in_at`.
-- Whether any endpoint provides live scores or live match state.
+- Live match detail (minute, events, statistics): no endpoint provides it.
 - **Competitions (confirmed by the user, not yet integrated; no service calls
   them yet).** Public endpoints and their confirmed response shapes — do not
   assume other fields:

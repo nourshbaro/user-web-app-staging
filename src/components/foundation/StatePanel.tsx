@@ -38,24 +38,27 @@ export function StatePanel({ variant = "empty", title, message, action, secondar
   const tone = theme.colors.tones[TONES[variant]];
   return (
     <View
-      style={[local.panel, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+      style={[local.panel, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}
       // Single announcement owner: a recoverable error is announced politely
       // (Android live region, web aria-live). No child uses the assertive
       // `alert` role. Other states are static content.
       accessibilityLiveRegion={variant === "error" ? "polite" : "none"}
     >
-      <View
-        accessible={false}
-        importantForAccessibility="no-hide-descendants"
-        accessibilityElementsHidden
-        style={[local.icon, { backgroundColor: tone.bg }]}
-      >
-        <SymbolView name={ICONS[variant] as never} size={22} tintColor={tone.fg} fallback={<View />} />
-      </View>
-      <AppText variant="cardTitle" align="center" accessibilityRole="header">
+      {variant === "empty" ? null : (
+        // v3 empty states are text-only; the other variants keep an identifying icon.
+        <View
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+          accessibilityElementsHidden
+          style={[local.icon, { backgroundColor: tone.bg }]}
+        >
+          <SymbolView name={ICONS[variant] as never} size={22} tintColor={tone.fg} fallback={<View />} />
+        </View>
+      )}
+      <AppText variant="bodyStrong" align="center" accessibilityRole="header" style={local.title}>
         {title}
       </AppText>
-      {message ? <AppText variant="body" tone="muted" align="center">{message}</AppText> : null}
+      {message ? <AppText variant="body" tone="muted" align="center" style={local.message}>{message}</AppText> : null}
       {action || secondaryAction ? (
         <View style={local.actions}>
           {action ? <Button title={action.label} onPress={action.onPress} accessibilityHint={action.accessibilityHint} /> : null}
@@ -79,11 +82,14 @@ const local = {
     maxWidth: layout.readableWidth,
     alignSelf: "center" as const,
     alignItems: "center" as const,
-    gap: spacing.sm,
-    padding: spacing.xxl,
-    borderRadius: radius.lg,
-    borderWidth: 1,
+    gap: spacing.xs,
+    // v3 state card: padding 28 20, radius 20, `--shadow`, no border.
+    paddingVertical: 28,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radius.xl,
   },
+  title: { fontSize: 17, lineHeight: 22 },
+  message: { fontSize: 14, lineHeight: 20 },
   icon: {
     width: 48,
     height: 48,

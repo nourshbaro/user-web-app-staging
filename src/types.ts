@@ -24,6 +24,9 @@ export type ApiMatch = {
   home_team: ApiTeam;
   away_team: ApiTeam;
   stadium?: ApiStadium;
+  /** Backend scores: numbers once a match has a result (e.g. `completed`), otherwise null. */
+  home_score?: number | null;
+  away_score?: number | null;
 };
 
 export type PortalMatchTeam = {
@@ -111,10 +114,18 @@ export type FilterOption = {
   slug: string;
 };
 
+/**
+ * `/matches/scheduled?status=` values the backend accepts (it rejects any
+ * other value with 422). Omitted = the default scheduled (upcoming) list.
+ */
+export type MatchStatusFilter = "live" | "completed";
+
 export type MatchFilters = {
   team?: string;
   stadium?: string;
   date?: string;
+  /** Upcoming (omitted), Live or Results; composes with the other filters server-side. */
+  status?: MatchStatusFilter;
 };
 
 export type CartItem = {

@@ -31,10 +31,13 @@ test("clear filters remains a distinct labeled button, never nested in the filte
   assert.doesNotMatch(filters, /event\.stopPropagation\(\)/);
 });
 
-test("active filters are visible chips that each remove one filter by name", () => {
+test("active filters stay visible (v3 summary line by name, plus the count on the entry)", () => {
+  // v3 replaces removable chips with a summary ("12 matches · Nejmeh · Fouad Chehab") and Clear.
+  assert.match(list, /optionName\(data\.filterOptions\.teams, filters\.team\)/);
+  assert.match(list, /optionName\(data\.filterOptions\.stadiums, filters\.stadium\)/);
+  assert.match(list, /query\.date \? formatCalendarDate\(query\.date\) : undefined/);
   const bar = section(filters, "export function MatchFilterBar", "export function MatchFiltersSheet");
-  assert.match(bar, /accessibilityLabel=\{t\("filters\.removeChip", \{ label: chip\.label \}\)\}/);
-  assert.match(bar, /onChange\(\{ \.\.\.filters, \[chip\.key\]: undefined \}\)/);
+  assert.match(bar, /\{count \? t\("filters\.openCount", \{ count \}\) : t\("filters\.open"\)\}/);
 });
 
 test("team and venue options are a labelled radio group with checked state", () => {
@@ -50,15 +53,19 @@ test("options share one selected predicate for semantics and styling", () => {
   const group = section(filters, "function OptionGroup", "function OptionPill");
   assert.match(group, /selected=\{isDropdownOptionSelected\(selected, row\.slug\)\}/);
   const pill = section(filters, "function OptionPill", "function DateFilter");
-  // The same `selected` drives aria-checked, colours and the checkmark.
-  assert.match(pill, /backgroundColor: selected \?/);
-  assert.match(pill, /\{selected \? \(/);
+  // The same `selected` drives aria-checked, the v3 fill and the heavier weight (not colour alone).
+  // Fill and shadow come from the diff-safe chip style helper, driven by the same `selected`.
+  assert.match(pill, /filterChipStyle\(\{ selected, pressed, colors: theme\.colors \}\)/);
+  assert.match(pill, /fontStyleFor\("text", selected \? "600" : "500", meta\.script\)/);
 });
 
 test("date filter exposes field identity and an explicit 'any date' choice", () => {
   const date = section(filters, "function DateFilter", "const local");
   assert.match(date, /accessibilityLabel=\{getDateTriggerLabel\(selectedDate\)\}/);
-  assert.match(date, /label=\{t\("filters\.anyDate"\)\} selected=\{!value\}/);
+  const sheet = section(filters, "export function MatchFiltersSheet", "function SectionTitle");
+  assert.match(sheet, /label=\{t\("filters\.anyDate"\)\}\s*selected=\{!draft\.filters\.date && !pickingDate\}/);
+  // The strip's "All" chip is the same explicit choice.
+  assert.match(filters, /accessibilityLabel=\{t\("filters\.anyDate"\)\} wide onPress=\{\(\) => onSelect\(undefined\)\}/);
 });
 
 test("real calendar dates expose full labels and selected/disabled state (web-safe aria props)", () => {
@@ -82,11 +89,11 @@ test("month navigation has explicit action names, disabled state, and direction-
   assert.match(date, /<DirectionalChevron kind="forward"/);
 });
 
-test("the filter sheet reuses the shared bottom sheet and ends with explicit actions", () => {
-  const sheet = section(filters, "export function MatchFiltersSheet", "function OptionGroup");
-  assert.match(sheet, /<BottomSheetModal visible=\{visible\} onClose=\{onClose\} title=\{t\("filters\.sheetTitle"\)\}/);
-  assert.match(sheet, /<Button title=\{t\("filters\.done"\)\} onPress=\{onClose\} \/>/);
-  assert.match(sheet, /<Button title=\{t\("filters\.clear"\)\} variant="secondary" onPress=\{onClear\} \/>/);
+test("the filter sheet reuses the shared bottom sheet and ends with explicit actions (v3 Reset / Show matches)", () => {
+  const sheet = section(filters, "export function MatchFiltersSheet", "function SectionTitle");
+  assert.match(sheet, /<BottomSheetModal\s+visible=\{visible\}\s+onClose=\{onClose\}\s+title=\{t\("filters\.sheetTitle"\)\}/);
+  assert.match(sheet, /headerAction=\{\{\s*label: t\("filters\.reset"\)/);
+  assert.match(sheet, /footer=\{<Button title=\{t\("filters\.apply"\)\} onPress=\{\(\) => onApply\(draft\)\} \/>\}/);
   assert.doesNotMatch(filters, /<Modal[\s>]/, "no nested modal inside the sheet");
 });
 
@@ -96,8 +103,12 @@ test("nested control icons are decorative", () => {
   for (const icon of icons) assert.match(icon, /accessible=\{false\}/);
 });
 
-test("filter values stay owned by the Matches screen, not the filter components", () => {
+test("applied filter values stay owned by the Matches screen, not the filter components", () => {
   assert.match(list, /const \[filters, setFilters\] = useState<MatchFilters>\(\{\}\);/);
-  assert.match(list, /useScheduledMatches\(filters, \{ withFilterOptions: true \}\)/);
+  assert.match(list, /const \[tab, setTab\] = useState<MatchTab>\("upcoming"\);/);
+  assert.match(list, /const query = useMemo\(\(\) => matchQueryFor\(filters, tab\), \[filters, tab\]\);/);
+  assert.match(list, /useScheduledMatches\(query, \{ withFilterOptions: true \}\)/);
+  // The sheet only edits a draft until "Show matches"; it never loads data.
   assert.doesNotMatch(filters, /useState<MatchFilters>|matchesService|useScheduledMatches/);
+  assert.match(filters, /const \[draft, setDraft\] = useState<MatchFilterSelection>\(value\);/);
 });

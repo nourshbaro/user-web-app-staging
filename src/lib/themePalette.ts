@@ -63,15 +63,17 @@ export type ThemeColors = {
   /** Fixed light backdrop for scannable content (QR) in both themes. */
   scanSurface: string;
 
-  // Match-day roles (v3 direction), additive: existing roles keep their values.
+  // Match-day roles (LFA Screen v3).
   /** Raised element on a hero/night surface (e.g. the reservation pill). */
   heroRaised: string;
   /** Hairline on a hero/night surface. */
   heroHairline: string;
   /** Countdown emphasis on a hero surface once the reservation is running low. */
   onHeroUrgent: string;
-  /** First-run brand surface (splash). */
+  /** First-run brand surface (v3 splash radial gradient: glow → surface → deep). */
   brandSurface: string;
+  brandGlow: string;
+  brandDeep: string;
   onBrandSurface: string;
   /** Track behind segmented controls / unselected chips on the canvas. */
   segment: string;
@@ -79,133 +81,164 @@ export type ThemeColors = {
   hairline: string;
   /** Soft elevation colour for grouped cards and heroes. */
   shadow: string;
+  /** v3 `--shadow`: resting cards and grouped lists (a CSS box-shadow list). */
+  shadowCard: string;
+  /** v3 `--shadow2`: heroes and raised surfaces. */
+  shadowRaised: string;
+  /** v3 `--crest`: plate behind team marks without a logo. */
+  crest: string;
+  /** v3 `--redInk`: brand-coloured text and text actions ("See all", "Clear"). */
+  brandInk: string;
+  /** v3 `--bar`: translucent iOS tab bar. */
+  bar: string;
   tones: Record<StatusTone, ToneColors>;
 };
 
+/**
+ * LFA Screen v3 palette (`lfa3.css`). Values are v3's, with one documented
+ * accessibility adjustment: light `textMuted` is v3 `--muted` (#6F7280)
+ * darkened 3% (#6C6F7C) so secondary text meets WCAG AA (4.5:1) on v3's own
+ * background (#6F7280 measures 4.3:1 there). Legacy roles map onto the same
+ * v3 surfaces so not-yet-redesigned screens share one visual system.
+ */
 export const lightColors: ThemeColors = {
-  bg: "#F5F6F8",
-  bgAlt: "#EEF1F6",
+  bg: "#F4F4F6",
+  bgAlt: "#E9E9EE",
   panel: "#FFFFFF",
-  panelSoft: "#F8FAFC",
-  ink: "#151A2C",
-  muted: "#7B879F",
-  secondary: "#3E4A67",
-  line: "#DBE0E8",
+  panelSoft: "#F7F7F9",
+  ink: "#15161C",
+  muted: "#6F7280",
+  secondary: "#3B3D47",
+  line: "#DEDEE1",
   primary: "#C8102E",
   primaryLight: "#E8112D",
-  primaryDark: "#8B0018",
-  green: "#007A3D",
+  primaryDark: "#A30C25",
+  green: "#0F7A45",
   gold: "#C8A84B",
   danger: "#B42318",
-  success: "#007A3D",
+  success: "#0F7A45",
 
-  background: "#F5F6F8",
+  background: "#F4F4F6",
   surface: "#FFFFFF",
-  surfaceSecondary: "#EEF1F6",
-  textStrong: "#151A2C",
-  textMuted: "#535D72",
+  surfaceSecondary: "#F7F7F9",
+  textStrong: "#15161C",
+  textMuted: "#6C6F7C",
   textInverse: "#FFFFFF",
-  border: "#DBE0E8",
-  divider: "#E6E9EF",
+  border: "#DEDEE1",
+  divider: "#EDEDEF",
   actionPrimary: "#C8102E",
-  actionPrimaryPressed: "#A50D26",
+  actionPrimaryPressed: "#A30C25",
   onActionPrimary: "#FFFFFF",
   actionSecondary: "#FFFFFF",
-  onActionSecondary: "#151A2C",
+  onActionSecondary: "#15161C",
   actionDestructive: "#B42318",
   onActionDestructive: "#FFFFFF",
-  disabledSurface: "#D8DEE8",
-  disabledText: "#4A5366",
-  selectedSurface: "#FBE9EC",
+  disabledSurface: "#E9E9EE",
+  disabledText: "#55586A",
+  selectedSurface: "#FAEBED",
   focusRing: "#1D4F91",
-  hero: "#0F1216",
+  hero: "#14151B",
   onHero: "#FFFFFF",
-  onHeroMuted: "#B8BEC8",
-  skeleton: "#E3E7EE",
-  skeletonHighlight: "#EEF1F6",
-  scrim: "rgba(15,18,22,0.48)",
+  onHeroMuted: "#AAAAAC",
+  skeleton: "#E9E9EE",
+  skeletonHighlight: "#F4F4F6",
+  scrim: "rgba(0,0,0,0.4)",
   scanSurface: "#FFFFFF",
-  heroRaised: "#1D2129",
-  heroHairline: "rgba(255,255,255,0.12)",
+  heroRaised: "#1E1F27",
+  heroHairline: "rgba(255,255,255,0.1)",
   onHeroUrgent: "#FF8A9A",
-  brandSurface: "#B30E28",
+  brandSurface: "#A80C24",
+  brandGlow: "#D0142F",
+  brandDeep: "#8E0A1F",
   onBrandSurface: "#FFFFFF",
-  segment: "#E6E9EF",
-  hairline: "#ECEEF2",
+  segment: "rgba(118,118,128,0.12)",
+  hairline: "rgba(21,22,28,0.07)",
   shadow: "rgba(21,22,28,0.08)",
+  shadowCard: "0px 1px 2px rgba(21,22,28,0.04), 0px 6px 20px rgba(21,22,28,0.06)",
+  shadowRaised: "0px 18px 40px rgba(21,22,28,0.18), 0px 3px 8px rgba(21,22,28,0.08)",
+  crest: "#EFEFF3",
+  brandInk: "#B00E29",
+  bar: "rgba(247,247,249,0.88)",
   tones: {
-    neutral: { fg: "#3E4A67", bg: "#EEF1F6", border: "#DBE0E8" },
-    brand: { fg: "#A10E26", bg: "#FBE6EA", border: "#F2BCC6" },
-    success: { fg: "#0B6B3A", bg: "#E3F5EA", border: "#B7E2C7" },
+    neutral: { fg: "#3B3D47", bg: "#E9E9EE", border: "#DEDEE1" },
+    brand: { fg: "#B00E29", bg: "#FAEBED", border: "#F2C4CC" },
+    success: { fg: "#0F7A45", bg: "#E7F2EC", border: "#BFE0CD" },
     warning: { fg: "#7A4A00", bg: "#FFF2D6", border: "#F4D596" },
     danger: { fg: "#A8201A", bg: "#FDE7E5", border: "#F5C2BE" },
     info: { fg: "#1D4F91", bg: "#E5EEFB", border: "#BCD1F2" },
     live: { fg: "#FFFFFF", bg: "#C8102E", border: "#C8102E" },
-    unavailable: { fg: "#535D72", bg: "#EEF1F6", border: "#DBE0E8" },
+    unavailable: { fg: "#55586A", bg: "#E9E9EE", border: "#DEDEE1" },
   },
 };
 export type ThemeMode = "system" | "light" | "dark";
 
 export const darkColors: ThemeColors = {
-  bg: "#0F172A",
-  bgAlt: "#111827",
-  panel: "#172033",
-  panelSoft: "#111827",
-  ink: "#F8FAFC",
-  muted: "#94A3B8",
-  secondary: "#CBD5E1",
-  line: "#334155",
+  bg: "#0B0B0E",
+  bgAlt: "#1A1A20",
+  panel: "#16161B",
+  panelSoft: "#1D1D23",
+  ink: "#F3F3F6",
+  muted: "#8D8F9B",
+  secondary: "#D2D3DA",
+  line: "#2B2B32",
   primary: "#E8112D",
-  primaryLight: "#FF5A70",
+  primaryLight: "#FF3B55",
   primaryDark: "#C8102E",
-  green: "#22C55E",
+  green: "#3FCB85",
   gold: "#F5C518",
   danger: "#EF4444",
-  success: "#22C55E",
+  success: "#3FCB85",
 
-  background: "#0F172A",
-  surface: "#172033",
-  surfaceSecondary: "#111827",
-  textStrong: "#F8FAFC",
-  textMuted: "#A3AEC0",
-  textInverse: "#0F172A",
-  border: "#334155",
-  divider: "#273449",
-  actionPrimary: "#D0142C",
-  actionPrimaryPressed: "#B0102A",
+  background: "#0B0B0E",
+  surface: "#16161B",
+  surfaceSecondary: "#1D1D23",
+  textStrong: "#F3F3F6",
+  textMuted: "#8D8F9B",
+  textInverse: "#0B0B0E",
+  border: "#2B2B32",
+  divider: "#1F1F25",
+  actionPrimary: "#E8112D",
+  actionPrimaryPressed: "#C8102E",
   onActionPrimary: "#FFFFFF",
-  actionSecondary: "#172033",
-  onActionSecondary: "#F8FAFC",
+  actionSecondary: "#16161B",
+  onActionSecondary: "#F3F3F6",
   actionDestructive: "#B42318",
   onActionDestructive: "#FFFFFF",
-  disabledSurface: "#334155",
-  disabledText: "#C5CEDB",
-  selectedSurface: "#3A1520",
+  disabledSurface: "#2B2B32",
+  disabledText: "#C5C6CE",
+  selectedSurface: "#361520",
   focusRing: "#93C0FF",
-  hero: "#0B0F1A",
+  hero: "#17171D",
   onHero: "#FFFFFF",
-  onHeroMuted: "#A3AEC0",
-  skeleton: "#1E293B",
-  skeletonHighlight: "#273449",
+  onHeroMuted: "#ACACAE",
+  skeleton: "#1D1D23",
+  skeletonHighlight: "#26262D",
   scrim: "rgba(0,0,0,0.6)",
   scanSurface: "#FFFFFF",
-  heroRaised: "#1A2233",
-  heroHairline: "rgba(255,255,255,0.12)",
+  heroRaised: "#202028",
+  heroHairline: "rgba(255,255,255,0.1)",
   onHeroUrgent: "#FF8A9A",
-  brandSurface: "#B30E28",
+  brandSurface: "#A80C24",
+  brandGlow: "#D0142F",
+  brandDeep: "#8E0A1F",
   onBrandSurface: "#FFFFFF",
-  segment: "#1E293B",
-  hairline: "#223047",
-  shadow: "rgba(0,0,0,0.36)",
+  segment: "rgba(118,118,128,0.24)",
+  hairline: "rgba(255,255,255,0.07)",
+  shadow: "rgba(0,0,0,0.35)",
+  shadowCard: "0px 0px 0px 1px rgba(255,255,255,0.04), 0px 6px 20px rgba(0,0,0,0.35)",
+  shadowRaised: "0px 0px 0px 1px rgba(255,255,255,0.05), 0px 20px 44px rgba(0,0,0,0.55)",
+  crest: "#23232A",
+  brandInk: "#FF6679",
+  bar: "rgba(16,16,20,0.88)",
   tones: {
-    neutral: { fg: "#CBD5E1", bg: "#1E293B", border: "#334155" },
-    brand: { fg: "#FF9AA9", bg: "#3A0F18", border: "#6B1A2A" },
-    success: { fg: "#6EE7A0", bg: "#0F2E1D", border: "#1F5135" },
-    warning: { fg: "#FBBF5A", bg: "#33250A", border: "#5C4413" },
-    danger: { fg: "#FCA5A5", bg: "#3B1414", border: "#6B2323" },
+    neutral: { fg: "#D2D3DA", bg: "#1D1D23", border: "#2B2B32" },
+    brand: { fg: "#FF6679", bg: "#361520", border: "#5A1A28" },
+    success: { fg: "#3FCB85", bg: "#122A1F", border: "#1F4A34" },
+    warning: { fg: "#FBBF5A", bg: "#2E2410", border: "#5C4413" },
+    danger: { fg: "#FCA5A5", bg: "#3A1414", border: "#6B2323" },
     info: { fg: "#93C0FF", bg: "#102440", border: "#1E3F6B" },
-    live: { fg: "#FFFFFF", bg: "#D0142C", border: "#D0142C" },
-    unavailable: { fg: "#A3AEC0", bg: "#1E293B", border: "#334155" },
+    live: { fg: "#FFFFFF", bg: "#E8112D", border: "#E8112D" },
+    unavailable: { fg: "#8D8F9B", bg: "#1D1D23", border: "#2B2B32" },
   },
 };
 

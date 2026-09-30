@@ -11,13 +11,16 @@ test("light then dark selection keeps independent theme values", () => {
   const light = getThemeColors("light");
   const dark = getThemeColors("dark");
 
-  assert.equal(light.panelSoft, "#F8FAFC");
+  // LFA Screen v3 (lfa3.css) values.
+  assert.equal(light.background, "#F4F4F6");
+  assert.equal(light.panelSoft, "#F7F7F9");
   assert.equal(light.primary, "#C8102E");
-  assert.equal(light.green, "#007A3D");
+  assert.equal(light.green, "#0F7A45");
   assert.equal(light.gold, "#C8A84B");
-  assert.equal(dark.panelSoft, "#111827");
+  assert.equal(dark.background, "#0B0B0E");
+  assert.equal(dark.panelSoft, "#1D1D23");
   assert.equal(dark.primary, "#E8112D");
-  assert.equal(dark.green, "#22C55E");
+  assert.equal(dark.green, "#3FCB85");
   assert.equal(dark.gold, "#F5C518");
   assert.notEqual(light, dark);
 });
