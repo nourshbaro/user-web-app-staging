@@ -49,7 +49,7 @@ test("only the intended routes render MainHeader", async () => {
     }
   }
 
-  // Home, Matches and Competitions use the v3 tab headers (`TabHeader`/`BrandHeader`);
-  // /tournament is now a redirect. Tickets and Profile keep MainHeader until redesigned.
-  assert.deepEqual(routes.sort(), ["profile", "tickets"]);
+  // Every primary tab now uses the v3 tab headers (`TabHeader`/`BrandHeader`);
+  // MainHeader remains only in the shared signed-out gate (withAuthRequired).
+  assert.deepEqual(routes.sort(), []);
 });

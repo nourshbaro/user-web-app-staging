@@ -2,6 +2,7 @@ import Svg, { Circle, Path, Rect } from "react-native-svg";
 
 export type ContactBrand = "instagram" | "facebook" | "x" | "whatsapp";
 
+/** Decorative brand mark: the caller hides it from assistive tech (react-native-svg forwards unknown props to the web <svg>). */
 export function ContactBrandIcon({
   brand,
   color,
@@ -17,8 +18,6 @@ export function ContactBrandIcon({
         width={size}
         height={size}
         viewBox="0 0 24 24"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
       >
         <Rect
           x="3"
@@ -48,8 +47,6 @@ export function ContactBrandIcon({
         width={size}
         height={size}
         viewBox="0 0 24 24"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
       >
         <Path
           fill={color}
@@ -64,8 +61,6 @@ export function ContactBrandIcon({
         width={size}
         height={size}
         viewBox="0 0 24 24"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
       >
         <Path
           fill={color}
@@ -79,8 +74,6 @@ export function ContactBrandIcon({
       width={size}
       height={size}
       viewBox="0 0 24 24"
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
     >
       <Path
         fill={color}

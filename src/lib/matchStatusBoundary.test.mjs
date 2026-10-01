@@ -198,6 +198,8 @@ test("live match 16: score, minute, goal timeline and statistics come from the b
     player: "Sierra Leone",
     shirtNumber: 17,
     teamName: "Nejmeh",
+    playerIn: null,
+    playerOut: null,
   });
   assert.deepEqual(scorerLines(rows), { home: ["Sierra Leone 1'"], away: [] });
 
@@ -254,6 +256,73 @@ test("unknown event types and unmatched teams carry no invented meaning", () => 
     ["goal", "away", "45+2'", "J. Nasr"],
   ]);
   assert.deepEqual(scorerLines(rows), { home: [], away: ["J. Nasr 45+2'"] });
+});
+
+test("event kinds come only from the exact backend type strings", () => {
+  // Shapes as returned by staging /matches/single/17 (2026-09-30).
+  const player = (id, name, shirt_number = null) => ({ id, name, shirt_number });
+  const withEvents = (events) => ({ ...match16, events });
+  const rows = timelineRows(
+    withEvents([
+      { id: 1, type: "goal", team: { id: 12, name: "Nejmeh" }, player: player(1, "Sierra Leone", 17), player_in: null, player_out: null, minute: 1, extra_minute: null },
+      { id: 2, type: "yellow_card", team: { id: 12, name: "Nejmeh" }, player: player(2, "Rodney Michael"), player_in: null, player_out: null, minute: 45, extra_minute: 8 },
+      { id: 3, type: "substitution", team: { id: 2, name: "Ansar" }, player: null, player_in: player(3, "N. Haidar"), player_out: player(4, "R. Moghrabi"), minute: 72, extra_minute: null },
+      { id: 4, type: "red_card", team: { id: 12, name: "Nejmeh" }, player: player(5, "Kassem El Zein"), player_in: null, player_out: null, minute: 90, extra_minute: null },
+    ]),
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.kind, row.side, row.minuteLabel, row.player, row.playerIn, row.playerOut]),
+    [
+      ["goal", "home", "1'", "Sierra Leone", null, null],
+      ["yellow_card", "home", "45+8'", "Rodney Michael", null, null],
+      ["substitution", "away", "72'", null, "N. Haidar", "R. Moghrabi"],
+      ["red_card", "home", "90'", "Kassem El Zein", null, null],
+    ],
+  );
+  // Cards and substitutions are never scorers.
+  assert.deepEqual(scorerLines(rows), { home: ["Sierra Leone 1'"], away: [] });
+});
+
+test("near-miss and unknown types stay neutral; no type is inferred from players or text", () => {
+  const base = { team: { id: 12, name: "Nejmeh" }, player: { id: 1, name: "A" }, minute: 10, extra_minute: null };
+  const types = ["yellow", "yellow-card", "Yellow_Card", "red", "red-card", "sub", "Substitution", "var_review", "", null, undefined, 3];
+  const rows = timelineRows({ ...match16, events: types.map((type, id) => ({ id, type, ...base })) });
+  assert.ok(rows.every((row) => row.kind === "other"), "only exact strings carry meaning");
+  // player_in / player_out on a non-substitution never turn it into one, and are not shown.
+  const [odd] = timelineRows({
+    ...match16,
+    events: [{ id: 9, type: "goal", ...base, player_in: { id: 2, name: "In" }, player_out: { id: 3, name: "Out" } }],
+  });
+  assert.equal(odd.kind, "goal");
+  assert.equal(odd.playerIn, null);
+  assert.equal(odd.playerOut, null);
+});
+
+test("substitution players degrade independently when the backend omits them", () => {
+  const sub = (fields) => timelineRows({ ...match16, events: [{ id: 1, type: "substitution", team: { id: 12, name: "Nejmeh" }, minute: null, ...fields }] })[0];
+  const onlyIn = sub({ player_in: { id: 1, name: "In" }, player_out: null });
+  assert.deepEqual([onlyIn.playerIn, onlyIn.playerOut], ["In", null]);
+  const onlyOut = sub({ player_in: { id: 1, name: "  " } });
+  assert.deepEqual([onlyOut.playerIn, onlyOut.playerOut], [null, null], "blank / missing names stay null");
+  const swapped = sub({ player_in: null, player_out: { id: 2, name: "Out" } });
+  assert.deepEqual([swapped.playerIn, swapped.playerOut], [null, "Out"], "never moved to the other slot");
+  assert.equal(swapped.minuteLabel, null, "no invented minute");
+  assert.equal(swapped.player, null, "no invented player");
+});
+
+test("the timeline view presents each known kind and keeps the neutral fallback", async () => {
+  const view = await read("../components/match/MatchInfoView.tsx");
+  assert.match(view, /yellow_card: "matchInfo\.event\.yellowCard"/);
+  assert.match(view, /red_card: "matchInfo\.event\.redCard"/);
+  assert.match(view, /substitution: "matchInfo\.event\.substitution"/);
+  assert.match(view, /other: "matchInfo\.event\.other"/);
+  assert.match(view, /theme\.colors\.eventYellowCard/);
+  assert.match(view, /theme\.colors\.eventRedCard/);
+  assert.match(view, /swap_horiz/);
+  assert.match(view, /local\.neutralDot/);
+  assert.match(view, /i18n\.t\("matchInfo\.event\.subOff", \{ player: row\.playerOut \}\)/);
+  // Kinds are the mapped backend type only, never re-derived in the view.
+  assert.doesNotMatch(view, /event\.type|row\.player(In|Out) \?\s*"substitution"/);
 });
 
 test("the info view renders no purchase control and is the only branch for non-scheduled matches", async () => {

@@ -2,36 +2,57 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const profile = await readFile(new URL("../app/profile.tsx", import.meta.url), "utf8");
-const tickets = await readFile(new URL("../app/tickets.tsx", import.meta.url), "utf8");
-const settings = await readFile(new URL("../app/settings.tsx", import.meta.url), "utf8");
-const tournament = await readFile(new URL("../app/tournament.tsx", import.meta.url), "utf8");
-const competitions = await readFile(new URL("../app/competitions.tsx", import.meta.url), "utf8");
-const appSwitch = await readFile(new URL("../components/AppSwitch.tsx", import.meta.url), "utf8");
-const about = await readFile(new URL("../app/about.tsx", import.meta.url), "utf8");
-const catalog = await readFile(new URL("../i18n/messages/en.ts", import.meta.url), "utf8");
+const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
+const profile = await read("../app/profile.tsx");
+const tickets = await read("../app/tickets.tsx");
+const settings = await read("../app/settings.tsx");
+const tournament = await read("../app/tournament.tsx");
+const competitions = await read("../app/competitions.tsx");
+const competitionsService = await read("../services/competitions.ts");
+const about = await read("../app/about.tsx");
+const editProfile = await read("../app/edit-profile.tsx");
+const legalDocument = await read("../components/LegalDocumentScreen.tsx");
+const photoHook = await read("../hooks/useProfilePhoto.ts");
 
-test("profile is a compact account hub", () => {
-  for (const label of ["Edit Profile", "Settings", "About LFA Tickets", "Contact Us", "Log Out"]) assert.match(profile, new RegExp(label));
+test("profile is the v3 account hub over the existing account owners", () => {
+  // Signed out: the shared sign-in card; the public destinations stay reachable.
+  assert.match(profile, /<AuthRequired \/>/);
+  for (const href of ['"/settings"', '"/legal"', '"/contact"']) assert.ok(profile.includes(`href=${href}`), href);
+  assert.match(profile, /<ChangePassword trigger="menu" \/>/);
+  // Logout: the existing confirmation and the owner's session cleanup.
   assert.match(profile, /await auth\.logout\(\)/);
   assert.match(profile, /alertDialog\.showAlert\(\{/);
   assert.match(profile, /title: "Log out\?"/);
-  assert.match(profile, /message: "Are you sure you want to log out\?"/);
   assert.match(profile, /variant: "destructive"/);
   assert.match(profile, /if \(!confirmed\) return;/);
+  assert.match(profile, /router\.replace\("\/"\)/);
   assert.doesNotMatch(profile, /Alert\.alert/);
   assert.doesNotMatch(profile, /profileService\.(orders|tickets)/);
+  // Keyed per account so one user's fresh profile never shows for the next.
+  assert.match(profile, /<ProfileScreen key=\{auth\.userCacheKey \?\? "guest"\} \/>/);
 });
 
-test("tickets use match services and preserve QR interaction", () => {
+test("name, email and phone are read-only; the avatar is the only mutation", () => {
+  assert.doesNotMatch(profile, /<TextInput|onChangeText/);
+  assert.doesNotMatch(profile, /authService\.(update|change)(?!Password)|updateProfile|PATCH|PUT/);
+  assert.match(profile, /profile\.readOnly/);
+  assert.match(photoHook, /authService\.uploadProfilePicture\(/);
+  assert.match(photoHook, /authService\.removeProfilePicture\(\)/);
+  assert.match(photoHook, /await auth\.updateUser\(nextUser\)/);
+  // Legacy route keeps working by landing on Profile.
+  assert.match(editProfile, /<Redirect href="\/profile" \/>/);
+});
+
+test("tickets use the portal services and the backend QR only", () => {
   assert.match(tickets, /profileService\s*\.matches\(filter\)/);
   assert.match(tickets, /profileService\.tickets\(match\.match_id\)/);
+  assert.match(tickets, /withBackendQrs\(result\.items, \(code\) => profileService\.ticket\(code\), current\)/);
   assert.doesNotMatch(tickets, /profileService\.orders\(/);
   assert.match(tickets, /horizontal\s+pagingEnabled/);
-  assert.match(tickets, /Tap to see QR code/);
-  assert.match(tickets, /Tap to see ticket info/);
-  assert.match(tickets, /ticket\.qr_image\.startsWith\("data:image\/"\)/);
-  assert.doesNotMatch(tickets, /apiRequest\(/);
+  assert.match(tickets, /const qr = ticketQrSource\(ticket\);/);
+  // No QR is generated on the device (the "qrcode" SF Symbol is only an icon).
+  assert.doesNotMatch(tickets, /apiRequest\(|from "[^"]*qr[^"]*"|new QRCode|generateQr|toDataURL/i);
+  assert.match(tickets, /withAuthRequired\(TicketsScreen, "myTickets\.title"\)/);
 });
 
 test("ticket requests invalidate stale filters, closed details, and former sessions", () => {
@@ -44,59 +65,40 @@ test("ticket requests invalidate stale filters, closed details, and former sessi
   assert.match(tickets, /onRefresh=\{reload\}/);
 });
 
-test("match cards keep responsive metadata rows and selected stadium context", () => {
-  assert.match(tickets, /numberOfLines=\{1\}[\s\S]*ellipsizeMode="tail"/);
-  assert.match(tickets, /matchMetadataRow: \{[\s\S]*flexDirection: "row"/);
-  assert.match(
-    tickets,
-    /matchStadium:\s*\{[^}]*\bflex:\s*1,[^}]*\bminWidth:\s*0/,
-  );
-  assert.match(tickets, /matchAction:\s*\{[^}]*\bflexShrink:\s*0/);
-  assert.match(tickets, /stadium: match\.stadium/);
-  assert.match(tickets, /order_number: ticket\.order_number \?\? ticket\.order_code/);
-  assert.match(tickets, /teamData\(match\.home_team, match\.home_team_logo\)/);
-  assert.match(tickets, /teamData\(match\.away_team, match\.away_team_logo\)/);
-  assert.match(tickets, /const logo = storageUrl\(team\.logo\)/);
+test("the QR frame never mirrors and non-scannable states are dimmed, not hidden", () => {
+  assert.match(tickets, /<PhysicalLayout style=\{local\.qrBox\}>/);
+  assert.match(tickets, /opacity: state === "valid" \|\| state === "other" \? 1 : 0\.3/);
 });
 
-test("legacy /tournament redirects to the single public Competitions shell (no mock content)", () => {
-  // One competitions experience: the old route only forwards old links.
+test("legacy /tournament redirects to the single public Competitions screen fed by the confirmed APIs", () => {
   assert.match(tournament, /return <Redirect href="\/competitions" \/>;/);
   assert.doesNotMatch(tournament, /StatePanel|Screen|useI18n/);
   assert.match(competitions, /export default function CompetitionsScreen/);
-  assert.match(competitions, /t\("competitions\.comingSoon\.title"\)/);
-  assert.match(catalog, /"competitions\.comingSoon\.title": "Competitions are on the way"/);
-  // Public shell only in this checkpoint: no auth gate, fetching or fabricated data (comments excluded).
+  assert.match(competitions, /competitionsService\s*\.list\(\)/);
+  assert.match(competitions, /competitionsService\s*\.standings\(id\)/);
+  assert.match(competitions, /competitionsService\s*\.matches\(id\)/);
+  assert.match(competitionsService, /apiRequest<unknown>\("\/competitions"\)/);
+  // Public, no auth gate, no invented data.
   const code = competitions.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  assert.doesNotMatch(code, /AuthRequired|withAuthRequired|profileService|apiRequest|Service\.|useEffect|standings|Math\.random/);
+  assert.doesNotMatch(code, /AuthRequired|withAuthRequired|profileService|apiRequest|Math\.random|mock/);
+  // Matches open the one Match Details route; Competitions never decides purchasability.
+  assert.match(competitions, /router\.push\(competitionMatchRoute\(match\)\)/);
+  assert.doesNotMatch(code, /isPurchasableMatchStatus|addItem|useCart/);
 });
 
-test("settings exposes honest preferences and central deletion authority", () => {
-  for (const label of ["Push Notifications", "Email Notifications", "Language", "System", "Light", "Dark", "Delete Account"]) assert.match(settings, new RegExp(label));
-  assert.match(settings, /value=\{false\}\s+disabled/);
-  assert.match(settings, /theme\.setMode\(option\.value\)/);
-  assert.match(settings, /<AccountDeletionModal/);
-});
-
-
-test("both notification toggle states open OS settings and use semantic contrast", () => {
+test("settings exposes only real capabilities and the central deletion authority", () => {
+  assert.match(settings, /useNotificationPermission\(\)/);
   assert.match(settings, /await openSettings\(\)/);
-  assert.doesNotMatch(settings, /requestPermission|pushPermissionLoading \|\| pushGranted/);
-  // Notification switches render through the shared AppSwitch component
-  // (see components/AppSwitch.tsx) rather than react-native's Switch
-  // directly, so both platforms get correct native colors/contrast — most
-  // notably, iOS never receives a custom thumbColor, which is what caused
-  // switches there to lose their native appearance.
-  assert.match(settings, /<AppSwitch/);
-  assert.match(appSwitch, /false: theme\.colors\.muted,\s+true: theme\.colors\.primary/);
+  assert.doesNotMatch(settings, /requestPermission|requestNotificationPermission|AppSwitch|Switch\b/);
+  assert.doesNotMatch(settings, /Email Notifications|storage\.set/);
+  assert.match(settings, /theme\.setMode\(mode\)/);
+  assert.match(settings, /<AccountDeletionModal/);
+  // Language is shown, not switchable (English is the only complete catalog).
+  assert.doesNotMatch(settings, /setLocale|changeLanguage/);
 });
 
-test("Terms of Use mirrors the Privacy shared modal presentation, both backed by the real legal API", () => {
-  assert.match(about, /onPress=\{\(\) => void terms\.open\(\)\}/);
-  assert.doesNotMatch(about, /title="Terms of Use"[\s\S]{0,180}disabled/);
-  assert.match(about, /<BottomSheetModal[\s\S]*visible=\{terms\.visible\}[\s\S]*title="Terms of Use"[\s\S]*wide[\s\S]*scrollable/);
-  assert.match(about, /legalService\.termsOfUse\(\)/);
-  assert.match(about, /legalService\.privacyPolicy\(\)/);
-  assert.doesNotMatch(about, /Terms of Use will be available soon\./);
-  assert.doesNotMatch(about, /router\.push\("\/terms-of-use"\)/);
+test("legal documents are the backend's own text; About lands on Legal", () => {
+  assert.match(legalDocument, /legalService\.privacyPolicy\(\)/);
+  assert.match(legalDocument, /legalService\.termsOfUse\(\)/);
+  assert.match(about, /<Redirect href="\/legal" \/>/);
 });

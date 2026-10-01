@@ -1301,6 +1301,105 @@ test("match tickets preserves paginated normalization and sends the selected num
   } finally { h.cleanup(); }
 });
 
+const listedTicket = (overrides = {}) => ({
+  ticket_code: "5108299550",
+  holder_name: "Match 2",
+  status: "valid",
+  order_code: "ORD-1172",
+  match: { id: 23, kickoff_at: "21:45:00", home_team: "Al Riyadi", home_team_logo: null, away_team: "Al Safa", away_team_logo: null },
+  zone: { id: 18, name: "Zone A" },
+  seat: null,
+  checked_in_at: null,
+  created_at: "2026-09-03 13:20:00",
+  qr_image: "data:image/png;base64,abc",
+  ...overrides,
+});
+
+async function listTickets(items) {
+  const h = await createHarness();
+  try {
+    const request = h.auth.profileService.tickets(23);
+    const pending = await h.waitForFetch();
+    pending.pending.resolve(response(200, { data: items, meta: { page: 1, per_page: 20, total: items.length, last_page: 1 } }));
+    return await request;
+  } finally { h.cleanup(); }
+}
+
+test("a listed ticket stays valid when its QR is present, empty, null or absent (the detail endpoint completes it)", async () => {
+  const { qr_image: _omitted, ...withoutQr } = listedTicket();
+  const items = [listedTicket(), listedTicket({ ticket_code: "2", qr_image: "" }), listedTicket({ ticket_code: "3", qr_image: null }), { ...withoutQr, ticket_code: "4" }];
+  const result = await listTickets(items);
+  assert.equal(result.items.length, 4);
+  assert.deepEqual(result.items.map((ticket) => ticket.qr_image), ["data:image/png;base64,abc", "", null, undefined]);
+});
+
+test("only the QR field was relaxed: a non-string QR or a broken ticket field still rejects the list", async () => {
+  await assert.rejects(() => listTickets([listedTicket({ qr_image: 42 })]), /Invalid portal ticket response/);
+  await assert.rejects(() => listTickets([listedTicket({ qr_image: { url: "x" } })]), /Invalid portal ticket response/);
+  await assert.rejects(() => listTickets([listedTicket({ holder_name: null })]), /Invalid portal ticket response/);
+  await assert.rejects(() => listTickets([listedTicket({ status: undefined })]), /Invalid portal ticket response/);
+});
+
+/* Avatar results publish only into the session that started them. */
+
+async function avatarRace({ path, method, switchAccount }) {
+  const { runOwnedAvatarMutation } = await import("../lib/avatarMutationOwnership.ts");
+  const h = await createHarness();
+  try {
+    await install(h, "token-a", "A");
+    const published = [];
+    const outcome = runOwnedAvatarMutation({
+      capture: () => h.api.captureAuthenticationSnapshot(),
+      isCurrent: (snapshot) => h.api.isAuthenticationSnapshotCurrent(snapshot),
+      request: () => h.api.apiRequest(path, { method }),
+      // The Profile screen's user at publication time (A's stale render).
+      nextUser: (result) => ({ id: "A", avatar: result?.avatar ?? null }),
+      publish: async (user) => {
+        published.push(user);
+        await h.auth.authService.persistUser(user);
+      },
+    });
+    const pending = await h.waitForFetch();
+    if (switchAccount) await switchAccount(h);
+    pending.pending.resolve(response(200, { avatar: "avatars/a.jpg" }));
+    return { outcome: await outcome, published, stored: JSON.parse(h.state.values.get("lfa_portal_user") ?? "null"), token: (await h.api.captureAuthenticationSnapshot()).token };
+  } finally { h.cleanup(); }
+}
+
+const logoutThenLoginB = async (h) => {
+  await h.api.clearToken();
+  await install(h, "token-b", "B");
+};
+
+test("A's avatar upload resolving after A logs out and B logs in never publishes into B's session", async () => {
+  const race = await avatarRace({ path: "/auth/profile-picture", method: "POST", switchAccount: logoutThenLoginB });
+  assert.equal(race.outcome, "stale");
+  assert.deepEqual(race.published, [], "updateUser is never called with A's user");
+  assert.deepEqual(race.stored, { id: "B" }, "B's persisted user is untouched");
+  assert.equal(race.token, "token-b", "B remains signed in");
+});
+
+test("A's avatar removal resolving after the account changes never publishes into B's session", async () => {
+  const race = await avatarRace({ path: "/auth/profile-picture", method: "DELETE", switchAccount: logoutThenLoginB });
+  assert.equal(race.outcome, "stale");
+  assert.deepEqual(race.published, []);
+  assert.deepEqual(race.stored, { id: "B" });
+});
+
+test("an avatar result after logout alone (no next account) is also dropped", async () => {
+  const race = await avatarRace({ path: "/auth/profile-picture", method: "DELETE", switchAccount: (h) => h.api.clearToken() });
+  assert.equal(race.outcome, "stale");
+  assert.deepEqual(race.published, []);
+  assert.equal(race.token, null);
+});
+
+test("an avatar result in the same session publishes as before", async () => {
+  const race = await avatarRace({ path: "/auth/profile-picture", method: "POST" });
+  assert.equal(race.outcome, "published");
+  assert.deepEqual(race.published, [{ id: "A", avatar: "avatars/a.jpg" }]);
+  assert.deepEqual(race.stored, { id: "A", avatar: "avatars/a.jpg" });
+});
+
 test("an ordinary HTTP 503 activates sticky global maintenance without clearing authentication", async () => {
   const h = await createHarness();
   try {

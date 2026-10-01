@@ -5,6 +5,7 @@ import { matchLabels } from "@/components/match/matchLabels";
 import { useTheme } from "@/components/ui";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useI18n } from "@/i18n/I18nProvider";
+import type { MessageKey } from "@/i18n/messages/en";
 import { layout, size, spacing } from "@/lib/designTokens";
 import {
   matchDetailFacts,
@@ -12,6 +13,7 @@ import {
   statRows,
   timelineRows,
   type StatRow,
+  type TimelineKind,
   type TimelineRow,
 } from "@/lib/matchDetailFacts";
 import type { MatchDetailExperience } from "@/lib/ticketSelection";
@@ -266,16 +268,38 @@ function LiveDot({ running }: { running: boolean }) {
   return <Animated.View style={[local.dot, { opacity: blink }]} accessible={false} importantForAccessibility="no-hide-descendants" />;
 }
 
+const TIMELINE_KIND_LABEL: Record<TimelineKind, MessageKey> = {
+  goal: "matchInfo.event.goal",
+  yellow_card: "matchInfo.event.yellowCard",
+  red_card: "matchInfo.event.redCard",
+  substitution: "matchInfo.event.substitution",
+  other: "matchInfo.event.other",
+};
+
 function TimelineItem({ row, first }: { row: TimelineRow; first: boolean }) {
   const theme = useTheme();
   const i18n = useI18n();
-  const title = row.player ?? row.teamName ?? i18n.t("matchInfo.event.unknown");
-  const detail = row.kind === "goal" ? i18n.t("matchInfo.event.goal") : row.side === null ? (row.teamName ?? "") : "";
+  const kindLabel = i18n.t(TIMELINE_KIND_LABEL[row.kind]);
+  const substitution = row.kind === "substitution";
+  // v3: a substitution names the player coming on, with "Off {player}" beneath.
+  const title = (substitution ? row.playerIn : row.player) ?? row.teamName ?? kindLabel;
+  const detail =
+    substitution && row.playerOut
+      ? i18n.t("matchInfo.event.subOff", { player: row.playerOut })
+      : row.kind !== "other"
+        ? kindLabel
+        : row.side === null
+          ? (row.teamName ?? "")
+          : "";
   const a11y = [
     row.minuteLabel,
-    row.kind === "goal" ? i18n.t("matchInfo.event.goal") : i18n.t("matchInfo.event.other"),
-    row.player,
-    row.shirtNumber !== null ? i18n.t("matchInfo.event.shirt", { number: row.shirtNumber }) : null,
+    kindLabel,
+    ...(substitution
+      ? [
+          row.playerIn ? i18n.t("matchInfo.event.subOnA11y", { player: row.playerIn }) : null,
+          row.playerOut ? i18n.t("matchInfo.event.subOffA11y", { player: row.playerOut }) : null,
+        ]
+      : [row.player, row.shirtNumber !== null ? i18n.t("matchInfo.event.shirt", { number: row.shirtNumber }) : null]),
     row.teamName,
   ]
     .filter(Boolean)
@@ -287,6 +311,20 @@ function TimelineItem({ row, first }: { row: TimelineRow; first: boolean }) {
         size={20}
         tintColor={theme.colors.textStrong}
         fallback={<AppText variant="bodyStrong">⚽</AppText>}
+      />
+    ) : row.kind === "yellow_card" || row.kind === "red_card" ? (
+      <View
+        style={[
+          local.eventCard,
+          { backgroundColor: row.kind === "yellow_card" ? theme.colors.eventYellowCard : theme.colors.eventRedCard },
+        ]}
+      />
+    ) : substitution ? (
+      <SymbolView
+        name={{ ios: "arrow.left.arrow.right", android: "swap_horiz", web: "swap_horiz" } as never}
+        size={18}
+        tintColor={theme.colors.success}
+        fallback={<AppText variant="bodyStrong" style={{ color: theme.colors.success }}>⇄</AppText>}
       />
     ) : (
       <View style={[local.neutralDot, { backgroundColor: theme.colors.textMuted }]} />
@@ -416,6 +454,7 @@ const local = {
   eventCopyHome: { alignItems: "flex-end" as const },
   eventTitle: { fontSize: 14 },
   neutralDot: { width: 8, height: 8, borderRadius: 4 },
+  eventCard: { width: 12, height: 16, borderRadius: 2.5 },
   marker: { alignItems: "center" as const, paddingVertical: 11, borderTopWidth: 1 },
   markerPill: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
   statsHeader: {

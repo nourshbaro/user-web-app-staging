@@ -1,35 +1,64 @@
 import { AuthRequired } from "@/components/AuthRequired";
-import { BottomSheetModal } from "@/components/BottomSheetModal";
-import { ContactBrandIcon } from "@/components/ContactBrandIcon";
-import { MainHeader } from "@/components/MainHeader";
+import { ChangePassword } from "@/components/ChangePassword";
+import { ProfilePhotoSheet } from "@/components/ProfilePhotoSheet";
+import { TabHeader } from "@/components/TabHeader";
+import { AppText } from "@/components/foundation";
 import { Loading, Screen, useResponsive, useTheme } from "@/components/ui";
-import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAlertDialog } from "@/context/AlertDialogContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useProfilePhoto } from "@/hooks/useProfilePhoto";
+import { useI18n } from "@/i18n/I18nProvider";
 import { storageUrl } from "@/lib/config";
-import { OFFICIAL_CONTACTS } from "@/lib/contact";
-import { Stack, router } from "expo-router";
+import { spacing } from "@/lib/designTokens";
+import { formatMonthYear } from "@/lib/format";
+import { profileFacts } from "@/lib/profileFacts";
+import { authService } from "@/services/auth";
+import type { User } from "@/types";
+import { Stack, router, type Href } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useState } from "react";
-import {
-  Image,
-  Linking,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { ActivityIndicator, Image, Pressable, ScrollView, View } from "react-native";
 
+/**
+ * Profile (LFA Screen v3). Account data comes from `/auth/me` (the source of
+ * truth; the cached `auth.user` covers the moment before it loads). Name,
+ * email and phone are read-only in the app; the avatar is the only editable
+ * field (`useProfilePhoto`). "Member since" and "Verified" are shown only
+ * from the backend's `created_at` and `email_verified_at`.
+ */
 function ProfileScreen() {
   const auth = useAuth();
+  const { isAuthenticated, updateUser } = auth;
   const alertDialog = useAlertDialog();
   const toast = useToast();
   const theme = useTheme();
+  const i18n = useI18n();
   const responsive = useResponsive();
-  const [contactVisible, setContactVisible] = useState(false);
+  const [profile, setProfile] = useState<User | null>(null);
+  const [photoSheet, setPhotoSheet] = useState(false);
+  const displayUser = profile ?? auth.user;
+  const currentUser = useCallback(() => profile ?? auth.user, [auth.user, profile]);
+  const photo = useProfilePhoto({ currentUser, onUserUpdated: setProfile });
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    authService
+      .me()
+      .then((nextUser) => {
+        if (cancelled) return;
+        setProfile(nextUser);
+        void updateUser(nextUser);
+      })
+      .catch(() => {
+        // The cached profile stays on screen; nothing here is editable anyway.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, updateUser]);
+
   const logout = async () => {
     const confirmed = await alertDialog.showAlert({
       title: "Log out?",
@@ -53,368 +82,192 @@ function ProfileScreen() {
       router.replace("/");
     }
   };
-  const openContact = async (contact: (typeof OFFICIAL_CONTACTS)[number]) => {
-    if ("appUrl" in contact && Platform.OS !== "web") {
-      try {
-        await Linking.openURL(contact.appUrl);
-        return;
-      } catch {
-        // WhatsApp is unavailable; continue with the universal web URL.
-      }
-    }
 
-    try {
-      await Linking.openURL(contact.url);
-    } catch {
-      toast.showToast({
-        variant: "error",
-        title: "Could not open contact",
-        message: "Please try again from another app.",
-      });
-    }
-  };
   if (!auth.isReady) return <Loading />;
   if (!auth.isAuthenticated)
     return (
       <Screen>
-        <View style={[styles.shell, { width: responsive.contentWidth }]}>
-          <MainHeader />
-          {/* <Text style={[theme.styles.title, styles.pageTitle]}>My Profile</Text> */}
-          <AuthRequired />
+        <View style={[local.shell, { width: responsive.contentWidth }]}>
+          <TabHeader title={i18n.t("profile.title")} />
+          <ScrollView contentContainerStyle={local.content} showsVerticalScrollIndicator={false}>
+            <AuthRequired />
+            <PublicMenu />
+          </ScrollView>
         </View>
       </Screen>
     );
 
-  const name = auth.user?.name?.trim();
-  const email = auth.user?.email?.trim();
-  const avatar = auth.user?.avatar ? storageUrl(auth.user.avatar) : null;
+  const facts = profileFacts(displayUser);
+  const avatar = displayUser?.avatar ? storageUrl(displayUser.avatar) : null;
 
   return (
     <Screen>
-      <Stack.Screen options={{ title: "My Profile" }} />
-      <View style={[styles.shell, { width: responsive.contentWidth }]}>
-        <MainHeader />
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* <Text style={[styles.pageTitle, { color: theme.colors.ink }]}>
-            My Profile
-          </Text> */}
-          <View
-            style={[
-              styles.identity,
-              {
-                backgroundColor: theme.colors.panel,
-                borderColor: theme.colors.line,
-              },
-            ]}
-          >
-            <View
-              style={[
-                styles.avatar,
-                { backgroundColor: theme.colors.panelSoft },
-              ]}
+      <Stack.Screen options={{ title: i18n.t("profile.title") }} />
+      <View style={[local.shell, { width: responsive.contentWidth }]}>
+        <TabHeader title={i18n.t("profile.title")} />
+        <ScrollView contentContainerStyle={local.content} showsVerticalScrollIndicator={false}>
+          <View style={local.identity}>
+            <Pressable
+              onPress={() => setPhotoSheet(true)}
+              disabled={photo.busy}
+              accessibilityRole="button"
+              accessibilityLabel={avatar ? i18n.t("profile.photo.change") : i18n.t("profile.photo.add")}
+              aria-busy={photo.busy}
+              style={({ pressed }) => [local.avatarPress, pressed && { transform: [{ scale: 0.96 }] }]}
             >
-              {avatar ? (
-                <Image
-                  source={{ uri: avatar }}
-                  style={styles.avatarImage}
-                  resizeMode="cover"
-                />
-              ) : (
-                <Text
-                  style={[styles.avatarText, { color: theme.colors.primary }]}
-                >
-                  {initials(name)}
-                </Text>
-              )}
-            </View>
-            <View style={styles.identityCopy}>
-              <Text style={[styles.name, { color: theme.colors.ink }]}>
-                {name || email || "LFA supporter"}
-              </Text>
-              {email ? (
-                <Text numberOfLines={1} style={theme.styles.muted}>
-                  {email}
-                </Text>
-              ) : null}
-            </View>
+              <View style={[local.avatar, { backgroundColor: theme.colors.hero }]}>
+                {avatar ? (
+                  <Image source={{ uri: avatar }} style={local.avatarImage} resizeMode="cover" accessible={false} />
+                ) : (
+                  <AppText variant="displaySection" tone="onHero">{facts.initials}</AppText>
+                )}
+              </View>
+              <View style={[local.cameraBadge, { backgroundColor: theme.colors.actionPrimary, borderColor: theme.colors.background }]}>
+                {photo.busy ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <SymbolView name={{ ios: "camera.fill", android: "photo_camera", web: "photo_camera" }} size={16} tintColor="#FFFFFF" fallback={<View />} />
+                )}
+              </View>
+            </Pressable>
+            <AppText variant="displayDay" align="center" style={local.name}>{facts.name}</AppText>
+            {facts.memberSince ? (
+              <AppText variant="meta" tone="muted" align="center" style={local.regular}>
+                {i18n.t("profile.memberSince", { date: formatMonthYear(facts.memberSince) })}
+              </AppText>
+            ) : null}
           </View>
-          <View
-            style={[
-              styles.menu,
-              {
-                backgroundColor: theme.colors.panel,
-                borderColor: theme.colors.line,
-              },
-            ]}
+
+          <Card>
+            {facts.email ? (
+              <InfoRow icon={{ ios: "envelope", android: "mail", web: "mail" }} value={facts.email} first>
+                {facts.emailVerified ? (
+                  <View style={local.verified}>
+                    <SymbolView name={{ ios: "checkmark.shield", android: "verified_user", web: "verified_user" } as never} size={14} tintColor={theme.colors.tones.success.fg} fallback={<View />} />
+                    <AppText variant="caption" style={{ color: theme.colors.tones.success.fg, fontWeight: "600" }}>{i18n.t("profile.verified")}</AppText>
+                  </View>
+                ) : null}
+              </InfoRow>
+            ) : null}
+            {facts.phone ? (
+              <InfoRow icon={{ ios: "phone", android: "phone", web: "phone" }} value={facts.phone} first={!facts.email} />
+            ) : null}
+          </Card>
+          <AppText variant="caption" tone="muted" style={local.note}>{i18n.t("profile.readOnly")}</AppText>
+
+          <Card>
+            <ChangePassword trigger="menu" />
+            <MenuRow icon={{ ios: "gearshape", android: "settings", web: "settings" }} label={i18n.t("profile.menu.settings")} href="/settings" />
+            <MenuRow icon={{ ios: "doc.text", android: "description", web: "description" }} label={i18n.t("profile.menu.legal")} href="/legal" />
+            <MenuRow icon={{ ios: "message", android: "chat", web: "chat" }} label={i18n.t("profile.menu.contact")} href="/contact" />
+          </Card>
+
+          <Pressable
+            onPress={() => void logout()}
+            accessibilityRole="button"
+            accessibilityLabel={i18n.t("profile.logout")}
+            style={({ pressed }) => [local.logout, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }, pressed && { opacity: 0.85 }]}
           >
-            <MenuRow
-              title="Edit Profile"
-              icon={{ ios: "pencil", android: "edit", web: "edit" }}
-              onPress={() => router.push("/edit-profile")}
-            />
-            <Divider />
-            <MenuRow
-              title="Settings"
-              icon={{ ios: "gearshape", android: "settings", web: "settings" }}
-              onPress={() => router.push("/settings")}
-            />
-          </View>
-          <View
-            style={[
-              styles.menu,
-              {
-                backgroundColor: theme.colors.panel,
-                borderColor: theme.colors.line,
-              },
-            ]}
-          >
-            <MenuRow
-              title="About LFA Tickets"
-              icon={{ ios: "info.circle", android: "info", web: "info" }}
-              onPress={() => router.push("/about")}
-            />
-            <Divider />
-            <MenuRow
-              title="Contact Us"
-              icon={{ ios: "envelope", android: "mail", web: "mail" }}
-              onPress={() => setContactVisible(true)}
-            />
-            <Divider />
-            <MenuRow
-              title="Log Out"
-              icon={{
-                ios: "rectangle.portrait.and.arrow.right",
-                android: "logout",
-                web: "logout",
-              }}
-              destructive
-              onPress={() => void logout()}
-            />
-          </View>
+            <AppText variant="bodyStrong" style={{ color: theme.colors.brandInk, fontSize: 17 }}>{i18n.t("profile.logout")}</AppText>
+          </Pressable>
         </ScrollView>
       </View>
-      <BottomSheetModal
-        visible={contactVisible}
-        onClose={() => setContactVisible(false)}
-        title="Contact Us"
-      >
-        <View
-          style={[styles.contactGroup, { borderColor: theme.colors.line }]}
-        >
-          {OFFICIAL_CONTACTS.map((contact) => (
-            <ContactRow
-              key={contact.label}
-              contact={contact}
-              onPress={() => void openContact(contact)}
-            />
-          ))}
-        </View>
-      </BottomSheetModal>
+      <ProfilePhotoSheet
+        visible={photoSheet}
+        hasPhoto={Boolean(avatar)}
+        busy={photo.busy}
+        onClose={() => setPhotoSheet(false)}
+        onChoose={photo.chooseFromGallery}
+        onTakePhoto={photo.takePhoto}
+        onRemove={photo.removePhoto}
+      />
     </Screen>
   );
 }
-function ContactRow({
-  contact,
-  onPress,
-}: {
-  contact: (typeof OFFICIAL_CONTACTS)[number];
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  const brand = "brand" in contact ? contact.brand : null;
-  return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={
-        "accessibilityLabel" in contact
-          ? contact.accessibilityLabel
-          : contact.label
-      }
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.contactRow,
-        { borderBottomColor: theme.colors.line },
-        pressed && styles.pressed,
-      ]}
-    >
-      <View
-        style={[styles.rowIcon, { backgroundColor: theme.colors.panelSoft }]}
-      >
-        {brand ? (
-          <ContactBrandIcon
-            brand={brand}
-            color={theme.colors.primary}
-            size={20}
-          />
-        ) : "icon" in contact ? (
-          <SymbolView
-            name={contact.icon as any}
-            size={20}
-            tintColor={theme.colors.primary}
-            fallback={<Text>{contact.label[0]}</Text>}
-          />
-        ) : null}
-      </View>
-      <Text style={[styles.rowText, { color: theme.colors.ink }]}>
-        {contact.label}
-      </Text>
-      <SymbolView
-        name={{
-          ios: "chevron.right",
-          android: "chevron_right",
-          web: "chevron_right",
-        }}
-        size={20}
-        tintColor={theme.colors.muted}
-        fallback={<View />}
-      />
-    </Pressable>
-  );
-}
-function MenuRow({
-  title,
-  icon,
-  destructive,
-  onPress,
-}: {
-  title: string;
-  icon: any;
-  destructive?: boolean;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={title}
-      onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-    >
-      <View
-        style={[
-          styles.rowIcon,
-          {
-            backgroundColor: destructive
-              ? "rgba(200,16,46,0.10)"
-              : theme.colors.panelSoft,
-          },
-        ]}
-      >
-        <SymbolView
-          name={icon}
-          size={20}
-          tintColor={destructive ? theme.colors.danger : theme.colors.primary}
-          fallback={<Text>{title[0]}</Text>}
-        />
-      </View>
-      <Text
-        style={[
-          styles.rowText,
-          { color: destructive ? theme.colors.danger : theme.colors.ink },
-        ]}
-      >
-        {title}
-      </Text>
-      <SymbolView
-        name={{
-          ios: "chevron.right",
-          android: "chevron_right",
-          web: "chevron_right",
-        }}
-        size={20}
-        tintColor={theme.colors.muted}
-        fallback={<View />}
-      />
-    </Pressable>
-  );
-}
-function Divider() {
-  const theme = useTheme();
-  return (
-    <View style={[styles.divider, { backgroundColor: theme.colors.line }]} />
-  );
-}
-function initials(value?: string) {
-  if (!value) return "LF";
-  const parts = value.split(/\s+/).filter(Boolean);
-  return parts.length > 1
-    ? `${parts[0][0]}${parts[1][0]}`.toUpperCase()
-    : parts[0].slice(0, 2).toUpperCase();
-}
-const styles = StyleSheet.create({
-  shell: { flex: 1, alignSelf: "center" },
-  content: { gap: 16, paddingTop: 12, paddingBottom: 30 },
-  pageTitle: { fontSize: 24, lineHeight: 30, fontWeight: "900" },
-  identity: {
-    minHeight: 104,
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-  },
-  identityCopy: { flex: 1, gap: 4 },
-  avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  avatarText: {
-    fontSize: 23,
-    fontWeight: "900",
-  },
-  avatarImage: {
-    width: "100%",
-    height: "100%",
-  },
-  name: {
-    fontSize: 19,
-    lineHeight: 24,
-    fontWeight: "900",
-  },
-  menu: {
-    borderWidth: 1,
-    borderRadius: 12,
-    overflow: "hidden",
-  },
-  row: {
-    minHeight: 62,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  rowIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  rowText: { flex: 1, fontSize: 15, fontWeight: "800" },
-  divider: { height: StyleSheet.hairlineWidth, marginLeft: 64 },
-  pressed: { opacity: 0.68 },
-  contactGroup: {
-    borderWidth: 1,
-    borderRadius: 12,
-    overflow: "hidden",
-    marginVertical: 12,
-  },
-  contactRow: {
-    minHeight: 60,
-    paddingHorizontal: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-});
 
-export default withAuthRequired(ProfileScreen);
+/** Signed-out: the public destinations (legal, contact) stay reachable. */
+function PublicMenu() {
+  const i18n = useI18n();
+  return (
+    <Card>
+      <MenuRow icon={{ ios: "doc.text", android: "description", web: "description" }} label={i18n.t("profile.menu.legal")} href="/legal" first />
+      <MenuRow icon={{ ios: "message", android: "chat", web: "chat" }} label={i18n.t("profile.menu.contact")} href="/contact" />
+    </Card>
+  );
+}
+
+function Card({ children }: { children: ReactNode }) {
+  const theme = useTheme();
+  return <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>{children}</View>;
+}
+
+function InfoRow({ icon, value, first = false, children }: { icon: { ios: string; android: string; web: string }; value: string; first?: boolean; children?: ReactNode }) {
+  const theme = useTheme();
+  return (
+    <View style={[local.infoRow, !first && { borderTopWidth: 1, borderTopColor: theme.colors.hairline }]} accessible>
+      <SymbolView name={icon as never} size={20} tintColor={theme.colors.textMuted} fallback={<View />} />
+      <AppText variant="body" numberOfLines={1} style={local.infoValue}>{value}</AppText>
+      {children}
+    </View>
+  );
+}
+
+function MenuRow({ icon, label, href, first = false }: { icon: { ios: string; android: string; web: string }; label: string; href: Href; first?: boolean }) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={() => router.push(href)}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [local.menuRow, !first && { borderTopWidth: 1, borderTopColor: theme.colors.hairline }, pressed && { backgroundColor: theme.colors.surfaceSecondary }]}
+    >
+      <View style={[local.menuIcon, { backgroundColor: theme.colors.bgAlt }]}>
+        <SymbolView name={icon as never} size={17} tintColor={theme.colors.textStrong} fallback={<View />} />
+      </View>
+      <AppText variant="body" style={local.menuLabel}>{label}</AppText>
+      <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={16} tintColor={theme.colors.textMuted} fallback={<View />} />
+    </Pressable>
+  );
+}
+
+const local = {
+  shell: { flex: 1, alignSelf: "center" as const },
+  content: { gap: spacing.lg, paddingBottom: spacing.xxxl },
+  identity: { alignItems: "center" as const, paddingTop: 14, paddingBottom: spacing.sm },
+  avatarPress: { width: 96, height: 96 },
+  // v3: 96pt night circle, initials 32; 32pt red camera badge ringed by the canvas.
+  avatar: { width: 96, height: 96, borderRadius: 48, overflow: "hidden" as const, alignItems: "center" as const, justifyContent: "center" as const },
+  avatarImage: { width: "100%" as const, height: "100%" as const },
+  cameraBadge: {
+    position: "absolute" as const,
+    end: -2,
+    bottom: -2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 3,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
+  name: { marginTop: 14 },
+  regular: { fontWeight: "400" as const, marginTop: 2 },
+  card: { borderRadius: 20, overflow: "hidden" as const },
+  infoRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 14, paddingHorizontal: spacing.lg, paddingVertical: 14, minHeight: 50 },
+  infoValue: { flex: 1, minWidth: 0 },
+  verified: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
+  note: { paddingHorizontal: spacing.lg, marginTop: -spacing.sm },
+  menuRow: { minHeight: 54, flexDirection: "row" as const, alignItems: "center" as const, gap: 12, paddingHorizontal: 16, paddingVertical: 12 },
+  menuIcon: { width: 30, height: 30, borderRadius: 8, alignItems: "center" as const, justifyContent: "center" as const },
+  menuLabel: { flex: 1 },
+  logout: { minHeight: 50, borderRadius: 16, alignItems: "center" as const, justifyContent: "center" as const },
+};
+
+/**
+ * The Profile tab renders its own signed-out state (sign in plus the public
+ * legal/contact destinations). Keyed per account, so a previous user's
+ * fresh profile can never show for the next one.
+ */
+export default function ProfileTab() {
+  const auth = useAuth();
+  return <ProfileScreen key={auth.userCacheKey ?? "guest"} />;
+}

@@ -146,11 +146,11 @@ separate transaction-boundary task (§3).
 
 ### v3 redesign batches (reference: LFA Screen v3, §5)
 Batches 1–3 (foundation + navigation, splash/onboarding/notification
-pre-prompt, Home + Matches) are committed. Batches 4–6 (Match Details +
-ticket selection, Cart + ticket holders, Checkout + payment results) are
-implemented, with the startup corrections, as one checkpoint pending
-independent review (`docs/STATUS.md`). Competitions, Tickets and Profile
-follow as later batches.
+pre-prompt, Home + Matches) and Batches 4–6 (Match Details + ticket
+selection, Cart + ticket holders, Checkout + payment results) are
+committed. Batches 7–9 (My Tickets, Competitions, Profile / Settings /
+Legal / Contact / Auth) are implemented as one checkpoint pending independent
+review (`docs/STATUS.md`). Batch 10 is next.
 
 ### Phase 5 — Tickets
 ### Phase 6 — Profile + supporting screens

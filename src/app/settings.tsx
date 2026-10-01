@@ -1,80 +1,42 @@
 import { AccountDeletionModal } from "@/components/AccountDeletionModal";
-import { AppHeader } from "@/components/AppHeader";
-import { AppSwitch } from "@/components/AppSwitch";
-import { Screen, useResponsive, useTheme } from "@/components/ui";
+import { SubpageShell } from "@/components/SubpageShell";
+import { AppText, SegmentedControl } from "@/components/foundation";
+import { useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useToast } from "@/context/ToastContext";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 import { useI18n } from "@/i18n/I18nProvider";
+import { spacing } from "@/lib/designTokens";
 import { registerPushDevice } from "@/lib/registerPushDevice";
+import { pushRuntimeSupported } from "@/lib/notifications";
+import { pushSettingsSupported, settingsPushState } from "@/lib/settingsPresentation";
 import type { ThemeMode } from "@/lib/themePalette";
-import { Stack } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState, type ReactNode } from "react";
+import { Platform, Pressable, View } from "react-native";
 
-const APPEARANCE: {
-  value: ThemeMode;
-  label: string;
-  icon: any;
-}[] = [
-  {
-    value: "system",
-    label: "System",
-    icon: {
-      ios: "circle.lefthalf.filled",
-      android: "contrast",
-      web: "contrast",
-    },
-  },
-  {
-    value: "light",
-    label: "Light",
-    icon: {
-      ios: "sun.max",
-      android: "light_mode",
-      web: "light_mode",
-    },
-  },
-  {
-    value: "dark",
-    label: "Dark",
-    icon: {
-      ios: "moon",
-      android: "dark_mode",
-      web: "dark_mode",
-    },
-  },
-];
+const APPEARANCE: readonly ThemeMode[] = ["system", "light", "dark"];
 
+/**
+ * Settings (LFA Screen v3). Only real capabilities are offered:
+ * - push notifications: the OS permission, read live; the only action opens
+ *   the phone's settings (no in-app switch pretends to persist a preference);
+ * - appearance: the app theme mode (`ThemeProvider`);
+ * - language: shown, not switchable — English is the only complete catalog;
+ * - account deletion: the existing `AccountDeletionModal`.
+ */
 function SettingsScreen() {
   const toast = useToast();
-  const responsive = useResponsive();
   const theme = useTheme();
   const i18n = useI18n();
-
   const [deleteVisible, setDeleteVisible] = useState(false);
+  const { status: pushPermission, loading: pushPermissionLoading, openSettings } = useNotificationPermission();
+  const push = settingsPushState(pushPermission, pushPermissionLoading, pushSettingsSupported(Platform.OS, pushRuntimeSupported));
 
-  const {
-    status: pushPermission,
-    loading: pushPermissionLoading,
-    openSettings,
-  } = useNotificationPermission();
-
-  const pushGranted = pushPermission === "granted";
-  const pushDenied = pushPermission === "denied";
-
-  const pushDetail = pushPermissionLoading
-    ? "Checking permission..."
-    : pushGranted
-      ? "Allowed on this device"
-      : pushDenied
-        ? "Enable notifications in device settings"
-        : "Allow notifications from LFA";
-
+  // A permission granted in the phone's settings registers exactly as before.
   useEffect(() => {
-    if (pushGranted) void registerPushDevice().catch(() => {});
-  }, [pushGranted]);
+    if (pushPermission === "granted") void registerPushDevice().catch(() => {});
+  }, [pushPermission]);
 
   const handlePushPress = async () => {
     if (pushPermissionLoading) return;
@@ -84,393 +46,96 @@ function SettingsScreen() {
       toast.showToast({
         variant: "error",
         title: "Could not open settings",
-        message:
-          "Open your device settings and select LFA to change notification permission.",
+        message: "Open your device settings and select LFA to change notification permission.",
       });
     }
   };
 
   return (
-    <Screen>
-      <Stack.Screen options={{ title: "Settings" }} />
+    <SubpageShell title={i18n.t("settings.title")} backLabel={i18n.t("profile.title")} fallback="/profile">
+      <Section title={i18n.t("settings.notifications")}>
+        <View style={[local.card, local.pushCard, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
+          <View style={local.pushRow} accessible accessibilityLabel={`${i18n.t("settings.push")}: ${i18n.t(`settings.push.${push.state}`)}`}>
+            <AppText variant="body" style={local.rowLabel}>{i18n.t("settings.push")}</AppText>
+            <AppText variant="body" tone={push.state === "on" ? "strong" : "muted"}>{i18n.t(`settings.push.${push.state}`)}</AppText>
+          </View>
+          <AppText variant="meta" tone="muted" style={local.regular}>{i18n.t(`settings.push.${push.state}.detail`)}</AppText>
+          {push.actionable ? (
+            <Pressable
+              onPress={() => void handlePushPress()}
+              disabled={pushPermissionLoading}
+              accessibilityRole="button"
+              accessibilityLabel={i18n.t("settings.push.open")}
+              aria-disabled={pushPermissionLoading}
+              style={({ pressed }) => [local.pushButton, { backgroundColor: theme.colors.tones.brand.bg }, (pressed || pushPermissionLoading) && { opacity: 0.7 }]}
+            >
+              <AppText variant="meta" style={{ color: theme.colors.brandInk, fontWeight: "600" }}>{i18n.t("settings.push.open")}</AppText>
+            </Pressable>
+          ) : null}
+        </View>
+      </Section>
 
-      <View style={[styles.shell, { width: responsive.contentWidth }]}>
-        <AppHeader title="Settings" />
+      <Section title={i18n.t("settings.appearance")}>
+        <SegmentedControl
+          role="radio"
+          options={APPEARANCE.map((mode) => ({ key: mode, label: i18n.t(`settings.appearance.${mode}`) }))}
+          value={theme.mode}
+          onChange={(mode) => theme.setMode(mode)}
+          accessibilityLabel={i18n.t("settings.appearance")}
+        />
+      </Section>
 
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
+      <Section title={i18n.t("settings.language")}>
+        {/* Display only: English is the only complete catalog, so there is nothing to switch to. */}
+        <View
+          style={[local.card, local.languageRow, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}
+          accessible
+          accessibilityLabel={i18n.t("settings.language.a11y", { language: i18n.meta.nativeName })}
         >
-          <Section title="Notifications">
-            <SettingRow
-              title="Push Notifications"
-              detail={pushDetail}
-              icon={{
-                ios: "bell",
-                android: "notifications",
-                web: "notifications",
-              }}
-              onPress={handlePushPress}
-              trailing={
-                <AppSwitch
-                  value={pushGranted}
-                  disabled={pushPermissionLoading}
-                  accessibilityLabel="Push Notifications permission"
-                  accessibilityState={{
-                    checked: pushGranted,
-                    disabled: pushPermissionLoading,
-                  }}
-                  onValueChange={() => {
-                    void handlePushPress();
-                  }}
-                />
-              }
-            />
+          <SymbolView name={{ ios: "globe", android: "language", web: "language" }} size={20} tintColor={theme.colors.textMuted} fallback={<View />} />
+          <AppText variant="body" style={local.rowLabel}>{i18n.meta.nativeName}</AppText>
+          <SymbolView name={{ ios: "checkmark", android: "check", web: "check" }} size={18} tintColor={theme.colors.actionPrimary} fallback={<View />} />
+        </View>
+      </Section>
 
-            {/* <Divider /> */}
+      <Section title={i18n.t("settings.account")}>
+        <Pressable
+          onPress={() => setDeleteVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel={i18n.t("settings.deleteAccount")}
+          style={({ pressed }) => [local.card, local.deleteRow, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }, pressed && { opacity: 0.85 }]}
+        >
+          <SymbolView name={{ ios: "trash", android: "delete", web: "delete" }} size={20} tintColor={theme.colors.brandInk} fallback={<View />} />
+          <AppText variant="body" style={{ color: theme.colors.brandInk }}>{i18n.t("settings.deleteAccount")}</AppText>
+        </Pressable>
+      </Section>
 
-            {/* <SettingRow
-              title="Email Notifications"
-              detail="Not available yet"
-              icon={{
-                ios: "envelope",
-                android: "mail",
-                web: "mail",
-              }}
-              trailing={
-                <AppSwitch
-                  value={false}
-                  disabled
-                  accessibilityLabel="Email Notifications unavailable"
-                />
-              }
-            /> */}
-          </Section>
-
-          <Section title="Preferences">
-            <SettingRow
-              title="Language"
-              detail={i18n.meta.nativeName}
-              icon={{
-                ios: "globe",
-                android: "language",
-                web: "language",
-              }}
-              trailing={
-                <View
-                  style={[
-                    styles.languageBadge,
-                    { backgroundColor: theme.colors.primary },
-                  ]}
-                >
-                  <Text style={styles.languageText}>{i18n.locale.toUpperCase()}</Text>
-                </View>
-              }
-            />
-
-            <Divider />
-
-            <View style={styles.appearanceHeader}>
-              <View
-                style={[
-                  styles.icon,
-                  { backgroundColor: theme.colors.panelSoft },
-                ]}
-              >
-                <SymbolView
-                  name={{
-                    ios: "circle.lefthalf.filled",
-                    android: "contrast",
-                    web: "contrast",
-                  }}
-                  size={19}
-                  tintColor={theme.colors.primary}
-                  fallback={<Text>A</Text>}
-                />
-              </View>
-
-              <View style={styles.copy}>
-                <Text style={[styles.rowTitle, { color: theme.colors.ink }]}>
-                  Appearance
-                </Text>
-
-                <Text style={theme.styles.muted}>Choose how the app looks</Text>
-              </View>
-            </View>
-
-            <View accessibilityRole="radiogroup" style={styles.appearanceGrid}>
-              {APPEARANCE.map((option) => {
-                const selected = theme.mode === option.value;
-
-                return (
-                  <Pressable
-                    key={option.value}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected }}
-                    accessibilityLabel={`${option.label} appearance`}
-                    onPress={() => theme.setMode(option.value)}
-                    style={({ pressed }) => [
-                      styles.appearanceOption,
-                      {
-                        borderColor: selected
-                          ? theme.colors.primary
-                          : theme.colors.line,
-                        backgroundColor: selected
-                          ? theme.colors.panelSoft
-                          : theme.colors.panel,
-                      },
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <SymbolView
-                      name={option.icon}
-                      size={20}
-                      tintColor={
-                        selected ? theme.colors.primary : theme.colors.muted
-                      }
-                      fallback={<Text>{option.label[0]}</Text>}
-                    />
-
-                    <Text
-                      style={{
-                        color: selected
-                          ? theme.colors.primary
-                          : theme.colors.ink,
-                        fontWeight: "800",
-                      }}
-                    >
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Section>
-
-          <Section title="Account">
-            <SettingRow
-              title="Delete Account"
-              icon={{
-                ios: "trash",
-                android: "delete",
-                web: "delete",
-              }}
-              destructive
-              onPress={() => setDeleteVisible(true)}
-            />
-          </Section>
-        </ScrollView>
-      </View>
-
-      <AccountDeletionModal
-        visible={deleteVisible}
-        onClose={() => setDeleteVisible(false)}
-      />
-    </Screen>
+      <AccountDeletionModal visible={deleteVisible} onClose={() => setDeleteVisible(false)} />
+    </SubpageShell>
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  const theme = useTheme();
-
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <View style={styles.section}>
-      <Text style={[styles.sectionTitle, { color: theme.colors.muted }]}>
-        {title}
-      </Text>
-
-      <View
-        style={[
-          styles.group,
-          {
-            backgroundColor: theme.colors.panel,
-            borderColor: theme.colors.line,
-          },
-        ]}
-      >
-        {children}
-      </View>
+    <View style={local.section}>
+      <AppText variant="overline" tone="muted" accessibilityRole="header" style={local.sectionTitle}>{title}</AppText>
+      {children}
     </View>
   );
 }
 
-function Divider() {
-  const theme = useTheme();
+const local = {
+  section: { gap: spacing.sm },
+  sectionTitle: { paddingHorizontal: spacing.xs, paddingTop: spacing.sm },
+  card: { borderRadius: 20 },
+  pushCard: { paddingHorizontal: 16, paddingVertical: 14, gap: 10 },
+  pushRow: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "center" as const, gap: spacing.md },
+  rowLabel: { flex: 1, fontSize: 16, fontWeight: "500" as const },
+  regular: { fontWeight: "400" as const },
+  // v3: 36pt pill button; grown to the 44pt target.
+  pushButton: { alignSelf: "flex-start" as const, minHeight: 44, paddingHorizontal: 14, borderRadius: 10, justifyContent: "center" as const },
+  languageRow: { minHeight: 52, flexDirection: "row" as const, alignItems: "center" as const, gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
+  deleteRow: { minHeight: 52, flexDirection: "row" as const, alignItems: "center" as const, gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
+};
 
-  return (
-    <View style={[styles.divider, { backgroundColor: theme.colors.line }]} />
-  );
-}
-
-function SettingRow({
-  title,
-  detail,
-  icon,
-  trailing,
-  destructive,
-  onPress,
-}: {
-  title: string;
-  detail?: string;
-  icon: any;
-  trailing?: React.ReactNode;
-  destructive?: boolean;
-  onPress?: () => void;
-}) {
-  const theme = useTheme();
-
-  const content = (
-    <>
-      <View style={[styles.icon, { backgroundColor: theme.colors.panelSoft }]}>
-        <SymbolView
-          name={icon}
-          size={19}
-          tintColor={destructive ? theme.colors.danger : theme.colors.primary}
-          fallback={<Text>{title[0]}</Text>}
-        />
-      </View>
-
-      <View style={styles.copy}>
-        <Text
-          style={[
-            styles.rowTitle,
-            {
-              color: destructive ? theme.colors.danger : theme.colors.ink,
-            },
-          ]}
-        >
-          {title}
-        </Text>
-
-        {detail ? <Text style={theme.styles.muted}>{detail}</Text> : null}
-      </View>
-
-      {trailing}
-    </>
-  );
-
-  if (onPress) {
-    return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={title}
-        onPress={onPress}
-        style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-      >
-        {content}
-      </Pressable>
-    );
-  }
-
-  return <View style={styles.row}>{content}</View>;
-}
-
-const styles = StyleSheet.create({
-  shell: {
-    flex: 1,
-    alignSelf: "center",
-  },
-
-  content: {
-    gap: 20,
-    paddingTop: 8,
-    paddingBottom: 30,
-  },
-
-  section: {
-    gap: 9,
-  },
-
-  sectionTitle: {
-    marginLeft: 4,
-    fontSize: 13,
-    fontWeight: "800",
-  },
-
-  group: {
-    borderRadius: 19,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
-
-  row: {
-    minHeight: 70,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-
-  icon: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  copy: {
-    flex: 1,
-    gap: 2,
-  },
-
-  rowTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-  },
-
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 68,
-  },
-
-  languageBadge: {
-    minWidth: 48,
-    minHeight: 42,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  languageText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-
-  appearanceHeader: {
-    minHeight: 70,
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-
-  appearanceGrid: {
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-  },
-
-  appearanceOption: {
-    flex: 1,
-    minHeight: 66,
-    borderRadius: 13,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-  },
-
-  pressed: {
-    opacity: 0.72,
-  },
-});
 export default withAuthRequired(SettingsScreen);

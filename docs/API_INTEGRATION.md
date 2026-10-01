@@ -170,9 +170,20 @@ All four are cached in a module-level map for 5 minutes, keyed by path;
 - `events[]` (`ApiMatchEvent`): `id`, `type`, `team` {`id`, `name`,
   `short_name`, `logo`}, `player` {`id`, `name`, `shirt_number`},
   `player_in`/`player_out` (nullable), `minute`, `extra_minute` (nullable).
-  Only `type: "goal"` has been observed; other types are shown as a neutral
-  event with no inferred meaning. Example (match 16): goal, Nejmeh, "Sierra
-  Leone" #17, minute 1 → "1'"; minute 45 + extra 2 → "45+2'";
+  - **Confirmed `type` strings (exact):** `goal`, `yellow_card`, `red_card`,
+    `substitution`. Sources: the admin event contract
+    (`admin-dash` `MATCH_EVENT_TYPES`) and staging `/matches/single/17`
+    (2026-09-30), which returned all four.
+  - **Substitution:** the players are in `player_in` / `player_out`, each
+    independently nullable as the backend sends it (staging: `player: null`,
+    both supplied). Goals and cards carry `player`, with `player_in` /
+    `player_out` null.
+  - **Forward compatibility:** any other `type` (including near-misses such
+    as `yellow` or `Substitution`) is a neutral event. The client never infers
+    the type from `player_in` / `player_out`, `player`, text or other event
+    contents; the backend `type` alone decides (`timelineKind`).
+  - Example (match 16): goal, Nejmeh, "Sierra Leone" #17, minute 1 → "1'";
+    minute 45 + extra 2 → "45+2'";
 - `stats` {`possession`, `shots`, `shots_on_target`, `corners`, `fouls`},
   each `{home, away}` or null (example, match 16: possession 3/97, the others
   1/1);
@@ -222,8 +233,8 @@ payment_reference, status }`.
 | Method & path | Notes |
 | ------------- | ----- |
 | `GET /portal/matches?filter=all\|upcoming\|past` | Paginated `{ data, meta.total }`; validated (`isPortalMatch`) |
-| `GET /portal/tickets?match_id=` | Validated (`isPortalTicket`, requires `qr_image` string) |
-| `GET /portal/tickets/{ticket_code}` | Detail merge when a listed ticket lacks `qr_image` |
+| `GET /portal/tickets?match_id=` | Validated (`isPortalTicket`); `qr_image` may be absent, null or a string (every other field unchanged) |
+| `GET /portal/tickets/{ticket_code}` | When a listed ticket has no usable QR, only its `qr_image` is taken (`withBackendQrs`) |
 | `GET /portal/orders/{orderNumber}` | Payment details; `ORD-` prefix stripped by the caller |
 | `GET /portal/orders/{orderId}/pdf` | Binary; `Accept: application/pdf,…` |
 | `GET /portal/orders` | Defined, **not called** by any screen |
@@ -376,10 +387,17 @@ than adding a parallel one.
 - Server-side idempotency of `/checkout/mobile/submit` for a repeated session.
 - Backend behavior on BLUE callback, and how web BLUE results are finalized.
 - The meaning of the `password` header and of `remember` on login.
-- Ticket `status` value set; whether "used" is `status` or `checked_in_at`.
-- **Competitions (confirmed by the user, not yet integrated; no service calls
-  them yet).** Public endpoints and their confirmed response shapes — do not
-  assume other fields:
+- Ticket `qr_image` representation. Only raster base64 data URIs are
+  established (this repo's fixtures, and the LFA web client's allowlist for
+  the same API). Whether production ever sends an http(s) URL, a storage path
+  or SVG is **unconfirmed**; such values are shown as "QR unavailable" until
+  the backend confirms a representation. Whether the list response actually
+  omits the QR (and the detail always carries it) is also unconfirmed against
+  a signed-in account.
+- Ticket `status` value set. The app maps `valid`/`used`/`checked_in`/`expired`/`cancelled` (`ticketVisualState`); other values are shown with their own label. Not verified against a signed-in staging account.
+- **Competitions (confirmed; integrated in `competitionsService`,
+  `src/services/competitions.ts`).** Public endpoints and their confirmed
+  response shapes — do not assume other fields:
   - `GET /competitions` → `data[]`: `id` (the competition ID source), `name`,
     `short_name` (nullable), `slug`, `logo` (backend media path, e.g.
     `competitions/logos/….jpg`), `format` (e.g. `"league"`).
@@ -394,7 +412,20 @@ than adding a parallel one.
     `short_name` (nullable), `logo`}, `home_score`/`away_score` (nullable),
     `stadium` {`id`, `name`, `location`}.
   - Logos are media paths resolved with `storageUrl()` (`src/lib/config.ts`).
-  - `/competitions` is currently only a navigation shell in the app.
+  - **Standings 404 is ambiguous (staging, 2026-10-01):** the cup
+    competition (2), an unknown id (999), a non-numeric id, a misspelled
+    route and an unknown route all return the identical
+    `404 {"message":"Endpoint not found."}`. There is no machine-readable way
+    to tell "this competition has no table" from an error, so the app shows
+    a 404 as "Standings unavailable" (retryable), never as "No standings".
+    Only a successful `standings: []` is "No standings" (league 1 on
+    staging). A response without a `standings` array, or with an incomplete
+    row, is rejected as malformed. **Backend dependency:** a distinct,
+    machine-readable signal (e.g. `200` with `standings: []`, or an error
+    code) for competitions that have no table.
+  - **Discrepancy observed:** `/competitions/1/matches` listed match 7 as
+    `scheduled` while `/matches/single/7` returned `completed`. Match Details
+    decides from its own single-match status, so purchasing stays gated.
 - **Kickoff timezone:** the backend sends `match_date` plus a clock-only
   `kickoff_at` with no zone. The app reads them as local wall-clock time,
   preserving existing behavior. The authoritative timezone is not established

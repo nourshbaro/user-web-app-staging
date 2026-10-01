@@ -23,10 +23,13 @@ test("WhatsApp uses its real brand glyph authority and Email uses the mail symbo
   assert.deepEqual(OFFICIAL_CONTACTS[1].icon, { ios: "envelope", android: "mail", web: "mail" });
 });
 
-test("profile tries the WhatsApp app before the web fallback", async () => {
+test("Contact LFA tries the WhatsApp app before the web fallback", async () => {
   const profile = await import("node:fs/promises").then(({ readFile }) =>
-    readFile(new URL("../app/profile.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/contact.tsx", import.meta.url), "utf8"),
   );
+  // Only the allowlisted destinations are offered.
+  assert.match(profile, /OFFICIAL_CONTACTS\.map\(/);
+  assert.doesNotMatch(profile, /https?:\/\/|mailto:/, "no destination is hard-coded in the screen");
 
   assert.match(profile, /Platform\.OS !== "web"/);
   assert.match(profile, /await Linking\.openURL\(contact\.appUrl\)/);

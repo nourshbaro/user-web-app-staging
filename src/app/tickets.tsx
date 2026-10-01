@@ -1,76 +1,80 @@
-import { MainHeader } from "@/components/MainHeader";
-import { SheetDismissHandle } from "@/components/SheetDismissHandle";
+import { FlowHeader } from "@/components/FlowHeader";
+import { TabHeader } from "@/components/TabHeader";
 import {
-  Button,
-  Empty,
-  Loading,
-  Screen,
-  useResponsive,
-  useTheme,
-} from "@/components/ui";
+  AppText,
+  PhysicalLayout,
+  SegmentedControl,
+  SkeletonBlock,
+  SkeletonGroup,
+  StatePanel,
+} from "@/components/foundation";
+import { PitchArt } from "@/components/match/PitchArt";
+import { TeamCrest } from "@/components/match/TeamCrest";
+import { Button, Screen, useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
-import { useToast } from "@/context/ToastContext";
-import { storageUrl } from "@/lib/config";
-import {
-  formatDate,
-  formatDateTime,
-  formatMoney,
-  formatTime,
-} from "@/lib/format";
-import { paymentDetail } from "@/lib/orderPresentation";
-import { downloadProfileOrderPdf } from "@/lib/profilePdfDownload";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { useI18n } from "@/i18n/I18nProvider";
+import { layout, radius, size, spacing } from "@/lib/designTokens";
+import { formatDate, formatDateTime, formatTime } from "@/lib/format";
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import {
-  normalizeOrderIdentifier,
-  profilePdfOrderIdentifier,
-  resolveOrderDetailIdentifier,
-  resolveTicketMatchId,
-} from "@/lib/ticketActions";
-import { backendProvidedError, userFacingError } from "@/lib/userFacingError";
+  rawStatusLabel,
+  ticketIsScannable,
+  ticketListSections,
+  ticketListView,
+  ticketQrSource,
+  withBackendQrs,
+  ticketSeatFacts,
+  ticketVisualState,
+  TICKET_FILTERS,
+  type TicketFilter,
+  type TicketVisualState,
+} from "@/lib/ticketPresentation";
 import { getUserScopedCacheGeneration } from "@/lib/userScopedCache";
-import { PdfDownloadHttpError, profileService } from "@/services/auth";
-import type { PortalMatch } from "@/types";
-import { Stack, router } from "expo-router";
+import { profileService } from "@/services/auth";
+import type { PortalMatch, PortalTicket } from "@/types";
+import { router, Stack } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
+  Animated,
   Image,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
   View,
   useWindowDimensions,
 } from "react-native";
-import AnimatedBase from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-type Item = Record<string, any>;
-const Animated: any = AnimatedBase;
-type MatchFilter = "all" | "upcoming" | "past";
+type I18n = ReturnType<typeof useI18n>;
 
+/**
+ * My Tickets (LFA Screen v3). The portal owns everything shown: which matches
+ * are upcoming or past (`/portal/matches?filter=` and `is_upcoming`), each
+ * ticket's status and check-in, and the QR image. Requests are guarded by
+ * request authorities and the user-scoped cache generation, so a stale
+ * filter, a closed detail or a former session never lands on screen.
+ */
 function TicketsScreen() {
   const auth = useAuth();
-  const theme = useTheme();
-  const toast = useToast();
+  const i18n = useI18n();
   const responsive = useResponsive();
-  const [filter, setFilter] = useState<MatchFilter>("all");
+  const [filter, setFilter] = useState<TicketFilter>("all");
   const [matches, setMatches] = useState<PortalMatch[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(false);
   const [selected, setSelected] = useState<PortalMatch | null>(null);
-  const [tickets, setTickets] = useState<Item[]>([]);
-  const [detailCache, setDetailCache] = useState<Record<string, Item>>({});
+  const [tickets, setTickets] = useState<PortalTicket[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState("");
-  const [downloading, setDownloading] = useState(false);
+  const [detailError, setDetailError] = useState(false);
   const [listRequest] = useState(createRequestAuthority);
   const [detailRequest] = useState(createRequestAuthority);
+
   const load = useCallback(() => {
     if (!auth.isReady || !auth.isAuthenticated) return;
     const request = listRequest.begin(filter);
@@ -81,18 +85,25 @@ function TicketsScreen() {
     return profileService
       .matches(filter)
       .then((result) => {
-        if (current()) setMatches(result.items);
+        if (current()) {
+          setMatches(result.items);
+          setError(false);
+        }
       })
       .catch(() => {
         if (current()) {
           setMatches([]);
-          setError("Could not load your matches. Please try again.");
+          setError(true);
         }
       })
       .finally(() => {
-        if (current()) setLoading(false);
+        if (current()) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       });
   }, [auth.isReady, auth.isAuthenticated, filter, listRequest]);
+
   useEffect(() => {
     listRequest.mount();
     detailRequest.mount();
@@ -101,35 +112,35 @@ function TicketsScreen() {
       detailRequest.unmount();
     };
   }, [listRequest, detailRequest]);
+
   useEffect(() => {
     void load();
     return () => listRequest.invalidate();
   }, [load, listRequest]);
+
   const reload = () => {
-    setLoading(true);
-    setError("");
+    setRefreshing(true);
+    setError(false);
     void load();
   };
-  const changeFilter = (next: MatchFilter) => {
+
+  const retry = () => {
+    setLoading(true);
+    setError(false);
+    void load();
+  };
+
+  const changeFilter = (next: TicketFilter) => {
     if (next === filter) return;
     listRequest.invalidate();
     detailRequest.invalidate();
     setSelected(null);
     setMatches([]);
     setLoading(true);
-    setError("");
+    setError(false);
     setFilter(next);
   };
-  const filteredMatches = useMemo(
-    () =>
-      matches.filter((match) =>
-        [portalMatchTitle(match), match.stadium ?? ""]
-          .join(" ")
-          .toLowerCase()
-          .includes(query.trim().toLowerCase()),
-      ),
-    [matches, query],
-  );
+
   const openMatch = async (match: PortalMatch) => {
     const request = detailRequest.begin(String(match.match_id));
     const generation = getUserScopedCacheGeneration();
@@ -138,1398 +149,642 @@ function TicketsScreen() {
       generation === getUserScopedCacheGeneration();
     setSelected(match);
     setTickets([]);
-    setDetailError("");
+    setDetailError(false);
     setDetailLoading(true);
     try {
       const result = await profileService.tickets(match.match_id);
       if (!current()) return;
-      const listed: Item[] = result.items.map((ticket) => ({
-        ...ticket,
-        match: {
-          ...ticket.match,
-          kickoff_at: match.kickoff_at,
-          stadium: match.stadium,
-        },
-      }));
-      setTickets(listed);
-      const detailed = await Promise.all(
-        listed.map(async (ticket) => {
-          if (typeof ticket.qr_image === "string") return ticket;
-          const code = text(ticket, ["ticket_code", "code", "reference"]);
-          if (!code || !current()) return ticket;
-          return { ...ticket, ...(await profileService.ticket(code)) };
-        }),
-      );
+      setTickets(result.items);
+      // A listed ticket without a usable backend QR image takes the QR from
+      // its own detail endpoint; nothing is ever generated locally.
+      const detailed = await withBackendQrs(result.items, (code) => profileService.ticket(code), current);
       if (current()) setTickets(detailed);
     } catch {
-      if (current())
-        setDetailError(
-          "Some ticket details could not be loaded. Please try again.",
-        );
+      if (current()) setDetailError(true);
     } finally {
       if (current()) setDetailLoading(false);
     }
   };
-  const loadPayment = async (order: Item) => {
-    const identifier = resolveOrderDetailIdentifier(order);
 
-    if (!identifier) {
-      return {
-        ok: false,
-        error:
-          "This order does not include the information needed to load payment details.",
-      };
-    }
+  const view = ticketListView({ loading, error, count: matches.length });
+  const sections = ticketListSections(filter, matches);
+  const filterLabel = (key: TicketFilter) => i18n.t(`myTickets.filter.${key}`);
 
-    const normalizedOrderId = normalizeOrderIdentifier(identifier);
-
-    if (detailCache[normalizedOrderId]) {
-      return { ok: true };
-    }
-
-    try {
-      const detail = await profileService.order(normalizedOrderId);
-
-      setDetailCache((current) => ({
-        ...current,
-        [normalizedOrderId]: detail,
-      }));
-
-      return { ok: true };
-    } catch (err) {
-      return {
-        ok: false,
-        error: backendProvidedError(
-          err,
-          "Could not load payment information. Please try again.",
-        ),
-      };
-    }
-  };
-  const downloadPdf = async (order: Item) => {
-    const identifier = profilePdfOrderIdentifier(order);
-    if (!identifier || downloading) {
-      if (!identifier)
-        toast.showToast({
-          variant: "error",
-          title: "Could not download PDF",
-          message: "Order number is required to download the PDF.",
-        });
-      return;
-    }
-    const normalizedOrderId = identifier.startsWith("ORD-")
-      ? identifier.slice(4)
-      : identifier;
-    const generation = getUserScopedCacheGeneration();
-    setDownloading(true);
-    try {
-      await downloadProfileOrderPdf(
-        normalizedOrderId,
-        () => generation === getUserScopedCacheGeneration(),
-      );
-    } catch (err) {
-      if (generation === getUserScopedCacheGeneration())
-        toast.showToast({
-          variant: "error",
-          title: "Could not download PDF",
-          message:
-            err instanceof PdfDownloadHttpError
-              ? err.message
-              : userFacingError(
-                  err,
-                  "Could not download the PDF. Please try again.",
-                ),
-        });
-    } finally {
-      if (generation === getUserScopedCacheGeneration()) setDownloading(false);
-    }
-  };
   return (
     <Screen>
-      <Stack.Screen options={{ title: "My Tickets" }} />
-      <View style={[styles.shell, { width: responsive.contentWidth }]}>
-        <MainHeader />
-        <View style={{ flexDirection: "row", gap: 8, paddingVertical: 10 }}>
-          {(["all", "upcoming", "past"] as const).map((option) => (
-            <Pressable
-              key={option}
-              accessibilityRole="button"
-              accessibilityState={{ selected: filter === option }}
-              onPress={() => changeFilter(option)}
-              style={{
-                flex: 1,
-                minHeight: 48,
-                justifyContent: "center",
-                alignItems: "center",
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor:
-                  filter === option ? theme.colors.primary : theme.colors.line,
-                backgroundColor: theme.colors.panel,
-              }}
-            >
-              <Text
-                style={{
-                  color:
-                    filter === option ? theme.colors.primary : theme.colors.ink,
-                  fontWeight: "800",
-                }}
-              >
-                {option[0].toUpperCase() + option.slice(1)}
-              </Text>
-            </Pressable>
-          ))}
+      <Stack.Screen options={{ title: i18n.t("myTickets.title") }} />
+      <View style={[local.shell, { width: responsive.contentWidth }]}>
+        <TabHeader title={i18n.t("myTickets.title")} />
+        <View style={local.filters}>
+          <SegmentedControl
+            options={TICKET_FILTERS.map((key) => ({ key, label: filterLabel(key) }))}
+            value={filter}
+            onChange={changeFilter}
+            accessibilityLabel={i18n.t("myTickets.filters.a11y")}
+          />
         </View>
-        <View
-          style={[
-            ticketStyles.filterBar,
-            {
-              backgroundColor: theme.colors.panel,
-              borderColor: theme.colors.line,
-            },
-          ]}
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={local.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={reload} />}
         >
-          <SymbolView
-            name={{ ios: "magnifyingglass", android: "search", web: "search" }}
-            size={19}
-            tintColor={theme.colors.muted}
-            fallback={<Text>⌕</Text>}
-          />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search matches"
-            accessibilityLabel="Search matches"
-            placeholderTextColor={theme.colors.muted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-            style={[ticketStyles.searchInput, { color: theme.colors.ink }]}
-          />
-          {query ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Clear match search"
-              onPress={() => setQuery("")}
-              style={ticketStyles.clearSearch}
-            >
-              <SymbolView
-                name={{ ios: "xmark", android: "close", web: "close" }}
-                size={18}
-                tintColor={theme.colors.muted}
-                fallback={<View />}
-              />
-            </Pressable>
-          ) : null}
-        </View>
-        {loading ? (
-          <Loading />
-        ) : (
-          <ScrollView
-            contentContainerStyle={styles.list}
-            refreshControl={
-              <RefreshControl refreshing={false} onRefresh={reload} />
-            }
-          >
-            {error ? (
-              <View style={{ gap: 12 }}>
-                <Empty title="Matches unavailable" detail={error} />
-                <Button title="Try again" onPress={reload} />
+          {view === "loading" ? (
+            <SkeletonGroup label={i18n.t("myTickets.loading")}>
+              {[0, 1, 2].map((key) => (
+                <SkeletonBlock key={key} height={104} borderRadius={radius.xl} />
+              ))}
+            </SkeletonGroup>
+          ) : view === "error" ? (
+            <StatePanel
+              variant="error"
+              title={i18n.t("myTickets.error.title")}
+              message={i18n.t("myTickets.error.message")}
+              action={{ label: i18n.t("common.retry"), onPress: retry }}
+            />
+          ) : view === "empty" ? (
+            <StatePanel
+              variant="empty"
+              title={i18n.t(`myTickets.empty.${filter}.title`)}
+              message={i18n.t(`myTickets.empty.${filter}.message`)}
+              action={{ label: i18n.t("myTickets.browse"), onPress: () => router.replace("/matches") }}
+            />
+          ) : (
+            sections.map((section) => (
+              <View key={section.key} style={local.section}>
+                {filter === "all" ? (
+                  <AppText variant="overline" tone="muted" accessibilityRole="header" style={local.sectionHead}>
+                    {i18n.t(`myTickets.section.${section.key === "past" ? "past" : "upcoming"}`)}
+                  </AppText>
+                ) : null}
+                {section.items.map((match) => (
+                  <PortalMatchCard
+                    key={String(match.match_id)}
+                    match={match}
+                    onPress={() => void openMatch(match)}
+                  />
+                ))}
               </View>
-            ) : filteredMatches.length ? (
-              filteredMatches.map((match) => (
-                <Pressable
-                  key={String(match.match_id)}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    portalMatchTitle(match) || "View match tickets"
-                  }
-                  onPress={() => void openMatch(match)}
-                  style={({ pressed }) => [
-                    ticketStyles.order,
-                    {
-                      backgroundColor: theme.colors.panel,
-                      borderColor: theme.colors.line,
-                    },
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <MatchIdentity item={{ match }} />
-                  <View style={styles.matchMetadataRow}>
-                    <Text
-                      numberOfLines={1}
-                      style={[theme.styles.muted, styles.matchDate]}
-                    >
-                      {formatDateTime(match.kickoff_at)}
-                    </Text>
-                    {match.stadium ? (
-                      <Text
-                        numberOfLines={1}
-                        ellipsizeMode="tail"
-                        style={[theme.styles.muted, styles.matchStadium]}
-                      >
-                        {match.stadium}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <View style={styles.matchMetadataRow}>
-                    <Text
-                      style={[styles.matchCount, { color: theme.colors.ink }]}
-                    >
-                      {match.ticket_count} Ticket
-                      {match.ticket_count === 1 ? "" : "s"}
-                    </Text>
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.matchAction,
-                        { color: theme.colors.primary },
-                      ]}
-                    >
-                      View Tickets
-                    </Text>
-                  </View>
-                </Pressable>
-              ))
-            ) : (
-              <Empty
-                title={
-                  query
-                    ? "No matching matches"
-                    : filter === "all"
-                      ? "No matches"
-                      : "No " + filter + " matches"
-                }
-                detail={
-                  query
-                    ? "Try another team or stadium."
-                    : "Matches with your tickets will appear here."
-                }
-              />
-            )}
-          </ScrollView>
-        )}
+            ))
+          )}
+        </ScrollView>
       </View>
-      <TicketModal
-        key={selected ? String(selected.match_id) : "closed"}
-        order={selected ? { match: portalMatchTicketContext(selected) } : null}
-        tickets={tickets}
-        selectedMatch={selected}
-        loading={detailLoading}
-        orderDetailCache={detailCache}
-        error={detailError}
-        onRetry={() => selected && void openMatch(selected)}
-        downloading={downloading}
-        onClose={() => {
-          detailRequest.invalidate();
-          setSelected(null);
-        }}
-        onLoadPayment={loadPayment}
-        onDownload={downloadPdf}
-      />
+      {selected ? (
+        <TicketViewer
+          match={selected}
+          tickets={tickets}
+          loading={detailLoading}
+          error={detailError}
+          onRetry={() => void openMatch(selected)}
+          onClose={() => {
+            detailRequest.invalidate();
+            setSelected(null);
+          }}
+        />
+      ) : null}
     </Screen>
   );
 }
 
-function TicketModal({
-  order,
-  tickets,
-  selectedMatch,
-  loading,
-  orderDetailCache,
-  error,
-  onRetry,
-  downloading,
-  onClose,
-  onLoadPayment,
-  onDownload,
-}: {
-  order: Item | null;
-  tickets: Item[];
-  selectedMatch: PortalMatch | null;
-  loading: boolean;
-  orderDetailCache: Record<string, Item>;
-  error: string;
-  onRetry: () => void;
-  downloading: boolean;
-  onClose: () => void;
-  onLoadPayment: (order: Item) => Promise<{ ok: boolean; error?: string }>;
-  onDownload: (order: Item) => Promise<void>;
-}) {
+/** v3 ticket stub: match on the left, ticket count on the perforated stub. */
+function PortalMatchCard({ match, onPress }: { match: PortalMatch; onPress: () => void }) {
   const theme = useTheme();
-  const [index, setIndex] = useState(0);
-  const [actions, setActions] = useState(false);
-  const [payment, setPayment] = useState(false);
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const [paymentError, setPaymentError] = useState<string | null>(null);
-  // const width = useResponsive().contentWidth;
-  const { width } = useWindowDimensions();
-  if (!order) return null;
-  const active = tickets[index] ?? tickets[0] ?? order;
-  const activeOrder = ticketOrder(active);
-  const activeOrderIdentifier = resolveOrderDetailIdentifier(activeOrder);
-  const orderDetail = activeOrderIdentifier
-    ? orderDetailCache[normalizeOrderIdentifier(activeOrderIdentifier)]
-    : undefined;
-  const activeOrderCode = text(active, ["order_code"]);
-  const title = matchTitle(active);
-  const venue = selectedMatch?.stadium ?? matchVenue(active);
-  const seeMatch = () => {
-    const id = resolveTicketMatchId(active, order);
-    if (!id) return;
-    onClose();
-    requestAnimationFrame(() =>
-      router.push({ pathname: "/match/[id]", params: { id } }),
-    );
-  };
-  const showPayment = async () => {
-    setActions(false);
-    setPayment(true);
-    setPaymentError(null);
-    setPaymentLoading(true);
-    const result = await onLoadPayment(activeOrder);
-    if (!result.ok)
-      setPaymentError(
-        result.error ?? "Could not load payment information. Please try again.",
-      );
-    setPaymentLoading(false);
-  };
-  return (
-    <>
-      <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close tickets"
-          onPress={onClose}
-          style={styles.backdrop}
-        >
-          <Pressable
-            accessibilityViewIsModal
-            onPress={(event) => event.stopPropagation()}
-            style={[
-              styles.ticketSheet,
-              { backgroundColor: theme.colors.panel },
-            ]}
-          >
-            <SheetDismissHandle
-              onDismiss={onClose}
-              color={theme.colors.muted}
-            />
-            <View style={styles.modalTop}>
-              <Text style={[styles.position, { color: theme.colors.ink }]}>
-                {tickets.length
-                  ? `${index + 1} of ${tickets.length}`
-                  : "Ticket"}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close tickets"
-                onPress={onClose}
-                style={styles.close}
-              >
-                <SymbolView
-                  name={{ ios: "xmark", android: "close", web: "close" }}
-                  size={21}
-                  tintColor={theme.colors.ink}
-                  fallback={<View />}
-                />
-              </Pressable>
-            </View>
-            {title || venue ? (
-              <View style={styles.modalHeading}>
-                {title ? (
-                  <Text
-                    style={[styles.modalTitle, { color: theme.colors.ink }]}
-                  >
-                    {title}
-                  </Text>
-                ) : null}
-                {venue ? (
-                  <Text style={[theme.styles.muted, styles.modalVenue]}>
-                    ⌖ {venue}
-                  </Text>
-                ) : null}
-              </View>
-            ) : null}
-            {error ? (
-              <View style={{ paddingHorizontal: 18, gap: 8 }}>
-                <Text style={{ color: theme.colors.danger }}>{error}</Text>
-                <Button title="Try again" onPress={onRetry} />
-              </View>
-            ) : null}
-            {loading ? (
-              <ActivityIndicator
-                color={theme.colors.primary}
-                style={styles.modalLoading}
-              />
-            ) : (
-              <>
-                {activeOrderCode ? (
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={[theme.styles.muted, styles.activeOrderCode]}
-                  >
-                    Order {activeOrderCode}
-                  </Text>
-                ) : null}
-                <ScrollView
-                  horizontal
-                  pagingEnabled
-                  showsHorizontalScrollIndicator={false}
-                  onMomentumScrollEnd={(event) => {
-                    setIndex(
-                      Math.round(event.nativeEvent.contentOffset.x / width),
-                    );
-                  }}
-                  style={{ width }}
-                  contentContainerStyle={styles.ticketPager}
-                >
-                  {tickets.length ? (
-                    tickets.map((ticket, ticketIndex) => (
-                      <View
-                        key={text(
-                          ticket,
-                          ["ticket_code", "code", "reference"],
-                          String(ticketIndex),
-                        )}
-                        style={{ width, paddingHorizontal: 18 }}
-                      >
-                        <FlipTicket ticket={ticket} />
-                      </View>
-                    ))
-                  ) : (
-                    <View style={{ width, paddingHorizontal: 18 }}>
-                      {!error ? (
-                        <Empty
-                          title="No tickets"
-                          detail="No tickets are available for this match."
-                        />
-                      ) : null}
-                    </View>
-                  )}
-                </ScrollView>
-              </>
-            )}
-            {/* <View style={styles.actions}>
-              <View style={styles.actionButton}>
-                <Button
-                  title="See Match"
-                  disabled={!resolveTicketMatchId(active, order)}
-                  onPress={seeMatch}
-                />
-              </View>
-              <View style={styles.actionButton}>
-                <Button
-                  title="Actions"
-                  variant="secondary"
-                  onPress={() => setActions(true)}
-                />
-              </View>
-            </View> */}
-          </Pressable>
-        </Pressable>
-      </Modal>
-      <Modal
-        visible={actions}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setActions(false)}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close ticket actions"
-          onPress={() => setActions(false)}
-          style={styles.actionBackdrop}
-        >
-          <Pressable
-            accessibilityViewIsModal
-            onPress={(event) => event.stopPropagation()}
-            style={[
-              styles.actionSheet,
-              { backgroundColor: theme.colors.panel },
-            ]}
-          >
-            <SheetDismissHandle
-              onDismiss={() => setActions(false)}
-              color={theme.colors.muted}
-            />
-            <View style={ticketStyles.actionSheetHeader}>
-              <Text
-                style={[
-                  ticketStyles.actionSheetTitle,
-                  { color: theme.colors.ink },
-                ]}
-              >
-                Actions
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close actions"
-                onPress={() => setActions(false)}
-                style={styles.close}
-              >
-                <SymbolView
-                  name={{ ios: "xmark", android: "close", web: "close" }}
-                  size={20}
-                  tintColor={theme.colors.ink}
-                  fallback={<View />}
-                />
-              </Pressable>
-            </View>
-            <Action
-              title="Payment Info"
-              icon={{ ios: "creditcard", android: "receipt", web: "receipt" }}
-              onPress={() => void showPayment()}
-            />
-            <Action
-              title={downloading ? "Downloading..." : "Download PDF"}
-              icon={{
-                ios: "arrow.down.doc",
-                android: "download",
-                web: "download",
-              }}
-              disabled={downloading}
-              onPress={() => {
-                setActions(false);
-                void onDownload(activeOrder);
-              }}
-            />
-          </Pressable>
-        </Pressable>
-      </Modal>
-      <Modal
-        visible={payment}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPayment(false)}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close payment information"
-          onPress={() => setPayment(false)}
-          style={styles.actionBackdrop}
-        >
-          <Pressable
-            accessibilityViewIsModal
-            onPress={(event) => event.stopPropagation()}
-            style={[
-              styles.paymentSheet,
-              { backgroundColor: theme.colors.panel },
-            ]}
-          >
-            <SheetDismissHandle
-              onDismiss={() => setPayment(false)}
-              color={theme.colors.muted}
-            />
-            <Text style={[styles.modalTitle, { color: theme.colors.ink }]}>
-              Payment Info
-            </Text>
-            {paymentLoading ? (
-              <ActivityIndicator color={theme.colors.primary} />
-            ) : null}
-            {paymentError ? (
-              <View
-                style={[
-                  ticketStyles.inlineError,
-                  { backgroundColor: theme.colors.panelSoft },
-                ]}
-              >
-                <Text style={{ color: theme.colors.danger }}>
-                  {paymentError}
-                </Text>
-              </View>
-            ) : null}
-            {orderDetail && !paymentError ? (
-              <PaymentInfo item={orderDetail} />
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              onPress={() => setPayment(false)}
-              style={styles.close}
-            >
-              <SymbolView
-                name={{ ios: "xmark", android: "close", web: "close" }}
-                size={20}
-                tintColor={theme.colors.ink}
-                fallback={<View />}
-              />
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </>
-  );
-}
-
-function FlipTicket({ ticket }: { ticket: Item }) {
-  const theme = useTheme();
-  const [back, setBack] = useState(false);
-  const transition = {
-    transitionProperty: ["opacity", "transform"],
-    transitionDuration: 320,
-  } as const;
+  const i18n = useI18n();
+  const date = formatDate(match.kickoff_at);
+  const time = formatTime(match.kickoff_at);
+  const title = `${match.home_team.name} v ${match.away_team.name}`;
+  const countLabel = i18n.plural("myTickets.count", match.ticket_count);
+  // Past matches are quieter (v3), from the backend's own `is_upcoming`.
+  const past = !match.is_upcoming;
   return (
     <Pressable
+      onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={back ? "Show ticket information" : "Show QR code"}
-      onPress={() => setBack((value) => !value)}
-      style={styles.flipPress}
-    >
-      <Animated.View
-        style={[
-          styles.face,
-          {
-            backgroundColor: theme.colors.panelSoft,
-            borderColor: theme.colors.line,
-            opacity: back ? 0 : 1,
-            transform: [
-              { perspective: 900 },
-              { rotateY: back ? "180deg" : "0deg" },
-            ],
-          },
-          transition,
-        ]}
-      >
-        <View style={ticketStyles.faceContent}>
-          <View style={ticketStyles.centeredFaceContent}>
-            <TicketInfo ticket={ticket} />
-          </View>
-
-          <Text
-            style={[ticketStyles.flipHint, { color: theme.colors.primary }]}
-          >
-            Tap to see QR code
-          </Text>
-        </View>
-      </Animated.View>
-      <Animated.View
-        style={[
-          styles.face,
-          styles.backFace,
-          {
-            backgroundColor: "#fff",
-            borderColor: theme.colors.line,
-            opacity: back ? 1 : 0,
-            transform: [
-              { perspective: 900 },
-              { rotateY: back ? "360deg" : "180deg" },
-            ],
-          },
-          transition,
-        ]}
-      >
-        <View style={ticketStyles.faceContent}>
-          <View style={ticketStyles.centeredFaceContent}>
-            <View style={ticketStyles.backCenter}>
-              {typeof ticket.qr_image === "string" &&
-              ticket.qr_image.startsWith("data:image/") ? (
-                <Image
-                  source={{ uri: ticket.qr_image }}
-                  style={styles.qr}
-                  resizeMode="contain"
-                />
-              ) : (
-                <Text style={{ color: "#475569" }}>QR unavailable</Text>
-              )}
-              <Text style={styles.holder}>
-                {text(
-                  ticket,
-                  ["holder_name", "ticket_holder_name", "name"],
-                  "",
-                )}
-              </Text>
-              <Text style={styles.reference}>
-                {text(ticket, ["ticket_code", "code", "reference"], "")}
-              </Text>
-            </View>
-            {/* <View style={ticketStyles.flexRegion} /> */}
-          </View>
-
-          <Text style={[ticketStyles.flipHint, { color: "#C8102E" }]}>
-            Tap to see ticket info
-          </Text>
-        </View>
-      </Animated.View>
-    </Pressable>
-  );
-}
-function MatchIdentity({
-  item,
-  compact = false,
-}: {
-  item: Item;
-  compact?: boolean;
-}) {
-  const theme = useTheme();
-  const match = record(item.match);
-  const home = teamData(match.home_team, match.home_team_logo);
-  const away = teamData(match.away_team, match.away_team_logo);
-  const title =
-    matchTitle(item) ||
-    text(item, ["match_name", "event_name"], "") ||
-    text(match, ["title", "name"], "");
-  if (!home && !away && !title) return null;
-  return (
-    <View
-      style={[
-        ticketStyles.matchIdentity,
-        compact && ticketStyles.matchIdentityCompact,
+      accessibilityLabel={i18n.t("myTickets.card.a11y", {
+        match: title,
+        date,
+        time,
+        venue: match.stadium ?? "",
+        count: `${match.ticket_count} ${countLabel}`,
+      })}
+      style={({ pressed }) => [
+        local.card,
+        { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard },
+        past && local.cardPast,
+        pressed && local.pressed,
       ]}
     >
-      {home ? <TeamMark team={home} compact={compact} /> : null}
-      <View style={ticketStyles.vsBlock}>
-        {home && away ? (
-          <Text style={[ticketStyles.vsText, { color: theme.colors.muted }]}>
-            VS
-          </Text>
-        ) : null}
-        {/* {title ? (
-          <Text
-            numberOfLines={2}
-            style={[ticketStyles.matchTitle, { color: theme.colors.ink }]}
-          >
-            {title}
-          </Text>
-        ) : null} */}
-      </View>
-      {away ? <TeamMark team={away} compact={compact} /> : null}
-    </View>
-  );
-}
-function TeamMark({
-  team,
-  compact,
-}: {
-  team: { name: string; short: string; logo?: string };
-  compact?: boolean;
-}) {
-  const theme = useTheme();
-  const logo = storageUrl(team.logo);
-  return (
-    <View style={ticketStyles.team}>
-      <View
-        style={[
-          ticketStyles.teamLogo,
-          compact && ticketStyles.teamLogoCompact,
-          {
-            backgroundColor: theme.colors.panel,
-            borderColor: theme.colors.line,
-          },
-        ]}
-      >
-        {logo ? (
-          <Image
-            source={{ uri: logo }}
-            style={ticketStyles.teamLogoImage}
-            resizeMode="contain"
-          />
-        ) : (
-          <Text
-            style={[ticketStyles.teamInitial, { color: theme.colors.primary }]}
-          >
-            {team.short}
-          </Text>
-        )}
-      </View>
-      <Text
-        numberOfLines={2}
-        style={[ticketStyles.teamName, { color: theme.colors.secondary }]}
-      >
-        {team.name}
-      </Text>
-    </View>
-  );
-}
-function TicketInfo({ ticket }: { ticket: Item }) {
-  const theme = useTheme();
-  const match = record(ticket.match);
-  const zone = record(ticket.zone);
-  const seat = record(ticket.seat);
-  const status = text(ticket, ["status"]);
-  const displayStatus = status
-    ? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()
-    : "";
-  const fields = [
-    ["Date", match.match_date ? formatDate(match.match_date) : ""],
-    ["Time", match.kickoff_at ? formatTime(match.kickoff_at) : ""],
-    ["Stadium", matchVenue(ticket)],
-    [
-      "Zone",
-      text(ticket, ["zone_name", "section", "zone"], text(zone, ["name"], "")),
-    ],
-    ["Row", text(ticket, ["row", "seat_row"], text(seat, ["row"], ""))],
-    [
-      "Seat",
-      text(
-        ticket,
-        ["seat", "seat_number", "number"],
-        text(seat, ["label", "number"], ""),
-      ),
-    ],
-  ].filter(([, value]) => value);
-  return (
-    <View style={ticketStyles.ticketInfo}>
-      <View style={ticketStyles.matchZone}>
-        <MatchIdentity item={ticket} compact />
-      </View>
-      <View style={ticketStyles.detailsZone}>
-        {fields.map(([label, value]) => (
-          <View key={label} style={styles.field}>
-            <Text style={theme.styles.muted}>{label}</Text>
-            <Text style={[styles.fieldValue, { color: theme.colors.ink }]}>
-              {value}
-            </Text>
+      <View style={local.cardMain}>
+        <AppText variant="meta" tone={past ? "muted" : "strong"} numberOfLines={1}>{`${date} · ${time}`}</AppText>
+        <View style={local.cardTeams}>
+          <View style={local.crests}>
+            <TeamCrest team={match.home_team} size={28} />
+            <View style={local.crestOverlap}>
+              <TeamCrest team={match.away_team} size={28} />
+            </View>
           </View>
-        ))}
-        {displayStatus ? (
-          <View
-            style={[
-              ticketStyles.ticketStatusBadge,
-              {
-                backgroundColor:
-                  status.toLowerCase() === "valid"
-                    ? theme.colors.success
-                    : status.toLowerCase() === "expired"
-                      ? theme.colors.danger
-                      : theme.colors.muted,
-              },
-            ]}
-          >
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={[
-                ticketStyles.ticketStatusText,
-                {
-                  // color:
-                  //   status.toLowerCase() === "valid"
-                  //     ? "#FFFFFF"
-                  //     : theme.colors.panelSoft,
-                  color: "#FFFFFF",
-                },
-              ]}
-            >
-              {displayStatus}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-function PaymentInfo({ item }: { item: Item }) {
-  const theme = useTheme();
-  const detail = paymentDetail(item);
-  if (!detail) return null;
-  const rows = [
-    ["Order reference", detail.orderReference ?? ""],
-    ["Payment reference", detail.paymentReference ?? ""],
-    ["Payment method", paymentMethod(detail.paymentMethod ?? "")],
-    [
-      "Total",
-      detail.total !== undefined && detail.total !== null
-        ? formatMoney(detail.total, detail.currency ?? "USD")
-        : "",
-    ],
-    ["Currency", detail.currency ?? ""],
-    ["Paid at", detail.paidAt ? formatDateTime(detail.paidAt) : ""],
-  ].filter(([, value]) => value);
-  return (
-    <View>
-      {rows.map(([label, value]) => (
-        <View key={String(label)} style={styles.paymentRow}>
-          <Text style={theme.styles.muted}>{String(label)}</Text>
-          <Text style={[styles.fieldValue, { color: theme.colors.ink }]}>
-            {String(value)}
-          </Text>
+          <AppText variant="bodyStrong" numberOfLines={1} style={local.cardTitle}>{title}</AppText>
         </View>
-      ))}
-    </View>
-  );
-}
-function Action({
-  title,
-  icon,
-  onPress,
-  disabled,
-}: {
-  title: string;
-  icon: any;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
-      style={styles.actionRow}
-    >
-      <SymbolView
-        name={icon}
-        size={20}
-        tintColor={theme.colors.primary}
-        fallback={<Text>{title[0]}</Text>}
-      />
-      <Text style={[styles.actionText, { color: theme.colors.ink }]}>
-        {title}
-      </Text>
+        {match.stadium ? (
+          <AppText variant="caption" tone="muted" numberOfLines={1}>{match.stadium}</AppText>
+        ) : null}
+      </View>
+      <View style={[local.stub, { borderColor: theme.colors.border }]}>
+        <AppText variant="displaySection" style={{ color: past ? theme.colors.textMuted : theme.colors.brandInk }}>
+          {String(match.ticket_count)}
+        </AppText>
+        <AppText variant="caption" tone="muted">{countLabel}</AppText>
+      </View>
+      {/* Perforation notches (decorative). */}
+      <View pointerEvents="none" style={[local.notch, local.notchTop, { backgroundColor: theme.colors.background }]} />
+      <View pointerEvents="none" style={[local.notch, local.notchBottom, { backgroundColor: theme.colors.background }]} />
     </Pressable>
   );
 }
-function isRecord(value: unknown): value is Item {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function record(value: unknown): Item {
-  return isRecord(value) ? value : {};
-}
-function text(item: Item, keys: string[], fallback = "") {
-  for (const key of keys) {
-    const value = item[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number") return String(value);
-  }
-  return fallback;
-}
-function ticketOrder(ticket: Item): Item {
-  if (isRecord(ticket.order)) return ticket.order;
-  // Ticket IDs and match IDs are never order IDs.
-  return {
-    order_number: ticket.order_number ?? ticket.order_code,
-    order_code: ticket.order_code,
+
+/**
+ * v3 ticket screen for one match: a pager of flip tickets. Presented modally
+ * over My Tickets so the list's request ownership is unchanged.
+ */
+function TicketViewer({
+  match,
+  tickets,
+  loading,
+  error,
+  onRetry,
+  onClose,
+}: {
+  match: PortalMatch;
+  tickets: PortalTicket[];
+  loading: boolean;
+  error: boolean;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
+  const theme = useTheme();
+  const i18n = useI18n();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const pagerRef = useRef<ScrollView>(null);
+  const [index, setIndex] = useState(0);
+  const pageWidth = Math.min(width, layout.readableWidth + layout.gutter * 2);
+  const total = tickets.length;
+
+  const goTo = (next: number) => {
+    const clamped = Math.max(0, Math.min(total - 1, next));
+    setIndex(clamped);
+    pagerRef.current?.scrollTo({ x: clamped * pageWidth, animated: true });
   };
+
+  return (
+    <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <View style={[local.viewer, { backgroundColor: theme.colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={local.viewerHeader}>
+          <View style={local.viewerHeaderBack}>
+            <FlowHeader
+              title={`${match.home_team.name} v ${match.away_team.name}`}
+              subtitle={total > 1 ? i18n.t("myTickets.position", { index: index + 1, total }) : undefined}
+              backLabel={i18n.t("myTickets.back")}
+              onBack={onClose}
+            />
+          </View>
+        </View>
+        {loading ? (
+          <View style={local.viewerBody}>
+            <SkeletonGroup label={i18n.t("myTickets.detail.loading")}>
+              <SkeletonBlock height={520} borderRadius={22} />
+            </SkeletonGroup>
+          </View>
+        ) : error && !total ? (
+          <View style={local.viewerBody}>
+            <StatePanel
+              variant="error"
+              title={i18n.t("myTickets.detail.error.title")}
+              message={i18n.t("myTickets.detail.error.message")}
+              action={{ label: i18n.t("common.retry"), onPress: onRetry }}
+            />
+          </View>
+        ) : !total ? (
+          <View style={local.viewerBody}>
+            <StatePanel
+              variant="empty"
+              title={i18n.t("myTickets.detail.empty.title")}
+              message={i18n.t("myTickets.detail.empty.message")}
+            />
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={local.viewerScroll} showsVerticalScrollIndicator={false}>
+            {error ? (
+              <View style={local.viewerNotice}>
+                <StatePanel
+                  variant="error"
+                  title={i18n.t("myTickets.detail.partial.title")}
+                  message={i18n.t("myTickets.detail.error.message")}
+                  action={{ label: i18n.t("common.retry"), onPress: onRetry }}
+                />
+              </View>
+            ) : null}
+            <ScrollView
+              ref={pagerRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={(event) => setIndex(Math.round(event.nativeEvent.contentOffset.x / pageWidth))}
+              style={[local.pager, { width: pageWidth }]}
+            >
+              {tickets.map((ticket, ticketIndex) => (
+                <View key={ticket.ticket_code || String(ticketIndex)} style={{ width: pageWidth, paddingHorizontal: layout.gutter }}>
+                  <FlipTicket ticket={ticket} match={match} />
+                </View>
+              ))}
+            </ScrollView>
+            {total > 1 ? (
+              <View style={local.pagerControls}>
+                <PagerButton label={i18n.t("myTickets.prev")} kind="back" disabled={index === 0} onPress={() => goTo(index - 1)} />
+                <View style={local.dots} accessible accessibilityLabel={i18n.t("myTickets.position", { index: index + 1, total })}>
+                  {tickets.map((ticket, dot) => (
+                    <View
+                      key={ticket.ticket_code || String(dot)}
+                      style={[local.dot, { width: dot === index ? 18 : 6, backgroundColor: dot === index ? theme.colors.textStrong : theme.colors.border }]}
+                    />
+                  ))}
+                </View>
+                <PagerButton label={i18n.t("myTickets.next")} kind="forward" disabled={index >= total - 1} onPress={() => goTo(index + 1)} />
+              </View>
+            ) : null}
+          </ScrollView>
+        )}
+      </View>
+    </Modal>
+  );
 }
 
-function portalMatchTitle(match: PortalMatch) {
-  return `${match.home_team.name} vs ${match.away_team.name}`;
+function PagerButton({ label, kind, disabled, onPress }: { label: string; kind: "back" | "forward"; disabled: boolean; onPress: () => void }) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      aria-disabled={disabled}
+      hitSlop={4}
+      style={[local.pagerButton, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard, opacity: disabled ? 0.35 : 1 }]}
+    >
+      <SymbolView
+        name={(kind === "back"
+          ? { ios: "chevron.left", android: "chevron_left", web: "chevron_left" }
+          : { ios: "chevron.right", android: "chevron_right", web: "chevron_right" }) as never}
+        size={16}
+        tintColor={theme.colors.textStrong}
+        fallback={<AppText variant="bodyStrong">{kind === "back" ? "‹" : "›"}</AppText>}
+      />
+    </Pressable>
+  );
 }
 
-function portalMatchTicketContext(match: PortalMatch): Item {
-  return {
-    id: match.match_id,
-    match_id: match.match_id,
-    kickoff_at: match.kickoff_at,
-    status: match.status,
-    home_team: match.home_team,
-    away_team: match.away_team,
-    stadium: match.stadium,
-  };
+function stateLabel(i18n: I18n, state: TicketVisualState, status: string) {
+  return state === "other" ? rawStatusLabel(status) : i18n.t(`myTickets.state.${state}`);
 }
 
-function matchTitle(item: Item) {
-  const match = record(item.match);
-  const home =
-    typeof match.home_team === "string"
-      ? match.home_team
-      : text(record(match.home_team), ["name"]);
-  const away =
-    typeof match.away_team === "string"
-      ? match.away_team
-      : text(record(match.away_team), ["name"]);
-  return home && away ? `${home} vs ${away}` : "";
+/**
+ * v3 flip ticket. Front: the match ticket with the backend facts; back: the
+ * backend QR (`qr_image`), dimmed and stamped when the backend status says it
+ * can no longer be scanned. The flip is a 3D turn, or a plain swap under
+ * reduced motion.
+ */
+function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatch }) {
+  const theme = useTheme();
+  const i18n = useI18n();
+  const reducedMotion = useReducedMotion();
+  const [flipped, setFlipped] = useState(false);
+  const [turn] = useState(() => new Animated.Value(0));
+  const state = ticketVisualState(ticket);
+  const scannable = ticketIsScannable(state);
+  const qr = ticketQrSource(ticket);
+  const seat = ticketSeatFacts(ticket.seat);
+  const date = formatDate(match.kickoff_at);
+  const time = formatTime(match.kickoff_at);
+  const status = stateLabel(i18n, state, ticket.status);
+
+  useEffect(() => {
+    if (reducedMotion) {
+      turn.setValue(flipped ? 1 : 0);
+      return;
+    }
+    Animated.timing(turn, { toValue: flipped ? 1 : 0, duration: 700, useNativeDriver: true }).start();
+  }, [flipped, reducedMotion, turn]);
+
+  const faceStyle = (back: boolean) =>
+    reducedMotion
+      ? { opacity: back === flipped ? 1 : 0 }
+      : {
+          opacity: turn.interpolate({ inputRange: [0, 0.5, 0.5001, 1], outputRange: back ? [0, 0, 1, 1] : [1, 1, 0, 0] }),
+          transform: [
+            { perspective: 1600 },
+            { rotateY: turn.interpolate({ inputRange: [0, 1], outputRange: back ? ["180deg", "360deg"] : ["0deg", "180deg"] }) },
+          ],
+        };
+
+  const note =
+    state === "valid"
+      ? i18n.t("myTickets.note.valid")
+      : state === "used"
+        ? ticket.checked_in_at
+          ? i18n.t("myTickets.note.usedAt", { time: formatDateTime(ticket.checked_in_at) })
+          : i18n.t("myTickets.note.used")
+        : state === "cancelled"
+          ? i18n.t("myTickets.note.cancelled")
+          : state === "expired"
+            ? i18n.t("myTickets.note.expired")
+            : i18n.t("myTickets.note.other", { status });
+  const noteTone = state === "valid" ? theme.colors.tones.success : state === "other" || state === "used" ? theme.colors.tones.neutral : theme.colors.tones.danger;
+
+  const facts = (large: boolean) =>
+    seat.row || seat.seat ? (
+      <View style={local.facts}>
+        {seat.row ? <Fact label={i18n.t("myTickets.row")} value={seat.row} large={large} /> : null}
+        {seat.seat ? <Fact label={i18n.t("myTickets.seat")} value={seat.seat} large={large} /> : null}
+      </View>
+    ) : null;
+
+  const holderRow = (
+    <View style={[local.holderRow, { borderTopColor: theme.colors.hairline }]}>
+      <View style={local.holderCopy}>
+        <AppText variant="overline" tone="muted" style={local.factLabel}>{i18n.t("myTickets.holder")}</AppText>
+        <AppText variant="bodyStrong" numberOfLines={1} style={local.holderName}>{ticket.holder_name}</AppText>
+      </View>
+      <View style={local.holderEnd}>
+        <AppText variant="overline" tone="muted" numberOfLines={1} style={local.factLabel}>{ticket.zone.name}</AppText>
+        <AppText variant="meta" style={local.mono}>{ticket.ticket_code}</AppText>
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={local.flip}>
+      {/* Front */}
+      <Animated.View
+        style={[local.face, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowRaised }, faceStyle(false)]}
+        pointerEvents={flipped ? "none" : "auto"}
+        importantForAccessibility={flipped ? "no-hide-descendants" : "auto"}
+        accessibilityElementsHidden={flipped}
+      >
+        <View style={[local.ticketHero, { backgroundColor: theme.colors.hero }]}>
+          <View style={{ opacity: scannable ? 1 : 0.4, ...local.fill }}>
+            <PitchArt />
+          </View>
+          <View style={local.heroTop}>
+            <View style={local.brand}>
+              <View style={local.brandMark}>
+                <Image source={require("../../assets/images/lfa-logo.png")} style={local.brandLogo} resizeMode="contain" accessible={false} />
+              </View>
+              <View style={local.brandCopy}>
+                <AppText variant="overline" tone="onHeroMuted" style={local.official}>{i18n.t("myTickets.official")}</AppText>
+                <AppText variant="meta" tone="onHero" numberOfLines={1}>{match.stadium ?? ""}</AppText>
+              </View>
+            </View>
+            <View style={[local.statusPill, { backgroundColor: scannable ? "rgba(91,224,160,0.16)" : "rgba(255,255,255,0.14)" }]}>
+              <View style={[local.statusDot, { backgroundColor: scannable ? "#5BE0A0" : "rgba(255,255,255,0.85)" }]} />
+              <AppText variant="caption" style={{ color: scannable ? "#5BE0A0" : "rgba(255,255,255,0.85)", fontWeight: "600" }}>{status}</AppText>
+            </View>
+          </View>
+          <View style={local.heroTeams}>
+            <HeroTeam name={match.home_team.name} team={match.home_team} />
+            <View style={local.heroCenter}>
+              <AppText variant="displayScore" tone="onHero" align="center" numberOfLines={1} style={local.heroTime}>{time}</AppText>
+              <AppText variant="caption" tone="onHeroMuted" align="center">{date}</AppText>
+            </View>
+            <HeroTeam name={match.away_team.name} team={match.away_team} />
+          </View>
+        </View>
+        <TicketTear />
+        {facts(true)}
+        {holderRow}
+        <View style={local.spacer} />
+        <View style={local.faceAction}>
+          <Button
+            title={i18n.t("myTickets.showQr")}
+            variant={scannable ? "primary" : "tonal"}
+            onPress={() => setFlipped(true)}
+            icon={<SymbolView name={{ ios: "qrcode", android: "qr_code_2", web: "qr_code_2" } as never} size={20} tintColor={scannable ? theme.colors.onActionPrimary : theme.colors.textStrong} fallback={<View />} />}
+          />
+        </View>
+        <TicketTear />
+        <View style={local.admit}>
+          <AppText variant="displayDay" tone="muted" style={local.admitText}>{i18n.t("myTickets.admitOne")}</AppText>
+          <AppText variant="caption" tone="muted" style={local.mono} numberOfLines={1}>{ticket.order_code}</AppText>
+        </View>
+      </Animated.View>
+
+      {/* Back */}
+      <Animated.View
+        style={[local.face, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowRaised }, faceStyle(true)]}
+        pointerEvents={flipped ? "auto" : "none"}
+        importantForAccessibility={flipped ? "auto" : "no-hide-descendants"}
+        accessibilityElementsHidden={!flipped}
+      >
+        <View style={[local.backHeader, { backgroundColor: theme.colors.hero }]}>
+          <AppText variant="displayNumeral" tone="onHero" numberOfLines={1} style={local.backTitle}>
+            {`${match.home_team.name} v ${match.away_team.name}`}
+          </AppText>
+          <AppText variant="caption" tone="onHeroMuted">{`${date} · ${time}`}</AppText>
+        </View>
+        <TicketTear />
+        <View style={local.qrBlock}>
+          <AppText variant="meta" tone="muted" align="center">
+            {state === "valid"
+              ? i18n.t("myTickets.qr.hintValid")
+              : state === "other"
+                ? i18n.t("myTickets.qr.hintOther")
+                : i18n.t("myTickets.qr.hintBlocked")}
+          </AppText>
+          {/* Scannable geometry: never mirrored. */}
+          <PhysicalLayout style={local.qrBox}>
+            {qr ? (
+              <Image
+                source={{ uri: qr }}
+                style={[local.qrImage, { opacity: state === "valid" || state === "other" ? 1 : 0.3 }]}
+                resizeMode="contain"
+                accessibilityLabel={i18n.t("myTickets.qr.a11y", { holder: ticket.holder_name })}
+              />
+            ) : (
+              <AppText variant="meta" style={local.qrUnavailable}>{i18n.t("myTickets.qr.unavailable")}</AppText>
+            )}
+            {state === "used" || state === "expired" || state === "cancelled" ? (
+              <View style={[local.stamp, { borderColor: state === "used" ? "#3B3D47" : "#C8102E" }]} accessible={false}>
+                <AppText variant="bodyStrong" style={[local.stampText, { color: state === "used" ? "#3B3D47" : "#C8102E" }]}>
+                  {i18n.t(`myTickets.state.${state}`)}
+                </AppText>
+              </View>
+            ) : null}
+          </PhysicalLayout>
+          <View style={[local.note, { backgroundColor: noteTone.bg }]} accessibilityLiveRegion="polite">
+            <AppText variant="meta" style={{ color: noteTone.fg }}>{note}</AppText>
+          </View>
+        </View>
+        <View style={local.spacer} />
+        {facts(false)}
+        {holderRow}
+        <View style={local.faceAction}>
+          <Button
+            title={i18n.t("myTickets.showDetails")}
+            variant="tonal"
+            onPress={() => setFlipped(false)}
+            icon={<SymbolView name={{ ios: "arrow.triangle.2.circlepath", android: "flip", web: "flip" } as never} size={17} tintColor={theme.colors.textStrong} fallback={<View />} />}
+          />
+        </View>
+      </Animated.View>
+    </View>
+  );
 }
-function matchVenue(item: Item) {
-  const match = record(item.match);
-  const venue = match.stadium ?? match.venue ?? match.location;
-  return typeof venue === "string"
-    ? venue
-    : text(record(venue), ["name", "title"]);
+
+function HeroTeam({ name, team }: { name: string; team: PortalMatch["home_team"] }) {
+  return (
+    <View style={local.heroTeam}>
+      <TeamCrest team={team} size={56} onHero />
+      <AppText variant="displayCountdown" tone="onHero" align="center" numberOfLines={2} style={local.heroTeamName}>{name}</AppText>
+    </View>
+  );
 }
-function teamData(value: unknown, ticketLogo?: unknown) {
-  if (typeof value === "string" && value.trim())
-    return {
-      name: value.trim(),
-      short: value.trim().slice(0, 3).toUpperCase(),
-      logo:
-        typeof ticketLogo === "string" && ticketLogo.trim()
-          ? ticketLogo.trim()
-          : undefined,
-    };
-  const team = record(value);
-  const name = text(team, ["name"], "");
-  if (!name) return null;
-  return {
-    name,
-    short: text(team, ["short_name"], name.slice(0, 3).toUpperCase()),
-    logo: text(team, ["logo"], "") || undefined,
-  };
+
+function Fact({ label, value, large }: { label: string; value: string; large: boolean }) {
+  return (
+    <View style={local.fact}>
+      <AppText variant="overline" tone="muted" style={local.factLabel}>{label}</AppText>
+      <AppText variant={large ? "displaySection" : "displayDay"}>{value}</AppText>
+    </View>
+  );
 }
-function paymentMethod(value: string) {
-  const normalized = value.toLowerCase();
-  if (normalized === "blue") return "Blue Wallet";
-  if (normalized === "cash") return "Cash";
-  if (normalized) return "Card";
-  return "";
+
+/** v3 tear line with side notches (decorative). */
+function TicketTear() {
+  const theme = useTheme();
+  return (
+    <View style={local.tear} accessible={false} importantForAccessibility="no-hide-descendants">
+      <View style={[local.tearNotch, local.tearStart, { backgroundColor: theme.colors.background }]} />
+      <View style={[local.tearLine, { borderColor: theme.colors.border }]} />
+      <View style={[local.tearNotch, local.tearEnd, { backgroundColor: theme.colors.background }]} />
+    </View>
+  );
 }
-const styles = StyleSheet.create({
-  shell: {
-    flex: 1,
-    alignSelf: "center",
+
+const local = {
+  shell: { flex: 1, alignSelf: "center" as const },
+  filters: { marginTop: spacing.sm },
+  list: { paddingTop: spacing.sm, paddingBottom: spacing.xxxl, gap: 10 },
+  section: { gap: 10 },
+  sectionHead: { paddingTop: spacing.lg, paddingHorizontal: spacing.xs },
+  // v3 card: radius 20, grid 1fr | 86pt stub, dashed stub border, notches.
+  card: { flexDirection: "row" as const, borderRadius: 20, minHeight: 104 },
+  cardPast: { opacity: 0.72 },
+  pressed: { opacity: 0.85 },
+  cardMain: { flex: 1, minWidth: 0, paddingVertical: 14, paddingHorizontal: spacing.lg, gap: spacing.sm },
+  cardTeams: { flexDirection: "row" as const, alignItems: "center" as const, gap: 10 },
+  crests: { flexDirection: "row" as const, flexShrink: 0 },
+  crestOverlap: { marginStart: -4 },
+  cardTitle: { flex: 1, minWidth: 0, fontSize: 16 },
+  stub: {
+    width: 86,
+    borderStartWidth: 1.5,
+    borderStyle: "dashed" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 2,
   },
-  pageTitle: {
-    paddingTop: 18,
-    paddingBottom: 8,
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: "900",
-  },
-  list: {
-    paddingTop: 8,
-    paddingBottom: 30,
-  },
-  order: {
-    minHeight: 96,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-  },
-  matchMetadataRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    minWidth: 0,
-  },
-  matchDate: {
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  matchStadium: {
-    flex: 1,
-    minWidth: 0,
-    textAlign: "right",
-  },
-  matchCount: {
-    flexShrink: 1,
-    minWidth: 0,
-    fontWeight: "800",
-  },
-  matchAction: {
-    flexShrink: 0,
-    fontWeight: "800",
-  },
-  countBadge: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  countNumber: {
-    fontSize: 20,
-    lineHeight: 22,
-    fontWeight: "900",
-  },
-  countLabel: {
-    fontSize: 9,
-    fontWeight: "800",
-    textTransform: "uppercase",
-  },
-  orderCopy: {
-    flex: 1,
-    gap: 3,
-  },
-  orderTitle: {
-    fontSize: 18,
-    lineHeight: 23,
-    fontWeight: "900",
-  },
-  orderMeta: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  chevron: {
-    fontSize: 26,
-  },
-  pressed: {
-    opacity: 0.68,
-  },
-  backdrop: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,.62)",
-  },
-  ticketSheet: {
-    maxHeight: "96%",
-    minHeight: "82%",
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    paddingTop: 10,
-    paddingBottom: 18,
-    gap: 10,
-    overflow: "hidden",
-  },
-  dragHandle: {
-    width: 52,
-    height: 5,
-    opacity: 0.45,
-    borderRadius: 999,
-    alignSelf: "center",
-    marginBottom: 4,
-  },
-  modalTop: {
-    minHeight: 44,
-    paddingHorizontal: 18,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  modalHeading: {
-    alignItems: "center",
-    paddingHorizontal: 34,
-    gap: 5,
-    marginBottom: 6,
-  },
-  position: {
-    fontSize: 16,
-    fontWeight: "900",
-  },
-  modalTitle: {
-    fontSize: 22,
-    lineHeight: 27,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  modalVenue: {
-    textAlign: "center",
-  },
-  close: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modalLoading: {
-    flex: 1,
-  },
-  activeOrderCode: {
-    maxWidth: "100%",
-    paddingHorizontal: 18,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  ticketPager: {
-    alignItems: "center",
-  },
-  flipPress: {
-    height: 410,
-    position: "relative",
-  },
+  notch: { position: "absolute" as const, end: 78, width: 16, height: 16, borderRadius: 8 },
+  notchTop: { top: -8 },
+  notchBottom: { bottom: -8 },
+  viewer: { flex: 1 },
+  viewerHeader: { paddingHorizontal: layout.gutter },
+  viewerHeaderBack: { width: "100%" as const, maxWidth: layout.readableWidth + layout.gutter * 2, alignSelf: "center" as const },
+  viewerBody: { flex: 1, padding: layout.gutter, justifyContent: "center" as const },
+  viewerScroll: { paddingTop: spacing.sm, paddingBottom: spacing.xxl, alignItems: "center" as const },
+  viewerNotice: { width: "100%" as const, paddingHorizontal: layout.gutter, marginBottom: spacing.md },
+  pager: { flexGrow: 0 },
+  pagerControls: { flexDirection: "row" as const, alignItems: "center" as const, gap: 18, marginTop: spacing.lg },
+  pagerButton: { width: size.touchTargetMin, height: size.touchTargetMin, borderRadius: 22, alignItems: "center" as const, justifyContent: "center" as const },
+  dots: { flexDirection: "row" as const, gap: 5, alignItems: "center" as const },
+  dot: { height: 6, borderRadius: 3 },
+  // v3 ticket: 612pt card, radius 22 (sized to the content here, both faces equal).
+  flip: { height: 600, width: "100%" as const, maxWidth: layout.readableWidth, alignSelf: "center" as const },
   face: {
-    position: "absolute",
-    inset: 0,
-    borderRadius: 24,
-    borderWidth: 1,
-    padding: 22,
-    backfaceVisibility: "hidden",
-    // justifyContent: "center"
-  },
-  backFace: { alignItems: "center" },
-  info: { gap: 12 },
-  teams: {
-    fontSize: 21,
-    lineHeight: 27,
-    fontWeight: "900",
-    marginBottom: 10,
-    textAlign: "center",
-  },
-  field: {
-    minHeight: 30,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-  },
-  fieldValue: { fontSize: 14, fontWeight: "800", textAlign: "right" },
-  flipHint: {
-    position: "absolute",
-    bottom: 17,
-    alignSelf: "center",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  qr: { width: 250, height: 250, maxWidth: "90%" },
-  holder: { color: "#0F172A", fontSize: 17, fontWeight: "900", marginTop: 10 },
-  reference: { color: "#64748B", fontSize: 12, marginTop: 3 },
-  actions: {
-    flexDirection: "row",
-    gap: 10,
-    paddingHorizontal: 18,
-    paddingTop: 2,
-  },
-  actionButton: { flex: 1 },
-  actionBackdrop: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,.45)",
-  },
-  actionSheet: {
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    padding: 16,
-    gap: 4,
-  },
-  actionRow: {
-    minHeight: 58,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 10,
-  },
-  actionText: { fontSize: 16, fontWeight: "800" },
-  paymentSheet: {
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    padding: 20,
-    gap: 14,
-  },
-  paymentRow: {
-    minHeight: 48,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 10,
-  },
-});
-const ticketStyles = StyleSheet.create({
-  filterBar: {
-    minHeight: 48,
-    marginTop: 10,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 13,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-  },
-  searchInput: { flex: 1, minHeight: 46, fontSize: 14 },
-  clearSearch: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  order: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 15,
-    gap: 13,
-    marginBottom: 12,
-  },
-  orderHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  orderHeading: { flex: 1, gap: 3 },
-  orderReference: { fontSize: 17, fontWeight: "900" },
-  statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
-  statusText: { fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
-  orderMetrics: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    padding: 11,
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  metricValue: { fontSize: 16, fontWeight: "900" },
-  metricEnd: { alignItems: "flex-end" },
-  contains: { gap: 4 },
-  containsLabel: {
-    fontSize: 10,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 0.7,
-  },
-  summaryText: { fontSize: 13, fontWeight: "700" },
-  moreText: { fontSize: 12, fontWeight: "800" },
-  matchIdentity: {
-    minHeight: 100,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  matchIdentityCompact: { minHeight: 86 },
-  team: { flex: 1, minWidth: 0, alignItems: "center", gap: 6 },
-  teamLogo: {
-    width: 52,
-    height: 52,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  teamLogoCompact: { width: 72, height: 72 },
-  teamLogoImage: { width: "82%", height: "82%" },
-  teamInitial: { fontSize: 16, fontWeight: "900" },
-  teamName: {
-    minHeight: 40,
-    fontSize: 15,
-    lineHeight: 15,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  vsBlock: { flex: 1.4, minWidth: 0, alignItems: "center", gap: 5 },
-  vsText: { fontSize: 10, fontWeight: "900" },
-  matchTitle: {
-    fontSize: 15,
-    lineHeight: 19,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  // faceContent: { flex: 1, width: "100%" },
-  // flexRegion: { flexGrow: 1, minHeight: 6 },
-  backCenter: { width: "100%", alignItems: "center" },
-  // flipHint: { minHeight: 36, alignSelf: "center", textAlignVertical: "center", fontSize: 12, fontWeight: "800" },
-  ticketInfo: { width: "100%", gap: 12 },
-  matchZone: { justifyContent: "center" },
-  detailsZone: { justifyContent: "center", gap: 7 },
-  ticketStatusBadge: {
-    alignSelf: "center",
-    maxWidth: "100%",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  ticketStatusText: { fontSize: 11, fontWeight: "800" },
-  inlineError: { borderRadius: 10, padding: 12 },
-  actionSheetHeader: {
-    minHeight: 48,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  actionSheetTitle: { fontSize: 20, fontWeight: "900" },
-  faceContent: {
-    flex: 1,
-    width: "100%",
-    position: "relative",
-  },
-  centeredFaceContent: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingBottom: 36,
-  },
-  flipHint: {
-    position: "absolute",
+    position: "absolute" as const,
+    top: 0,
+    bottom: 0,
     left: 0,
     right: 0,
-    bottom: 0,
-    minHeight: 36,
-    textAlign: "center",
-    textAlignVertical: "center",
-    fontSize: 12,
-    fontWeight: "800",
+    borderRadius: 22,
+    overflow: "hidden" as const,
+    backfaceVisibility: "hidden" as const,
   },
-});
+  fill: { position: "absolute" as const, top: 0, bottom: 0, left: 0, right: 0 },
+  ticketHero: { paddingTop: spacing.lg, paddingHorizontal: 18, paddingBottom: spacing.xl, overflow: "hidden" as const },
+  heroTop: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const, gap: 10 },
+  brand: { flexDirection: "row" as const, alignItems: "center" as const, gap: 10, flex: 1, minWidth: 0 },
+  brandMark: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#FFFFFF", alignItems: "center" as const, justifyContent: "center" as const },
+  brandLogo: { width: 30, height: 30 },
+  brandCopy: { flex: 1, minWidth: 0 },
+  official: { fontSize: 10, letterSpacing: 1.4 },
+  statusPill: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, minHeight: 26, paddingHorizontal: 10, borderRadius: 8 },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  heroTeams: { flexDirection: "row" as const, alignItems: "flex-start" as const, marginTop: spacing.xl, gap: spacing.sm },
+  heroTeam: { flex: 1, minWidth: 0, alignItems: "center" as const, gap: spacing.sm },
+  heroTeamName: { textTransform: "uppercase" as const },
+  heroCenter: { alignItems: "center" as const, gap: 4, paddingTop: 6 },
+  heroTime: { fontSize: 38, lineHeight: 42 },
+  tear: { height: 24, flexDirection: "row" as const, alignItems: "center" as const },
+  tearNotch: { width: 24, height: 24, borderRadius: 12 },
+  tearStart: { marginStart: -12 },
+  tearEnd: { marginEnd: -12 },
+  tearLine: { flex: 1, borderTopWidth: 2, borderStyle: "dashed" as const, marginHorizontal: 8 },
+  facts: { flexDirection: "row" as const, justifyContent: "space-around" as const, paddingHorizontal: 14, paddingTop: 2 },
+  fact: { alignItems: "center" as const, gap: 3, minWidth: 64 },
+  factLabel: { fontSize: 10, letterSpacing: 1 },
+  holderRow: {
+    flexDirection: "row" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "flex-end" as const,
+    gap: spacing.md,
+    marginTop: spacing.lg,
+    marginHorizontal: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+  },
+  holderCopy: { flex: 1, minWidth: 0 },
+  holderName: { fontSize: 16, marginTop: 3 },
+  holderEnd: { alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "50%" as const },
+  mono: { fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), letterSpacing: 0.4 },
+  spacer: { flex: 1 },
+  faceAction: { paddingHorizontal: 18, paddingVertical: 14 },
+  admit: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "center" as const, paddingHorizontal: 18, paddingBottom: spacing.lg, gap: spacing.md },
+  admitText: { letterSpacing: 1.8, textTransform: "uppercase" as const },
+  backHeader: { paddingVertical: 14, paddingHorizontal: 18, gap: 2 },
+  backTitle: { textTransform: "uppercase" as const },
+  qrBlock: { alignItems: "center" as const, gap: spacing.md, paddingHorizontal: 18 },
+  // v3: 232pt white box, radius 18 (the scan surface stays light in both themes).
+  qrBox: {
+    width: 232,
+    height: 232,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    boxShadow: "inset 0px 0px 0px 1px rgba(21,22,28,0.1)",
+  },
+  qrImage: { width: 200, height: 200 },
+  qrUnavailable: { color: "#475569" },
+  stamp: {
+    position: "absolute" as const,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
+    borderWidth: 3,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.94)",
+    transform: [{ rotate: "-9deg" }],
+  },
+  stampText: { fontSize: 20, letterSpacing: 2, textTransform: "uppercase" as const },
+  note: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: spacing.sm },
+};
 
-export default withAuthRequired(TicketsScreen);
+export default withAuthRequired(TicketsScreen, "myTickets.title");

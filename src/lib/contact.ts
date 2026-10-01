@@ -15,11 +15,14 @@ export const OFFICIAL_CONTACTS = [
     accessibilityLabel: "Contact us on WhatsApp",
     appUrl: "whatsapp://send?phone=96170447888",
     url: "https://wa.me/96170447888",
+    /** The same destination, as shown to people. */
+    detail: "+961 70 447 888",
     brand: "whatsapp",
   },
   {
     label: "Email",
     url: `mailto:${encodeURIComponent("info@lfa-ticketing.com")}`,
+    detail: "info@lfa-ticketing.com",
     icon: { ios: "envelope", android: "mail", web: "mail" },
   },
 ] as const;

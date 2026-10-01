@@ -89,6 +89,10 @@ export type ThemeColors = {
   crest: string;
   /** v3 `--redInk`: brand-coloured text and text actions ("See all", "Clear"). */
   brandInk: string;
+  /** v3 timeline yellow-card mark (#F2C230): a referee card colour, the same in both modes. */
+  eventYellowCard: string;
+  /** v3 timeline red-card mark (v3 `--red`). */
+  eventRedCard: string;
   /** v3 `--bar`: translucent iOS tab bar. */
   bar: string;
   tones: Record<StatusTone, ToneColors>;
@@ -158,6 +162,8 @@ export const lightColors: ThemeColors = {
   shadowRaised: "0px 18px 40px rgba(21,22,28,0.18), 0px 3px 8px rgba(21,22,28,0.08)",
   crest: "#EFEFF3",
   brandInk: "#B00E29",
+  eventYellowCard: "#F2C230",
+  eventRedCard: "#C8102E",
   bar: "rgba(247,247,249,0.88)",
   tones: {
     neutral: { fg: "#3B3D47", bg: "#E9E9EE", border: "#DEDEE1" },
@@ -229,6 +235,8 @@ export const darkColors: ThemeColors = {
   shadowRaised: "0px 0px 0px 1px rgba(255,255,255,0.05), 0px 20px 44px rgba(0,0,0,0.55)",
   crest: "#23232A",
   brandInk: "#FF6679",
+  eventYellowCard: "#F2C230",
+  eventRedCard: "#E8112D",
   bar: "rgba(16,16,20,0.88)",
   tones: {
     neutral: { fg: "#D2D3DA", bg: "#1D1D23", border: "#2B2B32" },

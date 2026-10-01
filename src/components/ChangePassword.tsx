@@ -8,7 +8,12 @@ import { forwardRef, useCallback, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
-export function ChangePassword() {
+/**
+ * Change password (the one owner of this flow): validates locally, then
+ * `AuthContext.changePassword`. `trigger="menu"` renders the v3 Profile menu
+ * row; the default is the standalone row.
+ */
+export function ChangePassword({ trigger = "row" }: { trigger?: "row" | "menu" } = {}) {
   const auth = useAuth();
   const toast = useToast();
   const theme = useTheme();
@@ -83,6 +88,20 @@ export function ChangePassword() {
 
   return (
     <>
+      {trigger === "menu" ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Change Password"
+          onPress={() => setVisible(true)}
+          style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: theme.colors.surfaceSecondary }]}
+        >
+          <View style={[styles.menuIcon, { backgroundColor: theme.colors.bgAlt }]}>
+            <SymbolView name={{ ios: "lock", android: "lock", web: "lock" }} size={17} tintColor={theme.colors.textStrong} fallback={<View />} />
+          </View>
+          <Text style={[styles.menuText, { color: theme.colors.textStrong }]}>Change password</Text>
+          <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={16} tintColor={theme.colors.textMuted} fallback={<View />} />
+        </Pressable>
+      ) : (
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Change Password"
@@ -95,6 +114,7 @@ export function ChangePassword() {
         <Text style={[styles.actionText, { color: theme.colors.ink }]}>Change Password</Text>
         <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={22} tintColor={theme.colors.muted} fallback={<View />} />
       </Pressable>
+      )}
 
       <BottomSheetModal
         ref={sheetRef}
@@ -194,6 +214,10 @@ const styles = StyleSheet.create({
   passwordInput: { flex: 1, minHeight: 46, paddingLeft: 12, fontSize: 15 },
   visibilityButton: { width: 46, minHeight: 46, alignItems: "center", justifyContent: "center" },
   pressed: { opacity: 0.7 },
+  // v3 Profile menu row: 30pt tile, 16pt label, chevron.
+  menuRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 12 },
+  menuIcon: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  menuText: { flex: 1, fontSize: 16 },
 });
 
 function backendErrorMessage(error: ApiError) {

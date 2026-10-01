@@ -95,7 +95,8 @@ function isPortalTicket(value: unknown): value is PortalTicket {
     (value.seat === null || isRecord(value.seat)) &&
     (value.checked_in_at === null || typeof value.checked_in_at === "string") &&
     typeof value.created_at === "string" &&
-    typeof value.qr_image === "string"
+    // The list may omit the QR (absent / null); the detail endpoint completes it.
+    (value.qr_image === undefined || value.qr_image === null || typeof value.qr_image === "string")
   );
 }
 

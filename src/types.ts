@@ -71,8 +71,10 @@ export type ApiMatchStats = {
 export type ApiEventPlayer = { id: number; name: string; shirt_number?: number | null };
 
 /**
- * One single-match event (confirmed shape, 2026-09-30, match 16). Only
- * `type: "goal"` has been seen; other types must degrade without meaning.
+ * One single-match event (confirmed shape, 2026-09-30, matches 16 and 17).
+ * Known types: "goal", "yellow_card", "red_card", "substitution" (which uses
+ * `player_in` / `player_out`, with `player: null`). Any other type must
+ * degrade without meaning (`timelineKind`).
  */
 export type ApiMatchEvent = {
   id: number;
@@ -143,7 +145,12 @@ export type PortalTicket = {
   seat: PortalTicketSeat;
   checked_in_at: string | null;
   created_at: string;
-  qr_image: string;
+  /**
+   * Backend QR image. May be absent / null / empty in the list response; the
+   * screen then takes it from `GET /portal/tickets/{ticket_code}`
+   * (`withBackendQrs`). Rendered only through `ticketQrSource`.
+   */
+  qr_image?: string | null;
 };
 
 export type PortalTicketsMeta = {

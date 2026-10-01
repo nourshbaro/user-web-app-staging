@@ -15,14 +15,10 @@ import Animated, {
   FadeInDown,
   useReducedMotion,
 } from "react-native-reanimated";
-import {
-  Button,
-  Card,
-  Input,
-  Screen,
-  useResponsive,
-  useTheme,
-} from "@/components/ui";
+import { Button, useResponsive, useTheme } from "@/components/ui";
+import { FlowHeader } from "@/components/FlowHeader";
+import { AppText } from "@/components/foundation";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { InternationalPhoneInput } from "@/components/InternationalPhoneInput";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
@@ -107,6 +103,7 @@ export default function AuthScreen() {
   const responsive = useResponsive();
   const theme = useTheme();
   const toast = useToast();
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -508,76 +505,70 @@ export default function AuthScreen() {
     else router.replace("/");
   };
 
+  // v3 copy per production mode. Every mode is backed by an existing
+  // authService call; nothing here changes what is sent.
   const title =
     mode === "login"
-      ? "Login to your account"
+      ? "Sign in"
       : mode === "register"
-        ? "Create your account"
+        ? "Create account"
         : mode === "complete-phone"
-          ? "Complete your profile"
-        : mode === "otp"
-          ? "Enter registration OTP"
-          : mode === "forgot-email"
-            ? "Reset your password"
-            : mode === "forgot-otp"
-              ? "Enter reset OTP"
-              : "Choose a new password";
+          ? "Add your phone"
+          : mode === "otp" || mode === "forgot-otp"
+            ? "Check your email"
+            : mode === "forgot-email"
+              ? "Forgot password"
+              : "New password";
   const detail =
     mode === "login"
-      ? "Access your orders, tickets, and downloadable PDFs."
+      ? "Use your LFA Tickets account to buy and view tickets."
       : mode === "register"
-        ? "After registration, an OTP will be sent to your email for confirmation."
+        ? null
         : mode === "complete-phone"
           ? "Please add your phone number to continue."
-        : mode === "otp"
-          ? "We sent a 6-digit code to the email on your account."
-          : mode === "forgot-email"
-            ? "Enter your account email and we’ll send you a reset code."
-            : mode === "forgot-otp"
-              ? `We sent a 6-digit code to ${recoveryEmail}.`
-              : "Enter and confirm the new password for your account.";
+          : mode === "otp"
+            ? "Enter the 6-digit code we sent to the email on your account."
+            : mode === "forgot-email"
+              ? "Enter the email you signed up with and we'll send you a 6-digit code to reset your password."
+              : mode === "forgot-otp"
+                ? `Enter the 6-digit code we sent to ${recoveryEmail}.`
+                : "Enter and confirm the new password for your account.";
+  const primaryLabel = loading
+    ? "Please wait..."
+    : mode === "login"
+      ? "Sign in"
+      : mode === "register"
+        ? "Create account"
+        : mode === "complete-phone"
+          ? "Continue"
+          : mode === "otp"
+            ? "Verify"
+            : mode === "forgot-email"
+              ? "Send code"
+              : mode === "forgot-otp"
+                ? "Verify code"
+                : "Reset password";
+  const primaryDisabled =
+    loading ||
+    (mode === "login" && (!email || !password)) ||
+    (mode === "register" && (!name || !email || !password || !passwordConfirmation)) ||
+    (mode === "complete-phone" && completionPhone.validation !== "valid") ||
+    (mode === "otp" && (!pendingOtpTarget || otp.length !== 6)) ||
+    (mode === "forgot-email" && !recoveryEmail) ||
+    (mode === "forgot-otp" && recoveryCode.length !== 6) ||
+    (mode === "reset-password" && (!recoveryPassword || !recoveryPasswordConfirmation));
+  const showsLogo = mode === "login";
+  const showsMailIcon = mode === "otp" || mode === "forgot-otp";
 
   return (
-    <Screen>
-      <View style={[local.shell, { width: responsive.contentWidth }]}>
-        <View style={local.header}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={
-              mode.startsWith("forgot-") || mode === "reset-password"
-                ? "Back in password recovery"
-                : "Go back"
-            }
-            onPress={goBack}
-            style={[
-              local.backButton,
-              {
-                backgroundColor: theme.colors.panel,
-                borderColor: theme.colors.line,
-              },
-            ]}
-          >
-            <View
-              style={[local.backChevron, { borderColor: theme.colors.ink }]}
-            />
-          </Pressable>
-          <View style={local.headerBrand}>
-            <Image
-              source={require("../../assets/images/lfa-logo.png")}
-              style={local.logo}
-              resizeMode="contain"
-            />
-            <Text style={[local.headerTitle, { color: theme.colors.ink }]}>
-              Lebanon FA
-            </Text>
-          </View>
-          <View style={{ width: 40 }} />
-        </View>
-
-        <KeyboardAvoidingView
-          style={local.keyboard}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
+    <View style={[local.screen, { backgroundColor: theme.colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <KeyboardAvoidingView style={local.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={[local.shell, { width: responsive.contentWidth }]}>
+          <FlowHeader
+            title=""
+            backLabel={mode === "login" ? "Back" : mode === "register" || mode === "forgot-email" ? "Sign in" : "Back"}
+            onBack={goBack}
+          />
           <ScrollView
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
@@ -585,69 +576,93 @@ export default function AuthScreen() {
           >
             <Animated.View
               entering={reduceMotion ? undefined : FadeInDown.duration(280)}
-              style={local.authPanel}
+              style={local.panel}
             >
-              <Card>
-                <Text style={theme.styles.sectionLabel}>
-                  Lebanon FA Account
-                </Text>
-                <Text style={[local.title, { color: theme.colors.ink }]}>
-                  {title}
-                </Text>
-                <Text style={theme.styles.muted}>{detail}</Text>
-              </Card>
+              {showsLogo ? (
+                <Image
+                  source={require("../../assets/images/lfa-logo.png")}
+                  style={local.logo}
+                  resizeMode="contain"
+                  accessibilityLabel="Lebanese Football Association"
+                />
+              ) : null}
+              {showsMailIcon ? (
+                <View style={[local.mailIcon, { backgroundColor: theme.colors.tones.brand.bg }]}>
+                  <SymbolView name={{ ios: "envelope", android: "mail", web: "mail" }} size={30} tintColor={theme.colors.actionPrimary} fallback={<View />} />
+                </View>
+              ) : null}
+              <AppText
+                variant="displayPrompt"
+                align={showsLogo ? "center" : "start"}
+                accessibilityRole="header"
+              >
+                {title}
+              </AppText>
+              {detail ? (
+                <AppText variant="body" tone="muted" align={showsLogo ? "center" : "start"}>
+                  {detail}
+                </AppText>
+              ) : null}
 
-              <Card>
+              <View style={local.fields}>
                 {mode === "register" ? (
-                  <Input
+                  <Field
                     label="Full name"
+                    placeholder="As it should appear on tickets"
                     value={name}
                     onChangeText={setName}
                     autoCapitalize="words"
+                    textContentType="name"
+                    editable={!loading}
                   />
                 ) : null}
 
                 {mode === "login" || mode === "register" ? (
                   <>
-                    <Input
+                    <Field
                       label="Email"
+                      placeholder="name@example.com"
                       value={email}
                       onChangeText={setEmail}
                       keyboardType="email-address"
                       autoCapitalize="none"
+                      autoCorrect={false}
+                      textContentType="emailAddress"
+                      editable={!loading}
                     />
                     {mode === "register" ? (
-                        <InternationalPhoneInput
-                          value={registrationPhone}
-                          disabled={loading}
-                          error={
-                            registrationPhone.validation === "invalid" ||
-                            registrationPhone.validation === "excluded-country"
-                              ? "Enter a valid phone number for the selected phone country."
-                              : undefined
-                          }
-                          onChange={setRegistrationPhone}
-                        />
+                      <InternationalPhoneInput
+                        value={registrationPhone}
+                        disabled={loading}
+                        error={
+                          registrationPhone.validation === "invalid" ||
+                          registrationPhone.validation === "excluded-country"
+                            ? "Enter a valid phone number for the selected phone country."
+                            : undefined
+                        }
+                        onChange={setRegistrationPhone}
+                      />
                     ) : null}
-                    <PasswordInput
+                    <PasswordField
                       label="Password"
+                      placeholder={mode === "register" ? "At least 8 characters" : undefined}
                       value={password}
                       onChangeText={setPassword}
                       visible={showPassword}
                       onToggle={() => setShowPassword((value) => !value)}
                       editable={!loading}
+                      newPassword={mode === "register"}
                     />
                     {mode === "register" ? (
-                        <PasswordInput
-                          label="Confirm password"
-                          value={passwordConfirmation}
-                          onChangeText={setPasswordConfirmation}
-                          visible={showPasswordConfirmation}
-                          onToggle={() =>
-                            setShowPasswordConfirmation((value) => !value)
-                          }
-                          editable={!loading}
-                        />
+                      <PasswordField
+                        label="Confirm password"
+                        value={passwordConfirmation}
+                        onChangeText={setPasswordConfirmation}
+                        visible={showPasswordConfirmation}
+                        onToggle={() => setShowPasswordConfirmation((value) => !value)}
+                        editable={!loading}
+                        newPassword
+                      />
                     ) : null}
                   </>
                 ) : mode === "complete-phone" ? (
@@ -663,29 +678,31 @@ export default function AuthScreen() {
                     onChange={setCompletionPhone}
                   />
                 ) : mode === "otp" ? (
-                  <Input
-                    label="6-digit OTP"
+                  <Field
+                    label="6-digit code"
                     value={otp}
-                    onChangeText={(value) =>
-                      setOtp(value.replace(/\D/g, "").slice(0, 6))
-                    }
+                    onChangeText={(value) => setOtp(value.replace(/\D/g, "").slice(0, 6))}
                     keyboardType="number-pad"
                     maxLength={6}
-                    style={local.otpInput}
+                    textContentType="oneTimeCode"
+                    autoComplete="one-time-code"
+                    code
                   />
                 ) : mode === "forgot-email" ? (
-                  <Input
+                  <Field
                     label="Email"
+                    placeholder="name@example.com"
                     value={recoveryEmail}
                     onChangeText={setRecoveryEmail}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    textContentType="emailAddress"
                     editable={!loading}
                   />
                 ) : mode === "forgot-otp" ? (
-                  <Input
-                    label="6-digit OTP"
+                  <Field
+                    label="6-digit code"
                     value={recoveryCode}
                     onChangeText={(value) =>
                       setRecoveryCode(value.replace(/\D/g, "").slice(0, 6))
@@ -693,42 +710,41 @@ export default function AuthScreen() {
                     keyboardType="number-pad"
                     maxLength={6}
                     editable={!loading}
-                    style={local.otpInput}
+                    textContentType="oneTimeCode"
+                    autoComplete="one-time-code"
+                    code
                   />
                 ) : (
                   <>
-                    <PasswordInput
+                    <PasswordField
                       label="New password"
+                      placeholder="At least 8 characters"
                       value={recoveryPassword}
                       onChangeText={setRecoveryPassword}
                       visible={showRecoveryPassword}
-                      onToggle={() =>
-                        setShowRecoveryPassword((value) => !value)
-                      }
+                      onToggle={() => setShowRecoveryPassword((value) => !value)}
                       editable={!loading}
+                      newPassword
                     />
-                    <PasswordInput
+                    <PasswordField
                       label="Confirm new password"
                       value={recoveryPasswordConfirmation}
                       onChangeText={setRecoveryPasswordConfirmation}
                       visible={showRecoveryPasswordConfirmation}
-                      onToggle={() =>
-                        setShowRecoveryPasswordConfirmation((value) => !value)
-                      }
+                      onToggle={() => setShowRecoveryPasswordConfirmation((value) => !value)}
                       editable={!loading}
+                      newPassword
                     />
                   </>
                 )}
 
                 {mode === "login" ? (
-                  <>
+                  <View style={local.loginRow}>
                     <Pressable
                       accessibilityRole="checkbox"
                       accessibilityLabel="Remember me"
-                      accessibilityState={{
-                        checked: remember,
-                        disabled: loading,
-                      }}
+                      accessibilityState={{ checked: remember, disabled: loading }}
+                      aria-checked={remember}
                       disabled={loading}
                       onPress={() => setRemember((value) => !value)}
                       style={local.rememberRow}
@@ -737,27 +753,16 @@ export default function AuthScreen() {
                         style={[
                           local.checkbox,
                           {
-                            borderColor: remember
-                              ? theme.colors.primary
-                              : theme.colors.line,
-                            backgroundColor: remember
-                              ? theme.colors.primary
-                              : theme.colors.panel,
+                            borderColor: remember ? theme.colors.actionPrimary : theme.colors.border,
+                            backgroundColor: remember ? theme.colors.actionPrimary : theme.colors.surface,
                           },
                         ]}
                       >
                         {remember ? (
-                          <Text style={local.checkmark}>✓</Text>
+                          <SymbolView name={{ ios: "checkmark", android: "check", web: "check" }} size={14} tintColor="#FFFFFF" fallback={<Text style={local.checkmark}>✓</Text>} />
                         ) : null}
                       </View>
-                      <Text
-                        style={[
-                          local.rememberLabel,
-                          { color: theme.colors.ink },
-                        ]}
-                      >
-                        Remember me
-                      </Text>
+                      <AppText variant="meta">Remember me</AppText>
                     </Pressable>
                     <Pressable
                       accessibilityRole="button"
@@ -765,162 +770,106 @@ export default function AuthScreen() {
                       onPress={startRecovery}
                       disabled={loading}
                       hitSlop={8}
-                      style={local.forgotButton}
+                      style={local.linkButton}
                     >
-                      <Text
-                        style={[
-                          local.footerLink,
-                          { color: theme.colors.primary },
-                        ]}
-                      >
-                        Forgot Password?
-                      </Text>
+                      <AppText variant="meta" style={{ color: theme.colors.brandInk }}>Forgot password?</AppText>
                     </Pressable>
-                  </>
+                  </View>
+                ) : null}
+
+                {mode === "register" ? (
+                  <AppText variant="meta" tone="muted" style={local.note}>{"We'll email you a code to verify your address."}</AppText>
                 ) : null}
 
                 {message ? (
-                  <Text
-                    style={[local.message, { color: theme.colors.secondary }]}
-                  >
-                    {message}
-                  </Text>
+                  <AppText variant="meta" tone="muted" accessibilityLiveRegion="polite" style={local.note}>{message}</AppText>
                 ) : null}
-
-                <Button
-                  title={
-                    loading
-                      ? "Please wait..."
-                      : mode === "login"
-                        ? "Login"
-                      : mode === "register"
-                          ? "Register"
-                          : mode === "complete-phone"
-                            ? "Continue"
-                          : mode === "otp"
-                            ? "Confirm email"
-                            : mode === "forgot-email"
-                              ? "Send OTP"
-                              : mode === "forgot-otp"
-                                ? "Verify OTP"
-                                : "Reset Password"
-                  }
-                  disabled={
-                    loading ||
-                    (mode === "login" && (!email || !password)) ||
-                    (mode === "register" &&
-                      (!name ||
-                        !email ||
-                        !password ||
-                        !passwordConfirmation)) ||
-                    (mode === "complete-phone" &&
-                      completionPhone.validation !== "valid") ||
-                    (mode === "otp" &&
-                      (!pendingOtpTarget || otp.length !== 6)) ||
-                    (mode === "forgot-email" && !recoveryEmail) ||
-                    (mode === "forgot-otp" && recoveryCode.length !== 6) ||
-                    (mode === "reset-password" &&
-                      (!recoveryPassword || !recoveryPasswordConfirmation))
-                  }
-                  onPress={submit}
-                />
-
-                {mode === "otp" ? (
-                  <Button
-                    title={resending ? "Sending..." : "Resend OTP"}
-                    variant="secondary"
-                    disabled={resending || !pendingOtpTarget}
-                    onPress={resendOtp}
-                  />
-                ) : null}
-              </Card>
-
-              {mode === "login" ? (
-                <Text
-                  style={[local.footerText, { color: theme.colors.secondary }]}
-                >
-                  Need an account?{" "}
-                  <Text
-                    style={[local.footerLink, { color: theme.colors.primary }]}
-                    onPress={() => switchMode("register")}
-                  >
-                    Register
-                  </Text>
-                </Text>
-              ) : mode === "register" ? (
-                <Text
-                  style={[local.footerText, { color: theme.colors.secondary }]}
-                >
-                  Already have an account?{" "}
-                  <Text
-                    style={[local.footerLink, { color: theme.colors.primary }]}
-                    onPress={() => switchMode("login")}
-                  >
-                    Login
-                  </Text>
-                </Text>
-              ) : mode === "otp" ? (
-                <Text
-                  style={[local.footerText, { color: theme.colors.secondary }]}
-                >
-                  Already confirmed?{" "}
-                  <Text
-                    style={[local.footerLink, { color: theme.colors.primary }]}
-                    onPress={() => switchMode("login")}
-                  >
-                    Login
-                  </Text>
-                </Text>
-              ) : mode === "complete-phone" ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel phone completion"
-                  onPress={cancelPhoneCompletion}
-                  disabled={loading}
-                  hitSlop={8}
-                >
-                  <Text
-                    style={[
-                      local.footerText,
-                      local.footerLink,
-                      { color: theme.colors.primary },
-                    ]}
-                  >
-                    Back to login
-                  </Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={resetRecovery}
-                  hitSlop={8}
-                >
-                  <Text
-                    style={[
-                      local.footerText,
-                      local.footerLink,
-                      { color: theme.colors.primary },
-                    ]}
-                  >
-                    Cancel password recovery
-                  </Text>
-                </Pressable>
-              )}
+              </View>
             </Animated.View>
           </ScrollView>
-        </KeyboardAvoidingView>
-      </View>
-    </Screen>
+
+          <View style={local.actions}>
+            <Button title={primaryLabel} disabled={primaryDisabled} loading={loading} onPress={submit} />
+            {mode === "login" ? (
+              <Button title="Create account" variant="tonal" onPress={() => switchMode("register")} />
+            ) : mode === "register" || mode === "otp" ? (
+              <Button title={mode === "otp" ? "Back to sign in" : "I already have an account"} variant="ghost" onPress={() => switchMode("login")} />
+            ) : mode === "complete-phone" ? (
+              <Button title="Back to sign in" variant="ghost" onPress={cancelPhoneCompletion} disabled={loading} />
+            ) : (
+              <Button title="Cancel password reset" variant="ghost" onPress={resetRecovery} />
+            )}
+            {mode === "otp" ? (
+              <Button
+                title={resending ? "Sending..." : "Resend code"}
+                variant="ghost"
+                tone="muted"
+                disabled={resending || !pendingOtpTarget}
+                onPress={resendOtp}
+              />
+            ) : null}
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
-function PasswordInput({
+type FieldProps = {
+  label: string;
+  /** A one-time code: large, spaced digits (v3 code boxes as one field). */
+  code?: boolean;
+} & Pick<
+  React.ComponentProps<typeof TextInput>,
+  | "value"
+  | "onChangeText"
+  | "placeholder"
+  | "keyboardType"
+  | "autoCapitalize"
+  | "autoCorrect"
+  | "maxLength"
+  | "editable"
+  | "textContentType"
+  | "autoComplete"
+>;
+
+/** v3 field: muted label, 52pt input, radius 12, hairline ring (2pt brand ring while focused). */
+function Field({ label, code = false, ...inputProps }: FieldProps) {
+  const theme = useTheme();
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={local.inputWrap}>
+      <AppText variant="meta" tone="muted" style={local.label}>{label}</AppText>
+      <TextInput
+        {...inputProps}
+        accessibilityLabel={label}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        placeholderTextColor={theme.colors.textMuted}
+        style={[
+          local.input,
+          code && local.codeInput,
+          {
+            color: theme.colors.textStrong,
+            backgroundColor: theme.colors.surface,
+            borderColor: focused ? theme.colors.actionPrimary : theme.colors.border,
+            borderWidth: focused ? 2 : 1,
+          },
+        ]}
+      />
+    </View>
+  );
+}
+
+function PasswordField({
   label,
   value,
   onChangeText,
   visible,
   onToggle,
   editable,
+  placeholder,
+  newPassword = false,
 }: {
   label: string;
   value: string;
@@ -928,17 +877,21 @@ function PasswordInput({
   visible: boolean;
   onToggle: () => void;
   editable: boolean;
+  placeholder?: string;
+  newPassword?: boolean;
 }) {
   const theme = useTheme();
+  const [focused, setFocused] = useState(false);
   return (
     <View style={local.inputWrap}>
-      <Text style={theme.styles.label}>{label}</Text>
+      <AppText variant="meta" tone="muted" style={local.label}>{label}</AppText>
       <View
         style={[
           local.passwordField,
           {
-            backgroundColor: theme.colors.panel,
-            borderColor: theme.colors.line,
+            backgroundColor: theme.colors.surface,
+            borderColor: focused ? theme.colors.actionPrimary : theme.colors.border,
+            borderWidth: focused ? 2 : 1,
           },
         ]}
       >
@@ -949,8 +902,13 @@ function PasswordInput({
           autoCapitalize="none"
           autoCorrect={false}
           editable={editable}
-          placeholderTextColor={theme.colors.muted}
-          style={[local.passwordInput, { color: theme.colors.ink }]}
+          placeholder={placeholder}
+          textContentType={newPassword ? "newPassword" : "password"}
+          accessibilityLabel={label}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholderTextColor={theme.colors.textMuted}
+          style={[local.passwordInput, { color: theme.colors.textStrong }]}
         />
         <Pressable
           accessibilityRole="button"
@@ -966,12 +924,8 @@ function PasswordInput({
               web: visible ? "visibility_off" : "visibility",
             }}
             size={20}
-            tintColor={theme.colors.muted}
-            fallback={
-              <Text style={{ color: theme.colors.muted }}>
-                {visible ? "Hide" : "Show"}
-              </Text>
-            }
+            tintColor={theme.colors.textMuted}
+            fallback={<Text style={{ color: theme.colors.textMuted }}>{visible ? "Hide" : "Show"}</Text>}
           />
         </Pressable>
       </View>
@@ -980,102 +934,28 @@ function PasswordInput({
 }
 
 const local = {
+  screen: { flex: 1, alignItems: "center" as const },
+  keyboard: { flex: 1, width: "100%" as const, alignItems: "center" as const },
   shell: { flex: 1, alignSelf: "center" as const },
-  keyboard: { flex: 1 },
-  scrollContent: {
-    flexGrow: 1,
-    alignItems: "center" as const,
-    gap: 14,
-    paddingBottom: 28,
-  },
-  authPanel: {
-    width: "100%" as const,
-    maxWidth: 520,
-    gap: 14,
-  },
+  scrollContent: { flexGrow: 1, paddingBottom: 16 },
+  // v3 auth: padding 30 20 8, readable width on tablets.
+  panel: { width: "100%" as const, maxWidth: 520, alignSelf: "center" as const, gap: 8, paddingTop: 14 },
+  logo: { width: 72, height: 72, alignSelf: "center" as const, marginBottom: 16 },
+  mailIcon: { width: 64, height: 64, borderRadius: 18, alignItems: "center" as const, justifyContent: "center" as const, marginBottom: 12 },
+  fields: { gap: 12, marginTop: 20 },
   inputWrap: { gap: 6 },
-  passwordField: {
-    minHeight: 48,
-    borderWidth: 1,
-    borderRadius: 14,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-  },
-  passwordInput: {
-    flex: 1,
-    minHeight: 46,
-    paddingHorizontal: 12,
-    fontSize: 15,
-  },
-  visibilityButton: {
-    width: 48,
-    height: 46,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  rememberRow: {
-    minHeight: 44,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    alignSelf: "flex-start" as const,
-    gap: 10,
-    paddingRight: 12,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderWidth: 2,
-    borderRadius: 6,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  checkmark: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    lineHeight: 18,
-    fontWeight: "900" as const,
-  },
-  rememberLabel: { fontSize: 14, fontWeight: "700" as const },
-  forgotButton: {
-    minHeight: 44,
-    alignSelf: "flex-end" as const,
-    justifyContent: "center" as const,
-    paddingLeft: 12,
-  },
-  header: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  backChevron: {
-    width: 11,
-    height: 11,
-    borderLeftWidth: 2,
-    borderBottomWidth: 2,
-    transform: [{ rotate: "45deg" }],
-    marginLeft: 4,
-  },
-  headerBrand: { alignItems: "center" as const, gap: 4 },
-  headerTitle: { fontSize: 12, fontWeight: "900" as const },
-  logo: { width: 42, height: 42 },
-  title: { fontSize: 24, fontWeight: "900" as const, lineHeight: 30 },
-  message: { fontSize: 13, lineHeight: 19 },
-  otpInput: {
-    textAlign: "center" as const,
-    fontSize: 20,
-    fontWeight: "800" as const,
-    letterSpacing: 8,
-  },
-  footerText: { textAlign: "center" as const, fontSize: 14 },
-  footerLink: { fontWeight: "900" as const },
+  label: { paddingStart: 4, fontWeight: "500" as const },
+  input: { minHeight: 52, borderRadius: 12, paddingHorizontal: 14, fontSize: 17 },
+  codeInput: { textAlign: "center" as const, fontSize: 24, fontWeight: "600" as const, letterSpacing: 10 },
+  passwordField: { minHeight: 52, borderRadius: 12, flexDirection: "row" as const, alignItems: "center" as const },
+  passwordInput: { flex: 1, minHeight: 50, paddingHorizontal: 14, fontSize: 17 },
+  visibilityButton: { width: 48, height: 48, alignItems: "center" as const, justifyContent: "center" as const },
+  loginRow: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "center" as const, flexWrap: "wrap" as const, gap: 8 },
+  rememberRow: { minHeight: 44, flexDirection: "row" as const, alignItems: "center" as const, gap: 10, paddingEnd: 12 },
+  checkbox: { width: 22, height: 22, borderWidth: 2, borderRadius: 6, alignItems: "center" as const, justifyContent: "center" as const },
+  checkmark: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" as const },
+  linkButton: { minHeight: 44, justifyContent: "center" as const, paddingStart: 12 },
+  note: { paddingHorizontal: 4, fontWeight: "400" as const },
+  // v3 bottom actions: 52pt primary, secondary below (the keyboard lifts them).
+  actions: { width: "100%" as const, maxWidth: 520, alignSelf: "center" as const, gap: 10, paddingTop: 12, paddingBottom: 10 },
 };

@@ -133,14 +133,16 @@ All routes are plain `Stack` screens; there is no Expo Router `Tabs` layout.
 | ----- | ---- | ---- | ----- |
 | `/` | `index.tsx` | public | Home: `HomeFeed` (brand header, featured match, ads banner, My Tickets shortcut, upcoming) |
 | `/matches` | `matches.tsx` | public | `MatchesList` (tab header, date strip, filters, date-grouped scheduled list) |
-| `/competitions` | `competitions.tsx` | public | Navigation shell (honest "on the way" state); full screen in a later batch |
+| `/competitions` | `competitions.tsx` | public | Competition cards, standings, competition matches (`competitionsService`); matches open `/match/[id]` |
 | `/tournament` | `tournament.tsx` | public | Legacy route: `<Redirect href="/competitions" />` (kept for old links/allowlists) |
 | `/match/[id]` | `match/[id].tsx` | public view; auth to add | Match hero, zones, stadium map, GA quantities, seat selection, one confirmation action |
-| `/tickets` | `tickets.tsx` | `withAuthRequired` | Portal matches → tickets, QR, order/payment details, PDF |
-| `/profile` | `profile.tsx` | `withAuthRequired` | Account hub, contact links |
-| `/edit-profile` | `edit-profile.tsx` | `withAuthRequired` | Profile from `/auth/me`, avatar upload/remove, change password |
+| `/tickets` | `tickets.tsx` | `withAuthRequired` (tab title) | v3 My Tickets: All/Upcoming/Past portal matches → flip tickets with the backend QR |
+| `/profile` | `profile.tsx` | public (own signed-out state) | v3 account hub: avatar (only editable field), read-only details, change password, settings/legal/contact, logout |
+| `/edit-profile` | `edit-profile.tsx` | public | Legacy redirect → `/profile` |
 | `/settings` | `settings.tsx` | `withAuthRequired` | Theme, notification permission, account deletion |
-| `/about` | `about.tsx` | `withAuthRequired` | Legal documents from API |
+| `/about` | `about.tsx` | public | Legacy redirect → `/legal` |
+| `/legal`, `/legal/privacy`, `/legal/terms` | `legal/*.tsx` | public | Legal list and the backend documents (`legalService`) |
+| `/contact` | `contact.tsx` | public | Contact LFA (`OFFICIAL_CONTACTS` only) |
 | `/auth` | `auth.tsx` | public | Login, register, OTP, phone completion, password recovery |
 | `/cart` | `cart.tsx` | `withAuthRequired` | Full cart review (a `CartSheet` bottom sheet also exists, opened from the header) |
 | `/checkout/ticket-holders` | `checkout/ticket-holders.tsx` | `withAuthRequired` | Step-by-step holder names |
@@ -691,20 +693,67 @@ entry is always CyberSource's own form.
 
 - List: `profileService.matches(filter)` with filter `all | upcoming | past`
   (`GET /portal/matches`), validated by `isPortalMatch`.
-- Detail: `profileService.tickets(matchId)`; tickets lacking `qr_image` are
-  enriched via `profileService.ticket(code)`.
-- **QR**: rendered only from backend `qr_image` values that start with
-  `data:image/`; otherwise "QR unavailable". The client never generates QR codes.
-- Ticket status is the backend `status` string (styling currently keys off
-  `valid` / `expired`); `checked_in_at` is also present in the type.
-- Payment details: `profileService.order(orderNumber)` on demand, cached in
-  screen state.
-- PDF: `downloadProfileOrderPdf` → `profileService.orderPdf` (binary fetch) →
-  native: write to cache dir and open the share sheet; web: Blob download.
+- Detail: `profileService.tickets(matchId)`. A listed ticket's `qr_image` may
+  be absent, null or empty (the ticket stays valid); `withBackendQrs` then
+  takes **only** `qr_image` from `profileService.ticket(code)`
+  (`GET /portal/tickets/{ticket_code}`), when it passes `ticketQrSource`. A
+  failed detail request shows the detail error / retry state.
+- **QR** (`ticketQrSource`): rendered only from backend `qr_image` values that
+  are bounded raster base64 data URIs (`data:image/png|jpeg|webp;base64,…`,
+  ≤ 512,000 characters — the allowlist the LFA web client applies to the same
+  API); otherwise "QR unavailable". SVG, URLs, storage paths and other schemes
+  are rejected. The client never generates QR codes.
+- **Status** (`ticketVisualState`, `src/lib/ticketPresentation.ts`): the
+  backend `status` decides. `valid` (→ used when `checked_in_at` is set),
+  `used`/`checked_in`, `expired` and `cancelled`/`canceled` map to the v3
+  states; any other value is shown with its own label and no invented
+  meaning (a check-in timestamp never overrides an unknown status). Only
+  `valid` presents the QR as scannable; used/expired/cancelled dim and stamp
+  it. Upcoming/Past come from the portal filter and `is_upcoming`, never the
+  kickoff date.
+- **Presentation (v3):** stub cards grouped Upcoming / Past, and a modal ticket
+  viewer (pager of flip tickets: front = backend facts, back = QR). Gate,
+  block, price and category are not shown (no such fields).
+- Payment details / PDF: the v3 screen has no entry point (the previous UI had
+  already commented them out). `profileService.order`, `orderPdf` and
+  `downloadProfileOrderPdf` are unchanged for a future caller.
 - Staleness: `createRequestAuthority` per list/detail plus the user-scoped cache
   generation.
 
 ---
+
+## 11a. Competitions and account screens
+
+- **Competitions** (`src/services/competitions.ts` over `src/lib/competitions.ts`):
+  list, standings and matches; request authorities per list and per selected
+  competition. Standings states: a successful `standings: []` → "No
+  standings"; a 404 → "Standings unavailable" with retry (never "No
+  standings": the 404 is ambiguous, see `docs/API_INTEGRATION.md`); a
+  malformed success (no `standings` array, or any incomplete row), server or
+  network failure → error with retry. Every
+  match opens `/match/[id]`, whose backend status decides purchase vs
+  live/result. No second Match Details.
+- **Profile**: data from `/auth/me` (cached `auth.user` until it loads).
+  Name, email and phone are read-only (no update API); "Verified" and "Member
+  since" appear only from `email_verified_at` / `created_at`. The avatar is
+  the only mutation (`useProfilePhoto`: gallery/camera permissions, upload,
+  remove, then `AuthContext.updateUser`). **Result ownership**
+  (`runOwnedAvatarMutation`, `src/lib/avatarMutationOwnership.ts`): the
+  authentication snapshot is captured before the request, and the result is
+  published (`updateUser` + persisted user) only if that generation is still
+  current; logout, login, restoration and invalidation replace it, so a result
+  started by one account is dropped, never published into the next. Logout:
+  the confirmation, then `auth.logout()` (session cleanup unchanged).
+- **Settings**: push state is the live OS permission; the only action opens
+  the phone's settings. Both exist only on iOS / Android builds with a push
+  runtime (`pushSettingsSupported`); on web (and Expo Go) the card says push
+  is not available and shows no action. Appearance = `ThemeProvider` mode. Language is shown,
+  not switchable (English is the only complete catalog). Account deletion =
+  `AccountDeletionModal`.
+- **Auth** (`/auth`): v3 presentation over the unchanged production flows:
+  login (+ phone completion), register → email OTP (+ resend), forgot password
+  → email → OTP → new password. Change password stays in `ChangePassword`
+  (sheet, from the Profile menu). No startup authentication.
 
 ## 12. Push notifications and device registration
 

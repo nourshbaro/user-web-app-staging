@@ -7,3 +7,4 @@ export { StatePanel, type StatePanelVariant } from "./StatePanel";
 export { StatusBadge } from "./StatusBadge";
 export { TicketCardSection, TicketCardShell, TicketPerforation, TicketQrFrame } from "./TicketCard";
 export { TransactionBar } from "./TransactionBar";
+export { SegmentedControl } from "./SegmentedControl";

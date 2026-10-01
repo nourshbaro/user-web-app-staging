@@ -15,10 +15,23 @@ export const MATCH_STAT_KEYS: readonly MatchStatKey[] = ["possession", "shots", 
 
 export type MatchSide = "home" | "away";
 
+/**
+ * The backend event types the app gives meaning to — exact strings only
+ * (admin event contract `MATCH_EVENT_TYPES`; staging `/matches/single/17`).
+ * Any other type is a neutral event: never inferred from players or text.
+ */
+export type TimelineKind = "goal" | "yellow_card" | "red_card" | "substitution" | "other";
+
+const KNOWN_EVENT_KINDS: readonly TimelineKind[] = ["goal", "yellow_card", "red_card", "substitution"];
+
+export function timelineKind(type: unknown): TimelineKind {
+  return KNOWN_EVENT_KINDS.find((kind) => kind === type) ?? "other";
+}
+
 export type TimelineRow = {
   key: string;
-  /** Only "goal" carries meaning; any other backend type is shown as a neutral event. */
-  kind: "goal" | "other";
+  /** The backend `type` when it is a known kind; anything else is "other" (neutral). */
+  kind: TimelineKind;
   /** The team the backend attached, matched to home/away by id; null when it matches neither. */
   side: MatchSide | null;
   /** "1'", "45+2'", or null when the backend sent no minute. */
@@ -26,6 +39,9 @@ export type TimelineRow = {
   player: string | null;
   shirtNumber: number | null;
   teamName: string | null;
+  /** Substitutions only, from `player_in` / `player_out`; null when not supplied. */
+  playerIn: string | null;
+  playerOut: string | null;
 };
 
 export type StatRow = {
@@ -117,18 +133,22 @@ export function timelineRows(match: ApiMatchDetail): TimelineRow[] {
     const teamId = event.team?.id;
     const side: MatchSide | null =
       teamId !== undefined && teamId === homeId ? "home" : teamId !== undefined && teamId === awayId ? "away" : null;
+    const kind = timelineKind(event.type);
+    const substitution = kind === "substitution";
     return {
       order: index,
       minute: finite(event.minute),
       extra: finite(event.extra_minute) ?? 0,
       row: {
         key: `${event.id ?? "event"}-${index}`,
-        kind: event.type === "goal" ? ("goal" as const) : ("other" as const),
+        kind,
         side,
         minuteLabel: formatEventMinute(event.minute, event.extra_minute),
         player: text(event.player?.name),
         shirtNumber: finite(event.player?.shirt_number),
         teamName: text(event.team?.name),
+        playerIn: substitution ? text(event.player_in?.name) : null,
+        playerOut: substitution ? text(event.player_out?.name) : null,
       },
     };
   });

@@ -142,8 +142,14 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   superseded capture contexts.
 
 ### 2.9 Tickets, QR, orders, PDF
-- QR is rendered only from backend `qr_image` values beginning with
-  `data:image/`; the client never generates or encodes QR data.
+- QR is rendered only from backend `qr_image` values that are bounded raster
+  base64 data URIs (`data:image/png|jpeg|webp;base64,…`, ≤ 512,000 chars;
+  `ticketQrSource`). SVG, URLs, storage paths and other schemes are rejected;
+  the client never generates or encodes QR data, and never derives it from
+  `ticket_code`.
+- Avatar upload / removal results are published into `AuthContext` only while
+  the authentication generation that started them is current
+  (`runOwnedAvatarMutation`), so one account's result never reaches another.
 - Portal ticket and match responses are shape-validated before use.
 - PDF bytes are fetched with the live token, written to the app cache
   directory, and handed to the OS share sheet; results are dropped if the

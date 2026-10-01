@@ -1,42 +1,38 @@
+import { AppText } from "@/components/foundation";
 import { Button, useTheme } from "@/components/ui";
+import { useI18n } from "@/i18n/I18nProvider";
 import { getSafeAuthReturnRoute } from "@/lib/authReturnRoute";
 import { router, usePathname } from "expo-router";
-import { SymbolView } from "expo-symbols";
-import { StyleSheet, Text, View } from "react-native";
+import { Image, View } from "react-native";
 
+/**
+ * Signed-out card (v3 sign-in language: LFA mark, display title, one action).
+ * It only opens the existing `/auth` screen, returning to this route through
+ * the validated return route; it creates no session and holds no data.
+ */
 export function AuthRequired() {
   const theme = useTheme();
+  const i18n = useI18n();
   const pathname = usePathname();
   const returnTo = getSafeAuthReturnRoute(pathname) ?? "/";
   return (
-    <View style={styles.container}>
-      <View
-        style={[
-          styles.card,
-          { backgroundColor: theme.colors.panel, borderColor: theme.colors.line },
-        ]}
-      >
-        <View style={[styles.icon, { backgroundColor: theme.colors.panelSoft }]}>
-          <SymbolView
-            name={{
-              ios: "person.crop.circle.badge.exclamationmark",
-              android: "lock_person",
-              web: "lock_person",
-            }}
-            size={32}
-            tintColor={theme.colors.primary}
-            fallback={<Text style={{ color: theme.colors.primary }}>LFA</Text>}
-          />
-        </View>
-        <Text style={[styles.title, { color: theme.colors.ink }]}>
-          Sign in required
-        </Text>
-        <Text style={[styles.detail, { color: theme.colors.muted }]}>
-          Sign in to access your LFA account and tickets.
-        </Text>
-        <View style={styles.action}>
+    <View style={local.container}>
+      <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
+        <Image
+          source={require("../../assets/images/lfa-logo.png")}
+          style={local.logo}
+          resizeMode="contain"
+          accessible={false}
+        />
+        <AppText variant="displayNumeral" align="center" accessibilityRole="header" style={local.title}>
+          {i18n.t("auth.required.title")}
+        </AppText>
+        <AppText variant="body" tone="muted" align="center" style={local.detail}>
+          {i18n.t("auth.required.message")}
+        </AppText>
+        <View style={local.action}>
           <Button
-            title="Sign In"
+            title={i18n.t("auth.required.action")}
             onPress={() =>
               router.push({ pathname: "/auth", params: { returnTo } })
             }
@@ -47,32 +43,18 @@ export function AuthRequired() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 16,
-  },
+const local = {
+  container: { width: "100%" as const, alignItems: "center" as const, paddingVertical: 16 },
   card: {
-    width: "100%",
+    width: "100%" as const,
     maxWidth: 480,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 22,
-    alignItems: "center",
-    gap: 9,
-  },
-  icon: {
-    width: 64,
-    height: 64,
     borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
+    padding: 22,
+    alignItems: "center" as const,
+    gap: 8,
   },
-  title: { fontSize: 20, fontWeight: "900" },
-  detail: { maxWidth: 310, fontSize: 14, lineHeight: 20, textAlign: "center" },
-  action: { minWidth: 180, marginTop: 8 },
-});
+  logo: { width: 64, height: 64, marginBottom: 6 },
+  title: { textTransform: "uppercase" as const },
+  detail: { maxWidth: 320 },
+  action: { alignSelf: "stretch" as const, marginTop: 10 },
+};

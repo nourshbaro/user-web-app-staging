@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-09-30 · v3 Redesign Batches 4–6 (implementation checkpoint, uncommitted on `20230ad`)
+**As of:** 2026-09-30 · v3 Redesign Batches 7–9 (implementation checkpoint, uncommitted on `2a5b565`)
 
 ---
 
@@ -19,19 +19,91 @@
 - ✅ v3 Batches 1–3 — Foundation + navigation, Splash/onboarding/
   notifications, Home + Matches (`fb60043`, `20230ad`). Design reference:
   LFA Screen v3 (`docs/WORKFLOW.md` §5).
-- ✅ **v3 Batches 4–6 — Match Details + ticket selection, Cart + ticket
-  holders, Checkout + payment results: implemented, pending independent
-  review.** Uncommitted on `20230ad`.
-- ✅ **Startup corrections + single-match contract** (same checkpoint):
-  every-launch splash, pre-prompt no longer skipped (first run ends at Home;
-  no startup auth step), real competition/matchday/score in the Match hero.
-- ✅ **Codex corrections (NEEDS CORRECTION → addressed, pending re-review):**
-  scheduled-only purchasing with a pre-commit status re-read, the v3
-  live/result view from the real single-match data, and the Checkout Back
-  guard.
-- ▶ **Next:** Codex re-review of Batches 4–6 with these corrections.
+- ✅ v3 Batches 4–6 — Match Details + ticket selection, Cart + ticket
+  holders, Checkout + payment results, with the startup corrections and the
+  Codex corrections (`2a5b565`).
+- ✅ **v3 Batches 7–9 — My Tickets, Competitions, Profile / Settings /
+  Legal / Contact / Auth: implemented, pending independent review.**
+  Uncommitted on `2a5b565`.
+- ✅ **Codex corrections for Batches 7–9 (same checkpoint):** avatar result
+  ownership, list QR recovery and representation, standings 404 / malformed
+  semantics, web push settings. Pending re-review.
+- ✅ Match timeline event kinds (goal / yellow_card / red_card / substitution)
+  from the confirmed contract (same checkpoint).
+- ▶ **Next:** Codex re-review of Batches 7–9, then Batch 10.
 
-## Codex corrections (2026-09-30)
+## Batches 7–9 checkpoint (v3)
+
+- **My Tickets:** All / Upcoming / Past use the portal filter
+  (`profileService.matches(filter)`); stub cards grouped by `is_upcoming`; a
+  modal pager of flip tickets. Front: backend facts only. Back: the backend
+  `qr_image` (bounded raster data URI only) in a non-mirroring frame. A
+  listed ticket without a usable QR takes only `qr_image` from its detail
+  endpoint (`withBackendQrs`). Status mapping: `ticketVisualState`
+  (`docs/ARCHITECTURE.md` §11).
+- **Competitions:** `competitionsService` (list / standings / matches);
+  a standings table (W/D/L hidden below 360 px); "No standings" only for a
+  successful `standings: []`; "Standings unavailable" (retry) for a 404;
+  error (retry) for malformed / server / network failures; competition
+  matches open `/match/[id]`.
+- **Profile:** `/auth/me` facts; name, email and phone are read-only; the
+  avatar sheet is the only mutation (`useProfilePhoto`; a result is
+  published only while the session that started it is current); the menu holds
+  Change password, Settings, Legal and Contact; logout is unchanged.
+  `/edit-profile` → `/profile`.
+- **Settings:** live push permission plus "Open phone settings" (iOS /
+  Android builds only; web shows "Not available" with no action); appearance;
+  language shown (English only, no Arabic option); account deletion.
+- **Auth:** v3 presentation over the unchanged login / register / OTP /
+  forgot-password logic; `AuthRequired` returns through
+  `getSafeAuthReturnRoute`. No startup auth.
+- **Legal / Contact:** public `/legal`, `/legal/privacy`, `/legal/terms`
+  (backend text via `legalService`), and `/contact` (`OFFICIAL_CONTACTS`).
+  `/about` → `/legal`. Legal was previously auth-gated through About.
+- **Documented discrepancies (production wins):**
+  - no Gate / Block / price / category on tickets (no such fields);
+  - no ticket search;
+  - the Payment info / PDF entry points are not shown (they were already
+    unreachable, and the modules are kept);
+  - Change password stays a sheet, with no "Forgot current password" link;
+  - OTP is one field, not six boxes;
+  - auth copy is still inline English;
+  - Competitions adds a matches section (not in v3);
+  - v3's mock legal copy is not used.
+- **Backend findings (staging):**
+  - standings 404 is ambiguous: the cup (2), unknown id 999, a non-numeric
+    id and wrong routes all return the same `404 "Endpoint not found."`
+    (2026-10-01), so it is shown as "Standings unavailable", not "No
+    standings". Backend dependency: a machine-readable "no table" signal.
+  - `/competitions/1/standings` → `[]`; competition 3 is now a league
+    with rows (it was a cup on 2026-09-30);
+  - `qr_image` representation beyond raster data URIs is unconfirmed;
+  - `/competitions/1/matches` lists match 7 as `scheduled`, while
+    `/matches/single/7` says `completed`. Match Details decides, so
+    purchasing stays gated.
+  - The legal endpoints return placeholder text ("test privacy",
+    "test term of use"). This is a content dependency, not an app issue.
+- **Now unused, not deleted:** `AppSwitch`, `Collapsible`,
+  `MatchTicketsHeader`, `ProfileDetailModal`, and possibly
+  `SheetDismissHandle`. `MainHeader` is now used only by the auth gate.
+
+## Validation (Batches 7–9 working tree)
+
+| Check | Result |
+| ----- | ------ |
+| `npx tsc --noEmit` | PASS |
+| `npx expo lint` | 0 errors, 4 existing warnings (`MatchSummaryBlock` ×3, `services/auth.ts`) |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | **815/815 passing** (after the Codex corrections) |
+| `git diff --check 2a5b565` | clean (untracked files scanned separately: clean) |
+| Web / Android / iOS export | PASS (rerun after the corrections) |
+| Web runtime, signed out (headless Chrome, staging, 390 px) | PASS (before the Codex corrections): Competitions light and dark (real data, match → `/match/14`); My Tickets / Settings gate; Profile signed-out state; Auth login → register → forgot (no API calls); Legal list and documents; Contact light and dark; `/about` and `/edit-profile` redirects |
+| Signed-in My Tickets (flip, QR, statuses), Profile avatar, Settings, logout, register/OTP/forgot submission | NOT VERIFIED (no staging test account in this environment) |
+| Codex corrections at runtime (avatar race, list-QR recovery, "Standings unavailable", web Settings card) | NOT VERIFIED at runtime; covered by deterministic tests (the avatar race against the real authentication authority) |
+| Native runtime for Batches 7–9 | NOT VERIFIED (no development build or device) |
+
+## Batches 4–6 record
+
+### Codex corrections (2026-09-30)
 
 - **Status gating:** `scheduled` → purchase; `live` / `completed` / other →
   `MatchInfoView` (no purchase controls even with zones). The commit
@@ -54,7 +126,7 @@
   real kickoff; signed-in commit; Checkout Back on a device during a real
   BLUE handoff.
 
-## Startup corrections (after runtime observations)
+### Startup corrections (after runtime observations)
 
 - **Launch splash:** the v3 branded splash is now the every-launch
   presentation (`LaunchSplash`, in memory, never persisted), not a
@@ -74,7 +146,7 @@
   first-run sequence, the native permission prompt from "Turn on", and the
   splash on a cold native launch.
 
-## Batches 4–6 checkpoint (v3)
+### Batches 4–6 checkpoint (v3)
 
 - **Match Details:** night hero, content sheet, "Choose where to sit" radio
   list; map collapsed by default (Show/Hide is presentation only); GA stepper
@@ -109,7 +181,7 @@
 
 ---
 
-## Validation (Batches 4–6 working tree)
+### Validation (Batches 4–6, at that checkpoint)
 
 | Check | Result |
 | ----- | ------ |
