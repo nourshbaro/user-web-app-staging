@@ -75,8 +75,8 @@ export function useAlertDialog() {
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(15,23,42,0.58)", padding: 20, alignItems: "center", justifyContent: "center" },
   dialog: { width: "100%", maxWidth: 440, borderRadius: 22, borderWidth: 1, padding: 20, gap: 12 },
-  close: { position: "absolute", right: 8, top: 8, width: 44, height: 44, alignItems: "center", justifyContent: "center", zIndex: 1 },
-  title: { fontSize: 20, lineHeight: 26, fontWeight: "900", paddingRight: 32 },
+  close: { position: "absolute", end: 8, top: 8, width: 44, height: 44, alignItems: "center", justifyContent: "center", zIndex: 1 },
+  title: { fontSize: 20, lineHeight: 26, fontWeight: "900", paddingEnd: 32 },
   message: { fontSize: 14, lineHeight: 21 },
   actions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 6 },
   button: { minWidth: 100, minHeight: 46, borderRadius: 14, borderWidth: 1, paddingHorizontal: 16, alignItems: "center", justifyContent: "center", flexShrink: 1 },

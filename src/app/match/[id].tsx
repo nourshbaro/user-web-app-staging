@@ -1881,10 +1881,7 @@ function createMatchStyles(colors: ThemeColors) {
       flexDirection: "row" as const,
       alignItems: "center" as const,
       gap: 4,
-      shadowColor: colors.textStrong,
-      shadowOpacity: 0.08,
-      shadowRadius: 5,
-      shadowOffset: { width: 0, height: 2 },
+      boxShadow: `0px 2px 5px ${colors.shadow}`,
     },
     zoneShape: {
       position: "absolute" as const,

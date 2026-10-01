@@ -173,7 +173,10 @@ to `/competitions`, and both stay in the auth-return and ad-link allowlists.
 **Auth gating** is per screen: `withAuthRequired` (`src/components/withAuthRequired.tsx`)
 renders `Loading` until `auth.isReady`, an `AuthRequired` prompt when signed
 out, and otherwise mounts the screen with `key={auth.userCacheKey}` so screen
-state resets on identity change. `AuthRequired` passes a `returnTo` limited by
+state resets on identity change. Signed out, a primary tab keeps its
+`TabHeader`; every other gated screen (cart, settings, checkout and payment
+routes) shows the `FlowHeader` with Back (history, else Home), so a
+signed-out deep link is never a dead end. `AuthRequired` passes a `returnTo` limited by
 the allowlist in `src/lib/authReturnRoute.ts`.
 
 ---
@@ -772,8 +775,11 @@ entry is always CyberSource's own form.
 - Notification taps with a `match_id` push `/match/[id]`
   (`src/lib/notificationNavigation.ts`). No other payload routing exists.
   `_layout.tsx` reads them through `getInitialNotificationData` /
-  `subscribeToNotificationResponses`.
-- Native only; web skips registration.
+  `subscribeToNotificationResponses`. On web `getInitialNotificationData`
+  returns `null` (a push never launches the web app, and the launch response
+  is not implemented there; reading it threw on every web start).
+- Native only; web skips registration. Settings shows push as "Not
+  available" on web and in Expo Go (`pushSettingsSupported`).
 - **Expo Go is not a push environment.** `src/lib/notifications.ts` is the
   only runtime importer of `expo-notifications`, loaded with a conditional
   `require` guarded by `pushRuntimeSupported = !isRunningInExpoGo()`:
@@ -878,7 +884,19 @@ retry, so recovery requires an app restart.
   `isDesktop` (≥1024), `contentWidth` (≤1180). Safe-area insets are applied in
   `Screen`, headers, and payment screens.
 - Reduced motion: `useReducedMotion()` gates the tab entrance animation and
-  other decorative motion.
+  other decorative motion: entrances, the ticket flip (instant face swap),
+  sliding segment thumbs, the live-dot blink, skeleton shimmer, and the
+  slide-in of every modal sheet (`BottomSheetModal`, `ProfilePhotoSheet`,
+  the ticket viewer, the phone-country picker), which fades in place instead.
+- RTL readiness (English only today): layouts use start/end props;
+  forward/back and disclosure arrows use `DirectionalChevron` (including the
+  legacy `AppHeader` used by the payment screens and the ticket pager);
+  stadium, seat and QR geometry sit in `PhysicalLayout`; Arabic text falls
+  back to the platform font for both type roles (`fontFamilyFor`).
+- Touch targets: controls drawn smaller than 44pt to match v3 (segments,
+  "Show map", Filters, the Home avatar) reach ≥ 44pt on native through
+  `hitSlop`; react-native-web ignores `hitSlop`, so their web pointer
+  target is the drawn size (34–40px).
 - Accessibility strengths: accessible seat and filter labels/states
   (`src/lib/seatAccessibility.ts`, `src/lib/matchFilterAccessibility.ts`,
   `MatchesList`), `announceForAccessibility` on payment results, a live region
@@ -897,10 +915,11 @@ retry, so recovery requires an app restart.
   shared primitives use `aria-*` props (`aria-selected`, `aria-disabled`,
   `aria-busy`), which React Native also supports natively.
 - **Remaining legacy concerns:**
-  - Existing screens that use `accessibilityState` (e.g. ticket filters,
-    `MatchesList`) do not expose that state on web.
-  - Older screens still use the legacy `muted` color.
-  - Both are migrated as each screen is redesigned.
+  - Every `accessibilityState` selected/checked/disabled/expanded value now
+    has its `aria-*` twin (Batch 10 audit).
+  - The legacy `muted` colour remains in a few non-redesigned surfaces
+    (phone-number field, password sheet, toasts, dialogs, CyberSource
+    loading, maintenance screen); redesigned screens use `textMuted`.
 
 ---
 

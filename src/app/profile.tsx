@@ -2,7 +2,7 @@ import { AuthRequired } from "@/components/AuthRequired";
 import { ChangePassword } from "@/components/ChangePassword";
 import { ProfilePhotoSheet } from "@/components/ProfilePhotoSheet";
 import { TabHeader } from "@/components/TabHeader";
-import { AppText } from "@/components/foundation";
+import { AppText, DirectionalChevron } from "@/components/foundation";
 import { Loading, Screen, useResponsive, useTheme } from "@/components/ui";
 import { useAlertDialog } from "@/context/AlertDialogContext";
 import { useAuth } from "@/context/AuthContext";
@@ -225,7 +225,7 @@ function MenuRow({ icon, label, href, first = false }: { icon: { ios: string; an
         <SymbolView name={icon as never} size={17} tintColor={theme.colors.textStrong} fallback={<View />} />
       </View>
       <AppText variant="body" style={local.menuLabel}>{label}</AppText>
-      <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={16} tintColor={theme.colors.textMuted} fallback={<View />} />
+      <DirectionalChevron kind="forward" size={16} color={theme.colors.textMuted} />
     </Pressable>
   );
 }

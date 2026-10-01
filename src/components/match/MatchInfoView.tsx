@@ -176,6 +176,8 @@ export function MatchInfoView({
                   accessibilityRole="tab"
                   accessibilityState={{ selected }}
                   aria-selected={selected}
+                  // The 40pt v3 segment reaches 46pt through the track padding.
+                  hitSlop={{ top: 3, bottom: 3 }}
                   // Both states define boxShadow: a processed style key is never dropped between renders.
                   style={[
                     local.segment,

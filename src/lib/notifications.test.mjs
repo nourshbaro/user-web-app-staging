@@ -17,6 +17,17 @@ test("FCM token-refresh subscription is native-only so web startup never touches
   assert.match(subscribe, /return \(\) => \{\};/);
 });
 
+test("the launch notification is never read on web (unsupported there; it threw on every web start)", () => {
+  const initial = source.slice(
+    source.indexOf("export async function getInitialNotificationData("),
+    source.indexOf("export function subscribeToNotificationResponses("),
+  );
+  const guardIndex = initial.indexOf('if (!Notifications || Platform.OS === "web") return null;');
+  const readIndex = initial.indexOf("getLastNotificationResponseAsync()");
+  assert.ok(guardIndex >= 0, "web guard is missing");
+  assert.ok(readIndex > guardIndex, "the launch response is read only after the web guard");
+});
+
 test("expo-notifications is never evaluated in Expo Go, and nothing else imports it at runtime", async () => {
   // Android Expo Go (SDK 53+) throws while importing expo-notifications, which
   // made every route importing AuthContext/_layout fail to evaluate.

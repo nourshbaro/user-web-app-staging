@@ -53,6 +53,12 @@ test("backend-provided errors prefer message, error, then validation text", () =
   );
 });
 
+test("a backend error without a message never shows the transport text", () => {
+  assert.equal(backendProvidedError(new ApiError("Request failed with 500", 500, null), "fallback"), "fallback");
+  assert.equal(backendProvidedError(new ApiError("Request failed with 502", 502, { message: "  " }), "fallback"), "fallback");
+  assert.equal(userFacingError(new ApiError("Request failed with 500", 500, {}), "fallback"), "fallback");
+});
+
 test("PDF response extraction ignores blanks and supports validation text", () => {
   assert.equal(
     backendResponseMessage({ message: "", error: "PDF authorization failed" }),

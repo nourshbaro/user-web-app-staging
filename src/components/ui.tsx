@@ -439,22 +439,13 @@ function createStyles(palette: typeof lightColors) {
       borderColor: isDark ? palette.line : "#E3E7EE",
       padding: 16,
       gap: 10,
+      // `boxShadow` renders on iOS, Android and web; the legacy shadow*/elevation
+      // pair it duplicated drew a second shadow on native.
       boxShadow: [{ offsetX: 0, offsetY: 4, blurRadius: 12, spreadDistance: 0, color: isDark ? "rgba(0,0,0,0.34)" : "rgba(15,23,42,0.14)" }],
-      shadowColor: isDark ? "#000000" : "#0F172A",
-      shadowOpacity: isDark ? 0.28 : 0.12,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 3,
     },
     title: { color: palette.ink, fontSize: 24, fontWeight: "900", lineHeight: 30 },
-    h2: { color: palette.ink, fontSize: 18, fontWeight: "800" },
     text: { color: palette.ink, fontSize: 15 },
     muted: { color: palette.muted, fontSize: 13, lineHeight: 19 },
-    row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-    chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-    chip: { borderWidth: 1, borderColor: palette.line, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: isDark ? "rgba(17,24,39,0.8)" : "rgba(255,255,255,0.8)" },
-    chipActive: { borderColor: palette.primary, backgroundColor: "rgba(200,16,46,0.08)" },
-    chipText: { color: palette.ink, fontSize: 13, fontWeight: "600" },
     button: {
       minHeight: size.controlHeight,
       // v3 `--btnR`: 14 on iOS, 20 on Android.
@@ -474,15 +465,11 @@ function createStyles(palette: typeof lightColors) {
     // Color is applied per state in <Button>; text may wrap for long (e.g. Arabic) labels.
     // Family/weight come from `fontStyleFor` in <Button>.
     buttonText: { color: palette.onActionPrimary, fontSize: typography.action.fontSize, lineHeight: typography.action.lineHeight, textAlign: "center", flexShrink: 1 },
-    buttonSecondaryText: { color: palette.onActionSecondary },
     inputWrap: { gap: 6 },
     label: { color: palette.ink, fontSize: 13, fontWeight: "700" },
     input: { minHeight: size.controlHeight, borderRadius: radius.md, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.panel, color: palette.ink, paddingHorizontal: 12, fontSize: 15 },
     emptyTitle: { color: palette.ink, fontSize: 17, fontWeight: "700" },
     loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.bg },
-    sectionLabel: { color: palette.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.8 },
-    badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: "rgba(200,16,46,0.09)" },
-    badgeText: { color: palette.primary, fontSize: 11, fontWeight: "800", textTransform: "uppercase" },
     // Anchored to the bottom edge; the bar pads itself for the home indicator.
     bottomNav: {
       position: "absolute",
@@ -518,27 +505,6 @@ function createStyles(palette: typeof lightColors) {
       justifyContent: "center",
       position: "relative",
     },
-    bottomNavBadge: {
-      position: "absolute",
-      top: -4,
-      right: 4,
-      minWidth: 15,
-      height: 15,
-      borderRadius: 8,
-      paddingHorizontal: 4,
-      borderWidth: 2,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    bottomNavBadgeText: {
-      color: "#FFFFFF",
-      fontSize: 8,
-      lineHeight: 9,
-      fontWeight: "900",
-    },
-    bottomNavItemActive: {
-      backgroundColor: isDark ? "rgba(232,17,45,0.14)" : "rgba(200,16,46,0.08)",
-    },
     bottomNavIndicator: {
       position: "absolute",
       top: 0,
@@ -553,34 +519,6 @@ function createStyles(palette: typeof lightColors) {
     },
     bottomNavFallback: {
       fontSize: 14,
-      fontWeight: "900",
-    },
-    reservationPill: {
-      position: "absolute",
-      right: 22,
-      bottom: 82,
-      minHeight: 34,
-      borderRadius: 17,
-      borderWidth: 1,
-      paddingHorizontal: 12,
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      shadowColor: "#000000",
-      shadowOpacity: isDark ? 0.24 : 0.09,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 5,
-    },
-    reservationLabel: {
-      fontSize: 11,
-      lineHeight: 14,
-      fontWeight: "900",
-      textTransform: "uppercase",
-    },
-    reservationTime: {
-      fontSize: 13,
-      lineHeight: 16,
       fontWeight: "900",
     },
   });

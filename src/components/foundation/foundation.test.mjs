@@ -115,3 +115,24 @@ test("the app waits for the locale before rendering, above the theme", () => {
   assert.match(layout, /<I18nProvider>\s*<ThemeProvider>/);
   assert.match(layout, /const isReady = auth\.isReady && i18n\.isReady;/);
 });
+
+test("reading-direction arrows go through DirectionalChevron, never a fixed left/right glyph", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const walk = async (dir) => {
+    const files = [];
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const url = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, dir);
+      if (entry.isDirectory()) files.push(...(await walk(url)));
+      else if (entry.name.endsWith(".tsx")) files.push(url);
+    }
+    return files;
+  };
+  const offenders = [];
+  for (const url of await walk(new URL("../../", import.meta.url))) {
+    if (url.pathname.endsWith("/foundation/direction.tsx")) continue;
+    const source = await readFile(url, "utf8");
+    // A physical chevron does not mirror in RTL; forward/back must use DirectionalChevron.
+    if (/"chevron\.(left|right)"|"chevron_(left|right)"/.test(source)) offenders.push(url.pathname.split("/src/")[1]);
+  }
+  assert.deepEqual(offenders, [], "use DirectionalChevron for forward/back and disclosure arrows");
+});

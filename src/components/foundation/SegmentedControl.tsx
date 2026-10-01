@@ -76,6 +76,8 @@ export function SegmentedControl<K extends string>({
             accessibilityLabel={option.label}
             accessibilityState={role === "tab" ? { selected } : { checked: selected }}
             {...(role === "tab" ? { "aria-selected": selected } : { "aria-checked": selected })}
+            // The 38pt v3 segment reaches the 44pt target through the track padding.
+            hitSlop={{ top: 3, bottom: 3 }}
             style={local.segment}
           >
             <Text

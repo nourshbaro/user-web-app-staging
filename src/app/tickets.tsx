@@ -2,6 +2,7 @@ import { FlowHeader } from "@/components/FlowHeader";
 import { TabHeader } from "@/components/TabHeader";
 import {
   AppText,
+  DirectionalChevron,
   PhysicalLayout,
   SegmentedControl,
   SkeletonBlock,
@@ -321,6 +322,7 @@ function TicketViewer({
   onClose: () => void;
 }) {
   const theme = useTheme();
+  const reducedMotion = useReducedMotion();
   const i18n = useI18n();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -336,7 +338,7 @@ function TicketViewer({
   };
 
   return (
-    <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+    <Modal visible animationType={reducedMotion ? "fade" : "slide"} presentationStyle="fullScreen" onRequestClose={onClose}>
       <View style={[local.viewer, { backgroundColor: theme.colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <View style={local.viewerHeader}>
           <View style={local.viewerHeaderBack}>
@@ -430,14 +432,8 @@ function PagerButton({ label, kind, disabled, onPress }: { label: string; kind: 
       hitSlop={4}
       style={[local.pagerButton, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard, opacity: disabled ? 0.35 : 1 }]}
     >
-      <SymbolView
-        name={(kind === "back"
-          ? { ios: "chevron.left", android: "chevron_left", web: "chevron_left" }
-          : { ios: "chevron.right", android: "chevron_right", web: "chevron_right" }) as never}
-        size={16}
-        tintColor={theme.colors.textStrong}
-        fallback={<AppText variant="bodyStrong">{kind === "back" ? "‹" : "›"}</AppText>}
-      />
+      {/* Previous / next follow the reading direction (the pager mirrors in RTL). */}
+      <DirectionalChevron kind={kind} size={16} color={theme.colors.textStrong} />
     </Pressable>
   );
 }

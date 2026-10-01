@@ -28,6 +28,13 @@ test("Profile and My Tickets share the auth-required authority", () => {
   assert.match(tickets, /withAuthRequired\(TicketsScreen, "myTickets\.title"\)/);
 });
 
+test("a signed-out gated subpage keeps a Back action (never a dead end) and tabs keep their tab header", async () => {
+  const gate = await readFile(new URL("../components/withAuthRequired.tsx", import.meta.url), "utf8");
+  assert.match(gate, /tabTitle \? \(\s*<TabHeader title=\{t\(tabTitle\)\} \/>\s*\) : \(\s*<FlowHeader/);
+  assert.match(gate, /if \(router\.canGoBack\(\)\) router\.back\(\);\s*else router\.replace\("\/"\);/);
+  assert.doesNotMatch(gate, /MainHeader/);
+});
+
 test("appearance control is absent from the global header", () => {
   assert.doesNotMatch(headerActions, /toggleTheme|Switch to light mode|Switch to dark mode/);
 });

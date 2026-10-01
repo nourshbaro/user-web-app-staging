@@ -4,6 +4,7 @@ import { useTheme } from "@/components/ui";
 import { HeaderActions } from "@/components/HeaderActions";
 import { CartTimerPill } from "@/components/CartTimer";
 import { useCart } from "@/context/CartContext";
+import { DirectionalChevron } from "@/components/foundation";
 import { useI18n } from "@/i18n/I18nProvider";
 
 export function AppHeader({
@@ -47,7 +48,7 @@ export function AppHeader({
       <View style={local.left}>
         {showBack ? (
           <Pressable onPress={handleBack} disabled={backDisabled} accessibilityRole="button" accessibilityLabel={t("common.back")} accessibilityState={{ disabled: backDisabled }} aria-disabled={backDisabled} hitSlop={4} style={[local.iconButton, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }, backDisabled && { opacity: 0.4 }]}>
-            <View style={[local.backChevron, { borderColor: theme.colors.ink }]} />
+            <DirectionalChevron kind="back" size={18} color={theme.colors.ink} />
           </Pressable>
         ) : null}
         <View style={local.copy}>
@@ -85,13 +86,5 @@ const local = {
     borderWidth: 1,
     alignItems: "center" as const,
     justifyContent: "center" as const,
-  },
-  backChevron: {
-    width: 11,
-    height: 11,
-    borderLeftWidth: 2,
-    borderBottomWidth: 2,
-    transform: [{ rotate: "45deg" }],
-    marginLeft: 4,
   },
 };

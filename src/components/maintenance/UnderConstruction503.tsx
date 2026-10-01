@@ -77,11 +77,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     padding: 32,
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 4,
+    boxShadow: "0px 8px 16px rgba(0,0,0,0.12)",
   },
   logo: { width: 68, height: 68, marginBottom: 24 },
   heroIcon: {

@@ -3,6 +3,7 @@ import { Button, useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/services/api";
+import { DirectionalChevron } from "@/components/foundation";
 import { SymbolView } from "expo-symbols";
 import { forwardRef, useCallback, useRef, useState } from "react";
 import type { RefObject } from "react";
@@ -99,7 +100,7 @@ export function ChangePassword({ trigger = "row" }: { trigger?: "row" | "menu" }
             <SymbolView name={{ ios: "lock", android: "lock", web: "lock" }} size={17} tintColor={theme.colors.textStrong} fallback={<View />} />
           </View>
           <Text style={[styles.menuText, { color: theme.colors.textStrong }]}>Change password</Text>
-          <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={16} tintColor={theme.colors.textMuted} fallback={<View />} />
+          <DirectionalChevron kind="forward" size={16} color={theme.colors.textMuted} />
         </Pressable>
       ) : (
       <Pressable
@@ -112,7 +113,7 @@ export function ChangePassword({ trigger = "row" }: { trigger?: "row" | "menu" }
           <SymbolView name={{ ios: "key", android: "key", web: "key" }} size={20} tintColor={theme.colors.primary} fallback={<View />} />
         </View>
         <Text style={[styles.actionText, { color: theme.colors.ink }]}>Change Password</Text>
-        <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={22} tintColor={theme.colors.muted} fallback={<View />} />
+        <DirectionalChevron kind="forward" size={22} color={theme.colors.muted} />
       </Pressable>
       )}
 
@@ -211,7 +212,7 @@ const styles = StyleSheet.create({
   modalContent: { gap: 14, paddingTop: 16, paddingBottom: 8 },
   inputWrap: { gap: 6 },
   passwordField: { minHeight: 46, borderRadius: 14, borderWidth: 1, flexDirection: "row", alignItems: "center" },
-  passwordInput: { flex: 1, minHeight: 46, paddingLeft: 12, fontSize: 15 },
+  passwordInput: { flex: 1, minHeight: 46, paddingStart: 12, fontSize: 15 },
   visibilityButton: { width: 46, minHeight: 46, alignItems: "center", justifyContent: "center" },
   pressed: { opacity: 0.7 },
   // v3 Profile menu row: 30pt tile, 16pt label, chevron.
@@ -233,5 +234,8 @@ function backendErrorMessage(error: ApiError) {
       }
     }
   }
-  return error.message || `Request failed with ${error.status}`;
+  const backendError = error.body?.error;
+  if (typeof backendError === "string" && backendError.trim()) return backendError;
+  // Never the transport text ("Request failed with 500").
+  return "Could not change your password. Please try again.";
 }

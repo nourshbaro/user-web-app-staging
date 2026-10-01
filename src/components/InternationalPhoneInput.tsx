@@ -1,5 +1,6 @@
 import { useTheme } from "@/components/ui";
 import { SheetDismissHandle } from "@/components/SheetDismissHandle";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import {
     PHONE_COUNTRIES,
     createEmptyPhoneValue,
@@ -37,6 +38,7 @@ export function InternationalPhoneInput({
     onChange,
 }: InternationalPhoneInputProps) {
     const theme = useTheme();
+    const reducedMotion = useReducedMotion();
     const [selectorOpen, setSelectorOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
 
@@ -80,6 +82,8 @@ export function InternationalPhoneInput({
                         expanded: selectorOpen,
                         disabled,
                     }}
+                    aria-expanded={selectorOpen}
+                    aria-disabled={disabled}
                     disabled={disabled}
                     onPress={() => {
                         Keyboard.dismiss();
@@ -167,7 +171,7 @@ export function InternationalPhoneInput({
             )}
 
             <Modal
-                animationType="slide"
+                animationType={reducedMotion ? "fade" : "slide"}
                 transparent
                 visible={selectorOpen}
                 statusBarTranslucent
@@ -262,7 +266,8 @@ export function InternationalPhoneInput({
                                     <Pressable
                                         accessibilityRole="radio"
                                         accessibilityLabel={`${item.name}, calling code +${item.callingCode}`}
-                                        accessibilityState={{ selected }}
+                                        accessibilityState={{ checked: selected }}
+                                        aria-checked={selected}
                                         onPress={() => {
                                             if (!selected) {
                                                 onChange(createEmptyPhoneValue(item.phoneCountry));
@@ -368,19 +373,19 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         flexDirection: "row",
         alignItems: "center",
-        paddingLeft: 12,
+        paddingStart: 12,
     },
     numberPrefix: {
         fontSize: 15,
         fontWeight: "700",
-        marginRight: 6,
+        marginEnd: 6,
     },
     numberInput: {
         minWidth: 0,
         minHeight: 46,
         flex: 1,
         paddingHorizontal: 0,
-        paddingRight: 12,
+        paddingEnd: 12,
         fontSize: 15,
     },
     hintText: {

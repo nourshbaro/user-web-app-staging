@@ -346,7 +346,10 @@ in code.
 - `userFacingError(error, fallback)` (`src/lib/userFacingError.ts`): transport
   errors → their fixed message; `ApiError` → backend `message` / `error` / first
   validation error; anything else → the caller's fallback.
-- `backendProvidedError` additionally falls back to `ApiError.message`.
+- `backendProvidedError` behaves the same and no longer falls back to
+  `ApiError.message`: beyond the body text it only ever added the transport
+  string `"Request failed with <status>"`, which is never shown to users
+  (likewise the password-change sheet).
 - `paymentError()` is the standard payment fallback copy.
 - Backend messages are shown verbatim when present. Raw exception text and stack
   traces are not shown.

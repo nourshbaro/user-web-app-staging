@@ -1,6 +1,6 @@
 import { ContactBrandIcon } from "@/components/ContactBrandIcon";
 import { SubpageShell } from "@/components/SubpageShell";
-import { AppText } from "@/components/foundation";
+import { AppText, DirectionalChevron } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
 import { useToast } from "@/context/ToastContext";
 import { useI18n } from "@/i18n/I18nProvider";
@@ -72,7 +72,7 @@ export default function ContactScreen() {
                 <AppText variant="body" style={local.label}>{contact.label}</AppText>
                 <AppText variant="meta" tone="muted" style={local.detail}>{contact.detail}</AppText>
               </View>
-              <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={18} tintColor={theme.colors.textMuted} fallback={<View />} />
+              <DirectionalChevron kind="forward" size={18} color={theme.colors.textMuted} />
             </Pressable>
           );
         })}

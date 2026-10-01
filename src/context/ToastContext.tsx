@@ -75,7 +75,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
                 width: Math.min(responsive.contentWidth, 560),
                 backgroundColor: variant.bg,
                 borderColor: variant.accent,
-                shadowColor: theme.colors.ink,
+                boxShadow: theme.colors.shadowRaised,
               },
             ]}
           >
@@ -115,10 +115,6 @@ const local = {
     flexDirection: "row" as const,
     alignItems: "flex-start" as const,
     overflow: "hidden" as const,
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 7,
   },
   accent: { width: 5, alignSelf: "stretch" as const },
   copy: { flex: 1, minWidth: 0, gap: 2, paddingHorizontal: 12, paddingVertical: 10 },

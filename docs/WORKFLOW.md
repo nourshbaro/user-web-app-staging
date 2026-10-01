@@ -146,21 +146,26 @@ separate transaction-boundary task (§3).
 
 ### v3 redesign batches (reference: LFA Screen v3, §5)
 Batches 1–3 (foundation + navigation, splash/onboarding/notification
-pre-prompt, Home + Matches) and Batches 4–6 (Match Details + ticket
-selection, Cart + ticket holders, Checkout + payment results) are
-committed. Batches 7–9 (My Tickets, Competitions, Profile / Settings /
-Legal / Contact / Auth) are implemented as one checkpoint pending independent
-review (`docs/STATUS.md`). Batch 10 is next.
+pre-prompt, Home + Matches), Batches 4–6 (Match Details + ticket selection,
+Cart + ticket holders, Checkout + payment results) and Batches 7–9 (My
+Tickets, Competitions, Profile / Settings / Legal / Contact / Auth) are
+committed. Batch 10 (whole-app accessibility, RTL, responsive, motion,
+cleanup and regression closure) is implemented and pending independent
+review (`docs/STATUS.md`). It is the last redesign batch: the in-place
+redesign has no further planned batches.
 
-### Phase 5 — Tickets
-### Phase 6 — Profile + supporting screens
-### Phase 7 — Localization / RTL / Accessibility / Responsive / Performance / regression polish
+The former Phase 5 (Tickets), Phase 6 (Profile + supporting screens) and
+Phase 7 (cross-app polish) were delivered by v3 Batches 7–9 and Batch 10.
 
-**Roadmap boundary note (resolved).** The localization/RTL mechanism was
-established in Phase 1, so Phases 2–6 build catalog-backed, RTL-safe screens.
-Phase 7 remains the phase for the Arabic catalog, enabling `ar`, Arabic/RTL
-device verification, and cross-app accessibility, responsive and performance
-polish.
+### Beyond the redesign (not started)
+
+Each is a separate, explicitly scoped task:
+
+- **Arabic:** the Arabic catalog, an Arabic-capable font, enabling `ar`, and
+  Arabic/RTL device verification. The localization/RTL mechanism exists
+  (Phase 1) and screens are built RTL-safe; Arabic itself is not translated.
+- **Runtime coverage:** signed-in and native-device verification of the
+  redesigned flows (`docs/STATUS.md` lists what is unverified).
 
 ---
 

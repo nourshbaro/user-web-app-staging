@@ -745,6 +745,7 @@ export default function AuthScreen() {
                       accessibilityLabel="Remember me"
                       accessibilityState={{ checked: remember, disabled: loading }}
                       aria-checked={remember}
+                      aria-disabled={loading}
                       disabled={loading}
                       onPress={() => setRemember((value) => !value)}
                       style={local.rememberRow}

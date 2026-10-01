@@ -12,10 +12,9 @@ export function backendProvidedError(error: unknown, fallback: string) {
   if (error instanceof ApiTransportError) return error.message;
   if (!(error instanceof ApiError)) return fallback;
 
-  return backendResponseMessage(error.body) ??
-    (typeof error.message === "string" && error.message.trim()
-      ? error.message
-      : fallback);
+  // `ApiError.message` adds nothing beyond the body except the transport
+  // text ("Request failed with 500"), which is never shown to users.
+  return backendResponseMessage(error.body) ?? fallback;
 }
 
 export function backendResponseMessage(body: unknown) {

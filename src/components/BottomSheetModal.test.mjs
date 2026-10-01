@@ -41,6 +41,7 @@ async function harness(platformOS = "ios") {
       colors: { bg: "white", line: "gray", panel: "white", ink: "black", muted: "gray" },
     });
     export const useI18n = () => ({ meta: { script: "latin" } });
+    export const useReducedMotion = () => globalThis.__sheetReducedMotion === true;
     export const typography = {
       displaySheet: { fontSize: 30, lineHeight: 36, fontWeight: "700" },
       displaySheetOption: { fontSize: 23, lineHeight: 28, fontWeight: "700" },
@@ -140,6 +141,18 @@ test("onPresented is forwarded to the native Modal's onShow", async () => {
   const tree = h.nodes(h.render({ visible: true, onClose: () => {}, title: "Delete account", onPresented, children: child }));
   const modal = tree.find((n) => n.type === "Modal");
   assert.equal(modal.props.onShow, onPresented);
+});
+
+test("the sheet slides in by default and fades in place under reduced motion", async () => {
+  const h = await harness();
+  const modal = () => h.nodes(h.render({ visible: true, onClose: () => {}, title: "Payment method", children: child })).find((n) => n.type === "Modal");
+  try {
+    assert.equal(modal().props.animationType, "slide");
+    globalThis.__sheetReducedMotion = true;
+    assert.equal(modal().props.animationType, "fade");
+  } finally {
+    delete globalThis.__sheetReducedMotion;
+  }
 });
 
 /** Renders a scrollable sheet, attaches fake native instances to the ScrollView's `ref` and `innerViewRef`, and returns handles to drive/inspect it. */

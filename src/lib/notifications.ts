@@ -48,9 +48,13 @@ function notificationData(response: NotificationsModule.NotificationResponse | n
   return data && typeof data === "object" ? (data as NotificationData) : null;
 }
 
-/** Data of the notification that launched the app, if any. */
+/**
+ * Data of the notification that launched the app, if any. A push
+ * notification never launches the web app, and `expo-notifications` does not
+ * implement the launch response there (it throws), so web has none.
+ */
 export async function getInitialNotificationData(): Promise<NotificationData | null> {
-  if (!Notifications) return null;
+  if (!Notifications || Platform.OS === "web") return null;
   return notificationData(await Notifications.getLastNotificationResponseAsync());
 }
 

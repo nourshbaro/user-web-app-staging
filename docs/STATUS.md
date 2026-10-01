@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-09-30 · v3 Redesign Batches 7–9 (implementation checkpoint, uncommitted on `2a5b565`)
+**As of:** 2026-10-01 · v3 Redesign Batch 10 (final batch; implementation checkpoint, uncommitted on `a046a11`)
 
 ---
 
@@ -22,15 +22,86 @@
 - ✅ v3 Batches 4–6 — Match Details + ticket selection, Cart + ticket
   holders, Checkout + payment results, with the startup corrections and the
   Codex corrections (`2a5b565`).
-- ✅ **v3 Batches 7–9 — My Tickets, Competitions, Profile / Settings /
-  Legal / Contact / Auth: implemented, pending independent review.**
-  Uncommitted on `2a5b565`.
-- ✅ **Codex corrections for Batches 7–9 (same checkpoint):** avatar result
-  ownership, list QR recovery and representation, standings 404 / malformed
-  semantics, web push settings. Pending re-review.
-- ✅ Match timeline event kinds (goal / yellow_card / red_card / substitution)
-  from the confirmed contract (same checkpoint).
-- ▶ **Next:** Codex re-review of Batches 7–9, then Batch 10.
+- ✅ v3 Batches 7–9 — My Tickets, Competitions, Profile / Settings / Legal /
+  Contact / Auth, with the Codex corrections and the match-event kinds
+  (`a046a11`).
+- ✅ **v3 Batch 10 — whole-app accessibility, RTL, responsive, motion,
+  cleanup and regression closure: implemented, pending independent review.**
+  Uncommitted on `a046a11`. This is the last redesign batch.
+- ▶ **Next:** Codex review of Batch 10. After that the in-place redesign is
+  complete; what remains is the runtime coverage and backend dependencies
+  below, and Arabic (a separate task).
+
+## Batch 10 checkpoint (v3, final)
+
+**Implemented (source):**
+- **Dead code removed** (no importer; orphaned by redesign commits):
+  `AppSwitch`, `Collapsible`, `MatchTicketsHeader`, `MatchSummaryBlock`,
+  `MainHeader` (with its source test), and 16 unused `ui.tsx` theme style
+  keys (legacy chips, badges, the pre-v3 reservation pill).
+- **Signed-out gate:** gated non-tab screens (cart, settings, checkout and
+  payment routes) show the `FlowHeader` with Back instead of the legacy
+  `MainHeader`, which had no Back (a signed-out deep link was a dead end).
+- **RTL:** disclosure and pager arrows (Contact, Legal, Profile, Change
+  password, ticket pager, the payment screens' `AppHeader`) use
+  `DirectionalChevron`; the alert-dialog close button, password field and
+  phone field use start/end props. A rule test forbids fixed left/right
+  chevrons.
+- **Reduced motion:** every modal sheet fades instead of sliding.
+- **Accessibility:** segmented-control segments reach ≥ 44pt on native
+  (`hitSlop`); `aria-*` twins added where only `accessibilityState`
+  carried state (Remember me, the phone-country button and list radios).
+- **Errors:** "Request failed with <status>" can no longer reach users
+  (`backendProvidedError`, the password sheet).
+- **Web:** `getInitialNotificationData` returns `null` on web (it threw on
+  every web start: the dev "Failed to handle initial notification").
+- **Shadows:** the remaining legacy `shadow*` styles (toast, stadium zone
+  markers, maintenance card, `Card`) use `boxShadow` tokens (the `Card`
+  shadow was drawn twice on native).
+
+**Source verified (audit, no change needed):** one reservation timer
+(`CartContext`); bounded live revalidation; Show/Hide map is presentation
+only; scheduled-only purchasing with the pre-commit status re-read; payment
+lock, attempt ownership and same-session cart clearing; avatar ownership;
+the `returnTo` allowlist; no startup auth; notification permission only from
+"Turn on notifications"; countdowns are `role="timer"` (not live regions);
+Arabic falls back to the platform font; no raw exception text in the UI. All
+existing transaction, auth, startup, notification, ticket and competition
+tests pass unchanged.
+
+**Deliberately not changed:**
+- `pointerEvents` props (a web dev-mode deprecation only; tests pin the
+  seat-press and splash uses).
+- `ProfileDetailModal`, `orderPresentation`, `ticketActions`,
+  `profilePdfDownload` (the order-details / PDF capability, kept for a
+  future entry point), `CardPaymentPreparationContext`,
+  `bluePaymentDiagnostics` (pre-redesign, payment area).
+- `@expo/ui`, `expo-glass-effect`: declared, never imported; pre-redesign
+  native modules whose removal would change native builds.
+- The `CartContext` 1 s tick re-renders every `useCart()` consumer
+  (including Match Details during a hold): Phase 4 ownership design, not a
+  redesign regression.
+- v3-sized controls under 44pt keep their drawn size; native reaches 44pt via
+  `hitSlop`, the web pointer target is 34–40px.
+- On wide screens the subpage Back sits at the screen edge while content stays
+  in a readable column (consistent across subpages).
+
+## Validation (Batch 10 working tree)
+
+| Check | Result |
+| ----- | ------ |
+| `npx tsc --noEmit` | PASS |
+| `npx expo lint` | 0 errors, 1 existing warning (`services/auth.ts` unused `fields`) |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | **816/816 passing** |
+| `git diff --check a046a11` | clean (no untracked files) |
+| Web / Android / iOS export | PASS |
+| Web runtime, signed out (headless Chrome, staging) | PASS: 13 routes (Home, Matches, Match 4 scheduled GA, Match 17 completed with goal / cards / substitution, Competitions, the My Tickets / Settings / Cart gates, Profile, Auth, Legal, Privacy, Contact) at 320 / 390 / 430 / 768 / 1024 px light and 390 px dark: no horizontal overflow, no unlabeled control, no runtime error; tablet widths keep a bounded column |
+| Reserved-seat picker | NOT VERIFIED at runtime (no scheduled seated match on staging today) |
+| RTL layout | Source-verified only (Arabic is not enabled, so RTL cannot be rendered) |
+| Reduced-motion modal fade | Test-verified (`BottomSheetModal`); not observed on a device |
+| Signed-in flows (cart, holders, checkout, card / BLUE handoff, tickets / QR, avatar, settings, logout) | NOT VERIFIED (no staging test account in this environment) |
+| Native runtime (iOS / Android) | NOT VERIFIED (no development build or device) |
+| Real payment handoff | NOT VERIFIED (no real payments) |
 
 ## Batches 7–9 checkpoint (v3)
 
@@ -83,16 +154,14 @@
     purchasing stays gated.
   - The legal endpoints return placeholder text ("test privacy",
     "test term of use"). This is a content dependency, not an app issue.
-- **Now unused, not deleted:** `AppSwitch`, `Collapsible`,
-  `MatchTicketsHeader`, `ProfileDetailModal`, and possibly
-  `SheetDismissHandle`. `MainHeader` is now used only by the auth gate.
+- **Unused modules:** resolved in Batch 10 (see above).
 
-## Validation (Batches 7–9 working tree)
+## Validation (Batches 7–9, at that checkpoint)
 
 | Check | Result |
 | ----- | ------ |
 | `npx tsc --noEmit` | PASS |
-| `npx expo lint` | 0 errors, 4 existing warnings (`MatchSummaryBlock` ×3, `services/auth.ts`) |
+| `npx expo lint` | 0 errors, 4 warnings (the 3 `MatchSummaryBlock` ones left with that file in Batch 10) |
 | Tests (`AGENTS.md` §13 command, incl. untracked) | **815/815 passing** (after the Codex corrections) |
 | `git diff --check 2a5b565` | clean (untracked files scanned separately: clean) |
 | Web / Android / iOS export | PASS (rerun after the corrections) |
@@ -319,27 +388,26 @@ Runtime checks still owed for Phase 4:
   checked signed out); adding seats still needs a signed-in run. The
   5-minute seat cache can age (the backend add stays authoritative).
 - **Backend contracts:** kickoff timezone unresolved; no structured error
-  codes; no favourites or availability in the APIs used; single-match
-  competition/season/matchday/scores/clock/events/stats are confirmed and
-  typed, but event items and a non-null `possession` were not yet seen, and
-  Match Details shows no events/stats UI (v3 has none);
-  competitions/standings/competition-matches contracts are confirmed
-  (`docs/API_INTEGRATION.md` §14) but not integrated yet.
+  codes; no favourites or availability in the APIs used; no machine-readable
+  "no standings" signal (the cup 404 is indistinguishable from a wrong
+  route); `qr_image` representations beyond raster data URIs unconfirmed;
+  competition-matches and single-match status can disagree (Match Details
+  decides). Event kinds, competitions and standings are integrated.
 - **Arabic / RTL:** no Arabic translation, and `ar` is not enabled. No
   Arabic-capable font is chosen yet (Arabic falls back to the platform font).
-- **v3 carry-overs:** the dark theme keeps its navy surfaces (v3's neutral
-  black would change untouched screens); legacy screens (Tickets, Profile,
-  Settings, Auth…) still use `MainHeader`/platform-font text until
-  redesigned; `Button` text now uses IBM Plex Sans everywhere.
+- **v3 carry-overs:** every screen is redesigned; the legacy `muted` colour
+  remains in a few non-redesigned surfaces (phone-number field, password
+  sheet, toasts, dialogs, CyberSource loading, maintenance screen).
 - **Platforms:** iOS runtime unverified; a debug dev client can fail on a very
   slow cold Metro bundle (tooling only).
-- **Web (dev):** a "Failed to handle initial notification" toast appears in a
-  headless browser (pre-existing).
-- **Legacy screens:** screens not yet redesigned still use the old `muted`
-  colour and the `accessibilityState` object.
-- **Unused modules:** keep until a scoped cleanup (`CardPaymentPreparationContext`,
-  `ProfileDetailModal`, `bluePaymentDiagnostics`, unused push-token helpers,
-  `profileService.orders()`; since Batches 4–6 also `MatchTicketsHeader` and
-  `Collapsible`).
+- **Web (dev):** the "Failed to handle initial notification" message is
+  fixed (Batch 10). Remaining dev-only web warnings: the `pointerEvents`
+  prop deprecation, the native-driver fallback, and the
+  `expo-notifications` push-token listener notice.
+- **Unused modules (kept deliberately):** `CardPaymentPreparationContext`,
+  `ProfileDetailModal` with `orderPresentation` / `ticketActions` /
+  `profilePdfDownload`, `bluePaymentDiagnostics`, unused push-token helpers,
+  `profileService.orders()`. The dependencies `@expo/ui` and
+  `expo-glass-effect` are declared but never imported.
 - **Security and backend** concerns remain tracked in `docs/SECURITY.md` §3 and
   `docs/API_INTEGRATION.md` §14.

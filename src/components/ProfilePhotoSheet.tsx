@@ -1,5 +1,6 @@
 import { AppText } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useRef } from "react";
 import { Modal, Platform, Pressable, View } from "react-native";
@@ -31,6 +32,7 @@ export function ProfilePhotoSheet({
   onRemove: Action;
 }) {
   const theme = useTheme();
+  const reducedMotion = useReducedMotion();
   const i18n = useI18n();
   const insets = useSafeAreaInsets();
   const pending = useRef<Action | null>(null);
@@ -66,7 +68,7 @@ export function ProfilePhotoSheet({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType={reducedMotion ? "fade" : "slide"}
       statusBarTranslucent
       onRequestClose={onClose}
       onDismiss={() => {

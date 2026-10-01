@@ -1,3 +1,4 @@
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { SymbolView } from "expo-symbols";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
@@ -113,6 +114,7 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
   footer,
 }, ref) {
   const theme = useTheme();
+  const reducedMotion = useReducedMotion();
   const { meta } = useI18n();
   const titleToken = titleVariant === "display" ? typography.displaySheet : typography.displaySheetOption;
   const insets = useSafeAreaInsets();
@@ -256,7 +258,8 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
   ) : children;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={requestClose} onShow={onPresented}>
+    // Reduced motion: the sheet fades in place instead of sliding.
+    <Modal visible={visible} transparent animationType={reducedMotion ? "fade" : "slide"} onRequestClose={requestClose} onShow={onPresented}>
       <KeyboardAvoidingView
         style={local.keyboardAvoider}
         // Android's Modal already forces SOFT_INPUT_ADJUST_RESIZE on its own

@@ -36,7 +36,7 @@ async function harness(changePassword = async () => {}) {
     export const useToast = () => state.toast;
     export const useTheme = () => ({ styles: { muted: {}, label: {} }, colors: { danger: "red", line: "gray", panelSoft: "white", primary: "red", ink: "black", muted: "gray" } });
     export class ApiError extends Error {}
-    export const Text = "Text", View = "View", Button = "Button", TextInput = "TextInput", Pressable = "Pressable", SymbolView = "SymbolView", ScrollView = "ScrollView", KeyboardAvoidingView = "KeyboardAvoidingView", BottomSheetModal = "BottomSheetModal";
+    export const Text = "Text", View = "View", Button = "Button", TextInput = "TextInput", Pressable = "Pressable", SymbolView = "SymbolView", DirectionalChevron = "DirectionalChevron", ScrollView = "ScrollView", KeyboardAvoidingView = "KeyboardAvoidingView", BottomSheetModal = "BottomSheetModal";
     export const Platform = { OS: "ios" };
     export const Fragment = Symbol("Fragment");
     export const StyleSheet = { create: value => value, hairlineWidth: 1 };

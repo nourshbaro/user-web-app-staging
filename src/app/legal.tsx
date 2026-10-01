@@ -1,5 +1,5 @@
 import { SubpageShell } from "@/components/SubpageShell";
-import { AppText } from "@/components/foundation";
+import { AppText, DirectionalChevron } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
 import { useI18n } from "@/i18n/I18nProvider";
 import { router } from "expo-router";
@@ -32,7 +32,7 @@ export default function LegalScreen() {
               <SymbolView name={{ ios: "doc.text", android: "description", web: "description" } as never} size={20} tintColor={theme.colors.actionPrimary} fallback={<View />} />
             </View>
             <AppText variant="body" style={local.label}>{row.label}</AppText>
-            <SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={18} tintColor={theme.colors.textMuted} fallback={<View />} />
+            <DirectionalChevron kind="forward" size={18} color={theme.colors.textMuted} />
           </Pressable>
         ))}
       </View>
