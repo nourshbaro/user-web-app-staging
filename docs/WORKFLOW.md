@@ -164,8 +164,10 @@ Home See all / clickable cards, live minutes, Timeline / Stats motion and
 names, ticket flip / stamps / shadow, cup competitions, payment ordering and
 unbranded copy, "View my ticket", no Login / Register OTP, skeleton geometry.
 Android emulator is the primary runtime target from here on; web is
-secondary. The required / available update system is blocked on a backend
-version contract (`docs/API_INTEGRATION.md`).
+secondary. The v3 system states are implemented: maintenance with real
+"Try again" recovery, and the required / available update UI and policy.
+Activating updates in production is blocked on a backend version contract
+(`docs/API_INTEGRATION.md` §15).
 
 ### Beyond the redesign (not started)
 

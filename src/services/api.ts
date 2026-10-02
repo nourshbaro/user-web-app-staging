@@ -2,9 +2,9 @@ import { config } from "@/lib/config";
 import { createAuthenticationAuthority, type AuthenticationSnapshot } from "@/lib/authSessionOwnership";
 import { Platform } from "react-native";
 import { authTokenStorage } from "@/lib/authTokenStorage";
+import { createMaintenanceAuthority, type AvailabilityProbeResult } from "@/lib/maintenanceAuthority";
 
 type UnauthenticatedListener = () => void;
-type MaintenanceListener = () => void;
 type ApiRequestInit = RequestInit & {
   skipUnauthenticatedNotify?: boolean;
   /**
@@ -34,8 +34,7 @@ export type AuthenticationRestoration<T> =
   }
   | { status: "stale" };
 const unauthenticatedListeners = new Set<UnauthenticatedListener>();
-const maintenanceListeners = new Set<MaintenanceListener>();
-let maintenanceActive = false;
+const maintenance = createMaintenanceAuthority();
 const authenticationAuthority = createAuthenticationAuthority();
 let suppressedAuthenticationGeneration: number | null = null;
 let authenticationMutation = Promise.resolve();
@@ -294,20 +293,41 @@ export function notifyUnauthenticated() {
 }
 
 export function activateMaintenance() {
-  if (maintenanceActive) return;
-  maintenanceActive = true;
-  maintenanceListeners.forEach((listener) => listener());
+  maintenance.signal();
 }
 
 export function getMaintenanceSnapshot() {
-  return maintenanceActive;
+  return maintenance.isActive();
 }
 
-export function subscribeMaintenance(listener: MaintenanceListener) {
-  maintenanceListeners.add(listener);
-  return () => {
-    maintenanceListeners.delete(listener);
-  };
+export function subscribeMaintenance(listener: () => void) {
+  return maintenance.subscribe(listener);
+}
+
+/**
+ * The maintenance availability probe: a public, read-only, uncached request
+ * (the scheduled-match filters), sent anonymously so it can never end or
+ * change a session. A 2xx means the backend is serving again; a 503 is
+ * maintenance (and is signalled by `apiRequest` as usual).
+ */
+const AVAILABILITY_PROBE_PATH = "/matches/scheduled/filters";
+
+export async function probeBackendAvailability(): Promise<AvailabilityProbeResult> {
+  try {
+    await apiRequest(AVAILABILITY_PROBE_PATH, { overrideAuthorizationToken: null, skipUnauthenticatedNotify: true });
+    return "available";
+  } catch (error) {
+    return error instanceof ApiError && error.status === 503 ? "maintenance" : "unreachable";
+  }
+}
+
+/**
+ * "Try again" on the maintenance screen. Clears maintenance only when the
+ * probe succeeds and no 503 arrived meanwhile; single-flight. Never touches
+ * the session, the cart or a payment.
+ */
+export function recheckMaintenance() {
+  return maintenance.recheck(probeBackendAvailability);
 }
 
 export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {

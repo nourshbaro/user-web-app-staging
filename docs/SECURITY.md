@@ -267,8 +267,16 @@ or `localStorage` (web). Only the token is in SecureStore.
 `src/lib/bluePaymentDiagnostics.ts` is marked TEMPORARY and unused. Neither
 should be expanded. Removal is separate scoped cleanup.
 
-### 3.12 Maintenance is sticky — LOW (availability)
-One 503 locks the app into the maintenance screen until restart.
+### 3.12 Maintenance recovery — LOW (availability) — mitigated
+One 503 still switches the app into the maintenance screen.
+
+- **Recovery:** "Try again" re-checks the backend through
+  `recheckMaintenance`. The check is an anonymous, read-only probe through
+  `apiRequest`, and it is single-flight.
+- **What clears it:** only a 2xx clears it, and only if no 503 arrived
+  meanwhile. Session, cart and payment state are never touched.
+- **Residual risk:** there is no dedicated health endpoint, so "available"
+  means a public endpoint answered (`docs/API_INTEGRATION.md` §11).
 
 ### 3.13 Android cleartext for staging BLUE — UNKNOWN
 Staging BLUE is HTTP. The Android cleartext policy for non-debug staging builds

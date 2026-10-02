@@ -24,7 +24,7 @@ import {
   subscribeToNotificationResponses,
 } from "@/lib/notifications";
 
-import { MaintenanceGuard } from "@/components/maintenance/MaintenanceGuard";
+import { SystemStateGate } from "@/components/maintenance/SystemStateGate";
 import { handleNotificationNavigation } from "@/lib/notificationNavigation";
 import {
   registerPushDeviceIfPermitted,
@@ -63,7 +63,7 @@ function AppProviders() {
     pathname,
   });
 
-  // Read-only: MaintenanceGuard owns what renders. When maintenance replaces the
+  // Read-only: SystemStateGate owns what renders. When maintenance replaces the
   // navigator, the launch can never resolve, so the splash must not wait for it.
   const maintenance = useSyncExternalStore(subscribeMaintenance, getMaintenanceSnapshot, getMaintenanceSnapshot);
 
@@ -143,7 +143,7 @@ function AppProviders() {
           <TicketHoldersProvider>
             <CartSheetProvider>
               <StatusBar style={theme.isDark ? "light" : "dark"} />
-              <MaintenanceGuard>
+              <SystemStateGate>
                 <AppChrome onboarding={onboarding}>
                   <Stack
                     screenOptions={{
@@ -211,7 +211,7 @@ function AppProviders() {
                     />
                   </Stack>
                 </AppChrome>
-              </MaintenanceGuard>
+              </SystemStateGate>
             </CartSheetProvider>
           </TicketHoldersProvider>
         </CartProvider>

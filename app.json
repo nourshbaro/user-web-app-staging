@@ -5,11 +5,11 @@
     "owner": "jasquare",
     "version": "1.1.4",
     "orientation": "default",
-    "icon": "./assets/images/lfa-app-icon.png",
+    "icon": "./assets/images/app-icon-ios.png",
     "scheme": "lfa-app",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/images/lfa-app-icon-ios.png",
+      "icon": "./assets/images/app-icon-ios.png",
       "bundleIdentifier": "com.lfaticketing.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -17,7 +17,11 @@
       "googleServicesFile": "./GoogleService-Info.plist"
     },
     "android": {
-      "icon": "./assets/images/lfa-app-icon-android.png",
+      "icon": "./assets/images/app-icon-android.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/app-icon-android-foreground.png",
+        "backgroundColor": "#E9E9EE"
+      },
       "predictiveBackGestureEnabled": false,
       "package": "com.lfaticketing.app",
       "googleServicesFile": "./google-services.json"

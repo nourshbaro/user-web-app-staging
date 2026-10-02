@@ -8,6 +8,7 @@ const apiSource = await readFile(new URL("./api.ts", import.meta.url), "utf8");
 const authSource = await readFile(new URL("./auth.ts", import.meta.url), "utf8");
 const authoritySource = await readFile(new URL("../lib/authSessionOwnership.ts", import.meta.url), "utf8");
 const userFacingErrorSource = await readFile(new URL("../lib/userFacingError.ts", import.meta.url), "utf8");
+const maintenanceAuthoritySource = await readFile(new URL("../lib/maintenanceAuthority.ts", import.meta.url), "utf8");
 
 const toModuleUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const transpile = (source) => ts.transpileModule(source, {
@@ -181,6 +182,10 @@ async function createHarness({
     .replace(
       'from "@/lib/authTokenStorage"',
       `from ${JSON.stringify(authTokenStorageUrl)}`,
+    )
+    .replace(
+      'from "@/lib/maintenanceAuthority"',
+      `from ${JSON.stringify(toModuleUrl(transpile(maintenanceAuthoritySource)))}`,
     )
     .replace('from "expo-file-system"', `from "data:text/javascript,export class File {}"`)
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
@@ -1452,6 +1457,93 @@ test("the PDF transport also activates maintenance only for an HTTP 503", async 
     await assert.rejects(request, { message: "Maintenance in progress" });
     assert.equal(h.api.getMaintenanceSnapshot(), true);
     assert.equal((await h.api.captureAuthenticationSnapshot()).token, "token-a");
+  } finally {
+    h.cleanup();
+  }
+});
+
+async function enterMaintenance(h) {
+  const request = h.api.apiRequest("/portal/matches?filter=all");
+  const pending = await h.waitForFetch(h.state.fetches.length + 1);
+  pending.pending.resolve(response(503, { message: "Service unavailable" }));
+  await assert.rejects(request, (error) => error.status === 503);
+  assert.equal(h.api.getMaintenanceSnapshot(), true);
+}
+
+test("Try again clears maintenance only after a real anonymous availability request succeeds, keeping the session", async () => {
+  const h = await createHarness();
+  try {
+    await install(h, "token-a", 1);
+    await enterMaintenance(h);
+    let notifications = 0;
+    const unsubscribe = h.api.subscribeMaintenance(() => {
+      notifications += 1;
+    });
+
+    const recheck = h.api.recheckMaintenance();
+    const probe = await h.waitForFetch(2);
+    assert.equal(probe.request, "/api/matches/scheduled/filters");
+    assert.equal(probe.init.method, undefined, "a read-only GET");
+    assert.equal(probe.init.headers.Authorization, undefined, "anonymous: the session is never sent or judged");
+    assert.equal(h.api.getMaintenanceSnapshot(), true, "never cleared before the backend answers");
+
+    probe.pending.resolve(response(200, { teams: [], stadiums: [] }));
+    assert.equal(await recheck, "recovered");
+    assert.equal(h.api.getMaintenanceSnapshot(), false);
+    assert.equal(notifications, 1);
+    assert.equal((await h.api.captureAuthenticationSnapshot()).token, "token-a");
+    assert.deepEqual(JSON.parse(h.state.values.get("lfa_portal_user")), { id: 1 });
+    unsubscribe();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("Try again keeps maintenance on a 503 or a transport failure, and repeated taps share one request", async () => {
+  const h = await createHarness();
+  try {
+    await install(h, "token-a", 1);
+    await enterMaintenance(h);
+
+    const first = h.api.recheckMaintenance();
+    const second = h.api.recheckMaintenance();
+    assert.equal(first, second, "single-flight");
+    const probe = await h.waitForFetch(2);
+    probe.pending.resolve(response(503, { message: "Still down" }));
+    assert.equal(await first, "maintenance");
+    assert.equal(h.state.fetches.length, 2, "one probe for both taps");
+    assert.equal(h.api.getMaintenanceSnapshot(), true);
+
+    const offline = h.api.recheckMaintenance();
+    (await h.waitForFetch(3)).pending.reject(new Error("offline"));
+    assert.equal(await offline, "unreachable");
+    assert.equal(h.api.getMaintenanceSnapshot(), true);
+
+    // A 401 on the anonymous probe never ends the session.
+    const unauthorized = h.api.recheckMaintenance();
+    (await h.waitForFetch(4)).pending.resolve(response(401, { message: "Unauthenticated" }));
+    assert.equal(await unauthorized, "unreachable");
+    assert.equal(h.api.getMaintenanceSnapshot(), true);
+    assert.equal((await h.api.captureAuthenticationSnapshot()).token, "token-a");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("a 503 from another request while the probe is in flight outranks the probe's success", async () => {
+  const h = await createHarness();
+  try {
+    await enterMaintenance(h);
+    const recheck = h.api.recheckMaintenance();
+    const probe = await h.waitForFetch(2);
+
+    const other = h.api.apiRequest("/cart?checkout_session_id=s");
+    (await h.waitForFetch(3)).pending.resolve(response(503, {}));
+    await assert.rejects(other, (error) => error.status === 503);
+
+    probe.pending.resolve(response(200, {}));
+    assert.equal(await recheck, "maintenance");
+    assert.equal(h.api.getMaintenanceSnapshot(), true);
   } finally {
     h.cleanup();
   }

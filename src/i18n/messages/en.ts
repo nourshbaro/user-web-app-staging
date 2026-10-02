@@ -647,6 +647,32 @@ export const en = {
   "seats.select": "Select seats",
   "seats.tapHint": "Tap available seats",
   "seats.each": "{price} each",
+
+  "maintenance.badge": "Under maintenance",
+  "maintenance.title": "We'll be back soon",
+  "maintenance.body": "LFA Tickets is being updated. Ticket sales and your tickets are unavailable until maintenance ends.",
+  "maintenance.retry": "Try again",
+  "maintenance.checking": "Checking whether LFA Tickets is available",
+  "maintenance.stillDown": "LFA Tickets is still under maintenance.",
+  "maintenance.checkFailed": "Could not check",
+  "maintenance.unreachable": "Could not reach LFA Tickets. Check your connection and try again.",
+  "maintenance.contact": "Contact LFA on WhatsApp",
+  "maintenance.contactFailed.title": "Could not open contact",
+  "maintenance.contactFailed.message": "Please try again from another app.",
+  "maintenance.logo": "Lebanese Football Association",
+
+  "update.available.title": "Update available",
+  "update.required.title": "Update required",
+  "update.available.body": "A new version of LFA Tickets is ready to install.",
+  "update.available.bodyVersion": "Version {version} is ready to install.",
+  "update.required.body": "This version of LFA Tickets is no longer supported. Update LFA Tickets to keep buying and accessing your tickets.",
+  "update.required.bodyVersion": "This version of LFA Tickets is no longer supported. Update to version {version} to keep buying and scanning tickets.",
+  "update.whatsNew": "What's new",
+  "update.action.appStore": "Update on App Store",
+  "update.action.googlePlay": "Update on Google Play",
+  "update.notNow": "Not now",
+  "update.openFailed.title": "Could not open the store",
+  "update.openFailed.message": "Please update LFA Tickets from your app store.",
 } as const;
 
 export type MessageKey = keyof typeof en;

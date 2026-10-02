@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-10-02 · Post-redesign product corrections, passes 1 and 2 (implementation checkpoint, uncommitted on `75cb896`)
+**As of:** 2026-10-02 · System states (maintenance / update) + Design C launcher icon (implementation checkpoint, uncommitted on `15eb650`)
 
 ---
 
@@ -29,7 +29,92 @@
   and regression closure (`75cb896`). The in-place redesign is complete.
 - ✅ **Post-redesign product corrections (passes 1 and 2): implemented,
   pending review.** Uncommitted on `75cb896`.
-- ▶ **Next:** review of the corrections; the backend dependencies below.
+- ✅ Post-redesign corrections committed (`15eb650`).
+- ✅ **System states + Design C icon: implemented, pending review.**
+  Uncommitted on `15eb650`.
+- ▶ **Next:** Codex review; the backend dependencies below.
+
+## System states and launcher icon (2026-10-02)
+
+Spec read live from LFA Screen v3: the `maintenance`, `update_available`
+and `update_required` states. Architecture: `docs/ARCHITECTURE.md` §13.
+
+**Startup priority (one state, never stacked):** maintenance → required
+update → optional update → normal app.
+
+**Implemented UI / policy:**
+- `SystemStateGate` replaces `MaintenanceGuard`.
+  - v3 `MaintenanceScreen` replaces `UnderConstruction503`.
+  - v3 `UpdatePromptDialog` serves both update states.
+- Update policy (`src/lib/appUpdatePolicy.ts`):
+  - optional `latest_version`;
+  - policy-only `release_notes` (the panel is omitted without them);
+  - version-free copy when no latest version exists;
+  - a whole-string store-URL allowlist. React Native's `URL` is a
+    lenient shim, so parsing with it is not trustworthy on device.
+- WhatsApp link: the official contact in `src/lib/contact.ts`
+  (+961 70 447 888, the same number v3 uses).
+
+**Existing authoritative maintenance support, now recoverable:**
+- Any 503 still activates maintenance.
+- "Try again" → `recheckMaintenance`:
+  - one anonymous `GET /matches/scheduled/filters` through `apiRequest`;
+  - single-flight, with no polling;
+  - it clears only on a 2xx with no 503 meanwhile.
+- Session, cart and payments are untouched.
+
+**Development preview (`__DEV__` only):**
+`lfa-app:///?systemStatePreview=maintenance|updateAvailable|updateRequired|normal`.
+Production bundles cannot activate it.
+
+**Missing backend authority:**
+- No version-policy endpoint and no store URLs
+  (`docs/API_INTEGRATION.md` §15).
+- In production both update states are inactive (fail open).
+
+**Launcher icon (Design C):**
+- `app.json` uses `assets/images/app-icon-ios.png` (1024),
+  `app-icon-android.png` (512) and
+  `app-icon-android-foreground.png` (adaptive, background `#E9E9EE`).
+- The old `lfa-app-icon*.png` files remain, unreferenced (legacy).
+
+**Android runtime (emulator, signed-in dev build, staging, new JS over Metro):**
+- Verified:
+  - normal startup with no prompt;
+  - maintenance, and Try again (busy state, real probe, recovered to
+    Home with the session intact);
+  - required update: Back ×2 swallowed; the store tap without a URL
+    opens nothing and shows the inline error;
+  - update available: Not now and Back both dismiss;
+  - dark mode; tablet (~800 dp); narrow (~360 dp);
+  - the scrim measured at 50% black.
+- Found and fixed: the dialog state carried over between prompts
+  (now keyed per prompt).
+- Known quirk: after maintenance clears, the navigator remounts and the
+  in-app launch splash replays.
+
+**Native rebuild blocked:** `gradlew app:assembleDebug` fails on the
+Windows path limit (CMake object paths reach 250 characters under
+`android/app/.cxx`; ninja reports "build.ninja still dirty"). So:
+- the launcher / adaptive icon is not runtime-verified (only
+  `expo prebuild` output and the generated resources were checked);
+- the installed binary is still 1.1.3.
+
+| Check | Result |
+| --- | --- |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | **893/893 passing** |
+| `npx tsc --noEmit` | clean |
+| `npx expo lint` | 0 errors, 1 existing warning (`services/auth.ts` `fields`) |
+| `git diff --check` | clean |
+| `npx expo config` | resolves the Design C icons and the adaptive icon |
+| `expo export` web / android / ios | all pass |
+
+**Not verified:**
+- the launcher icon on device;
+- iOS / iPad runtime;
+- the device reduce-motion setting (covered by source and tests);
+- a real backend 503;
+- a real store URL / release notes (no backend).
 
 ## Post-redesign corrections (product-owner review)
 
@@ -73,8 +158,9 @@ No iOS simulator exists on Windows: iOS is source / test / export verified.
   matches, ticket stubs, the 600 pt ticket, the cart card).
 
 **Blocked by backend:**
-- Required / available app update: no version endpoint or store URLs exist
-  (`docs/API_INTEGRATION.md`). Not implemented.
+- Required / available app update: the UI and policy are implemented,
+  but no version endpoint or store URLs exist
+  (`docs/API_INTEGRATION.md` §15). They stay inactive in production.
 - Live minutes on competition match cards: the competition-matches endpoint
   has no clock fields.
 - A direct ticket link for multi-match orders: the submit response carries

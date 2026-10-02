@@ -351,8 +351,19 @@ Full state model: `docs/ARCHITECTURE.md` §8.
 ## 11. Maintenance responses
 
 A 503 from any request activates a process-wide maintenance flag; the whole
-navigator is replaced by `UnderConstruction503`. There is no retry or reset path
-in code.
+navigator is replaced by the v3 maintenance screen (`docs/ARCHITECTURE.md` §13).
+
+- **Recovery:** "Try again" (`recheckMaintenance`) sends one anonymous
+  `GET /matches/scheduled/filters` through `apiRequest`. This is an existing
+  public, read-only endpoint; no new endpoint is used.
+  - A 2xx clears the flag, unless another 503 arrived meanwhile.
+  - Anything else keeps it.
+  - It is single-flight, with no polling.
+- **Backend dependency (open):** the backend has no dedicated health or
+  maintenance-status endpoint. The probe treats "this public endpoint
+  answers 2xx" as "available again". If maintenance ever leaves public
+  match data served while other endpoints return 503, the screen clears.
+  The next 503 re-enters it.
 
 ---
 
@@ -416,10 +427,20 @@ than adding a parallel one.
 - **App version authority (none exists).** No endpoint returns a minimum
   supported or latest app version, and no store URLs are configured
   (searched this app, the admin dashboard and the sibling apps; probed
-  version / config paths on staging → 404). Required / available update is
-  **not implemented**. Needed contract: per platform (`ios` / `android`) the
-  minimum supported and latest version (and build), plus the official store
-  URL / id, from an unauthenticated endpoint the app reads at startup.
+  version / config paths on staging → 404).
+  - **What is built:** the v3 required / available update UI and the client
+    policy (`src/lib/appUpdatePolicy.ts`, `docs/ARCHITECTURE.md` §13).
+  - **What is not built:** `loadAppUpdatePolicy` (`src/services/appUpdate.ts`)
+    returns `null`, so in production neither state can appear (fail open).
+  - **Needed contract:** an unauthenticated endpoint the app reads at
+    startup, shaped
+    `{ android: { minimum_version, latest_version?, store_url, release_notes? }, ios: { … } }`.
+    - `store_url` must be this app's official listing:
+      `https://play.google.com/store/apps/details?id=com.lfaticketing.app`,
+      or `https://apps.apple.com/[cc/]app/[name/]id<digits>`.
+    - `release_notes` is an array of short strings.
+  - **To activate it:** fetch the endpoint through `apiRequest` inside
+    `loadAppUpdatePolicy` and pass the payload to `platformUpdatePolicy`.
 - Ticket `qr_image` representation. Only raster base64 data URIs are
   established (this repo's fixtures, and the LFA web client's allowlist for
   the same API). Whether production ever sends an http(s) URL, a storage path

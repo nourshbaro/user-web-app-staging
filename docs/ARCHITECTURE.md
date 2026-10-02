@@ -56,7 +56,7 @@ GestureHandlerRootView
             └─ CartProvider key={userCacheKey | "authenticated" | "guest"}
                └─ TicketHoldersProvider
                   └─ CartSheetProvider  (renders <CartSheet>)
-                     └─ MaintenanceGuard
+                     └─ SystemStateGate  (maintenance / update states, §13)
                         └─ AppChrome        (src/components/AppChrome.tsx)
                            ├─ ReservationHoldBar  (global reservation indicator, §8)
                            ├─ <Stack> (all routes)
@@ -214,7 +214,9 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | Checkout submission / capture context | `src/app/checkout.tsx` local state + `createCheckoutSubmissionAuthority` + `createRequestAuthority` | memory |
 | BLUE handoff and pending attempt | `src/lib/bluePaymentHandoff.ts` (module singletons) | memory |
 | Card handoff | `src/lib/cardPaymentHandoff.ts` (module singleton) | memory |
-| Maintenance flag | `src/services/api.ts` (`activateMaintenance`, `useSyncExternalStore` in `MaintenanceGuard`) | memory |
+| Maintenance flag | `src/services/api.ts` over `createMaintenanceAuthority` (`src/lib/maintenanceAuthority.ts`): `activateMaintenance`, `recheckMaintenance`; read by `SystemStateGate` (`useSyncExternalStore`) | memory |
+| App update decision | `useAppUpdateDecision` over `loadAppUpdatePolicy` (`src/services/appUpdate.ts`, no backend authority yet) and `src/lib/appUpdatePolicy.ts`; optional-prompt dismissal in `SystemStateGate` | memory (this launch) |
+| System-state dev preview | `src/lib/systemStatePreview.ts` (`__DEV__` only) | memory |
 | Theme mode | `ThemeProvider` (`system`/`light`/`dark`) | `lfa_theme` |
 | First-run onboarding seen | `useOnboardingGate` over `src/lib/onboarding.ts` | `lfa_onboarding_v1` |
 | Custom fonts registered | `useAppFonts` → `setCustomFontsLoaded` (`src/lib/fontFamilies.ts`) | memory |
@@ -861,12 +863,59 @@ entry is always CyberSource's own form.
 
 ---
 
-## 13. Maintenance
+## 13. System states: maintenance and app updates
 
-Any HTTP 503 (from `apiRequest` or the PDF fetch) calls `activateMaintenance()`;
-`MaintenanceGuard` then replaces the entire navigator with
-`UnderConstruction503`. The flag is never reset in code and the screen has no
-retry, so recovery requires an app restart.
+`SystemStateGate` (`src/components/maintenance/`) is the one owner of what
+the system states render. Exactly one shows, never stacked, in the fixed
+priority of `systemState` (`src/lib/appUpdatePolicy.ts`, LFA Screen v3
+layering):
+
+**maintenance → required update → optional update → normal app**
+
+- **Maintenance (existing backend authority).** Any HTTP 503 (from
+  `apiRequest` or the PDF fetch) calls `activateMaintenance()`. The gate
+  replaces the navigator with `MaintenanceScreen` (v3 `maintenance`); the
+  providers above it (auth, cart, holders) stay mounted and untouched, so
+  maintenance never logs out, clears the cart or touches a payment. When it
+  clears, the navigator mounts again at its initial route.
+  - **Recovery:** "Try again" calls `recheckMaintenance()`
+    (`src/services/api.ts` over `createMaintenanceAuthority`). It sends one
+    anonymous, read-only `GET /matches/scheduled/filters` through
+    `apiRequest` (`overrideAuthorizationToken: null`,
+    `skipUnauthenticatedNotify: true`, so a 401 can never end the session).
+    A 2xx clears maintenance unless another 503 arrived while it was in
+    flight. A 503, a transport failure or any other status keeps it.
+    Single-flight; the button is busy while it runs. Nothing else clears the
+    flag, and there is no polling.
+  - "Contact LFA on WhatsApp" uses the official contact
+    (`OFFICIAL_CONTACTS`, `src/lib/contact.ts`).
+- **Required / optional update (UI and policy implemented; no backend
+  authority).** `useAppUpdateDecision` reads `loadAppUpdatePolicy()` once
+  at startup and decides with `decideUpdate` (numeric version comparison,
+  installed version from the binary's Expo config). The provider resolves
+  `null` until a backend contract exists (`docs/API_INTEGRATION.md` §15), so
+  in production both states are inactive (fail open).
+  - `UpdatePromptDialog` (v3 `update_available` / `update_required`): a
+    modal over the running app. Required: no "Not now", the scrim does not
+    dismiss, Android Back is swallowed, opening the store never clears it.
+    Optional: "Not now" (or Back) dismisses it for that latest version, for
+    this launch; the scrim does not dismiss it.
+  - The store button opens only a validated official listing
+    (`validStoreUrl`: whole-string allowlist, not `URL` parsing, because
+    React Native's `URL` is a lenient shim), re-validated at the moment of
+    opening. No store URL → nothing opens; an inline error is shown.
+  - Copy: v3's version-specific wording only with a real `latest_version`;
+    otherwise version-free copy. The "What's new" panel renders only with
+    policy-supplied `release_notes`; there is no client list.
+- **Development preview (`__DEV__` only).** `src/lib/systemStatePreview.ts`,
+  driven by a dev deep link `lfa-app:///?systemStatePreview=maintenance` |
+  `updateAvailable` | `updateRequired` | `normal`. It overrides the
+  rendered state only. It never sets the real maintenance flag, and it
+  carries no store URL, version or release notes. Preview "Try again" runs
+  the same real probe. Production builds ignore it.
+- Motion: v3 `lfFade` (screen / scrim, 250 ms) and `lfDialog` (card scale
+  1.08 → 1 with fade, 300 ms, `cubic-bezier(.22,1,.36,1)`); reduced motion
+  → the final state immediately.
 
 ---
 
@@ -1064,7 +1113,7 @@ enabled.** No third-party i18n library is used.
 6. Holder-name completeness gates checkout submission.
 7. QR comes only from backend `qr_image` data URIs.
 8. Duplicate-submission guards on checkout and auth forms remain.
-9. 503 → maintenance, 401/403 → session invalidation remain centralized in `apiRequest`.
+9. 503 → maintenance, 401/403 → session invalidation remain centralized in `apiRequest`; maintenance clears only through `recheckMaintenance` (a successful backend probe), never by setting the flag.
 10. Platform splits (`.native` / `.web`) keep equivalent ownership on each platform.
 11. App content renders only when `I18nProvider` is ready, i.e. when the active native direction equals the app language's.
 12. Stadium maps, seat maps and QR codes never mirror (`PHYSICAL_LAYOUT_STYLE`).
