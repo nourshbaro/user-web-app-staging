@@ -24,7 +24,7 @@ type Props = {
  * Global "Reservation held · mm:ss · View" indicator. Presentation only: it
  * shows the cart owner's countdown and opens the existing cart. It never
  * computes expiry, extends, clears or re-creates a reservation (expiry itself
- * is handled by `CartContext` and explained by `ReservationExpiryNotice`).
+ * is handled by `CartContext` and explained by the v3 `HoldExpiredSheet`).
  *
  * It sits in the layout flow above the screen (never over it), so it cannot
  * cover navigation, content or transaction actions. It announces nothing per

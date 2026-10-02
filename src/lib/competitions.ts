@@ -188,6 +188,15 @@ export function competitionMatchRoute(match: { id: number }) {
  */
 export type StandingsResult = { kind: "table"; standings: CompetitionStandings } | { kind: "unavailable" };
 
+/**
+ * What a competition shows above its matches, from the backend `format`
+ * only (never the name): a `cup` is decided by knockout matches, so no
+ * league table is requested; every other format requests standings.
+ */
+export function standingsPlanFor(format: string | null | undefined): "table" | "knockout" {
+  return format === "cup" ? "knockout" : "table";
+}
+
 export type StandingsView = "loading" | "error" | "unavailable" | "none" | "table";
 
 /** Standings state: only a successful `standings: []` is "none"; a 404 is "unavailable"; failures are "error". */

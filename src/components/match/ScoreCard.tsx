@@ -1,4 +1,4 @@
-import { AppText } from "@/components/foundation";
+import { AppText, usePressFeedback } from "@/components/foundation";
 import { LiveDot } from "@/components/match/LiveBadge";
 import { TeamCrest } from "@/components/match/TeamCrest";
 import { matchLabels } from "@/components/match/matchLabels";
@@ -6,44 +6,46 @@ import { useTheme } from "@/components/ui";
 import { useI18n } from "@/i18n/I18nProvider";
 import { radius, spacing } from "@/lib/designTokens";
 import type { ApiMatch } from "@/types";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 
 /**
  * v3 Home score card ("Live now" / "Latest result"): both teams, the backend
  * score, and a status line. Presentation only, from backend fields: the score
  * appears only when the response has both scores (otherwise the kickoff time),
- * and "live" never carries a minute, which the API does not provide.
- *
- * Display-only for now: v3 opens a match-result screen (timeline/statistics)
- * that has no production data or route yet.
+ * and "LIVE · 67'" only with the backend list clock minute. Pressing it opens
+ * the one Match Details route, whose own status decides live/result.
  */
-export function ScoreCard({ match }: { match: ApiMatch }) {
+export function ScoreCard({ match, onPress }: { match: ApiMatch; onPress: () => void }) {
   const theme = useTheme();
   const i18n = useI18n();
+  const pressFeedback = usePressFeedback();
   const labels = matchLabels(match, i18n);
   const status = labels.isLive
-    ? labels.statusLabel
+    ? labels.liveMinute !== null
+      ? i18n.t("matchInfo.live.minute", { minute: labels.liveMinute })
+      : labels.statusLabel
     : labels.isCompleted
       ? i18n.t("home.result.fullTime", { date: labels.date })
       : labels.statusLabel;
 
   return (
-    <View
-      accessible
-      accessibilityRole="summary"
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
       accessibilityLabel={i18n.t("home.scoreCard.a11y", {
         home: labels.home,
         away: labels.away,
         score: labels.score ?? labels.time,
         status,
       })}
-      style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}
+      accessibilityHint={i18n.t("match.openHint")}
+      style={({ pressed }) => [local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }, pressFeedback(pressed)]}
     >
       <Side name={labels.home} team={match.home_team} />
       <View style={local.center}>
         <AppText variant="displayScore" align="center" numberOfLines={1}>{labels.score ?? labels.time}</AppText>
         <View style={local.statusRow}>
-          {labels.isLive ? <LiveDot /> : null}
+          {labels.isLive ? <LiveDot running={labels.clockRunning} /> : null}
           <AppText
             variant="overline"
             numberOfLines={1}
@@ -54,7 +56,7 @@ export function ScoreCard({ match }: { match: ApiMatch }) {
         </View>
       </View>
       <Side name={labels.away} team={match.away_team} />
-    </View>
+    </Pressable>
   );
 }
 

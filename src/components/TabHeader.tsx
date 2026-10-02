@@ -2,12 +2,14 @@ import { AppText } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/i18n/I18nProvider";
+import { storageUrl } from "@/lib/config";
 import { size, spacing } from "@/lib/designTokens";
+import { homeAvatar } from "@/lib/homeAvatar";
 import { teamInitials } from "@/lib/matchDiscovery";
 import { setPrimaryTabTransitionDirection } from "@/lib/navigationPresentation";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Image, Pressable, View } from "react-native";
 
 /**
@@ -31,13 +33,23 @@ export function TabHeader({ title, subtitle, trailing }: { title: string; subtit
 
 /**
  * Home's brand header (v3): LFA mark, app name and federation, and the
- * account avatar (initials from the signed-in profile) that opens Profile.
+ * account avatar that opens Profile. The avatar is the signed-in user's
+ * profile image from `AuthContext` (resolved like Profile's), falling back to
+ * the v3 initials, or the person mark when signed out (`homeAvatar`).
  */
 export function BrandHeader() {
   const theme = useTheme();
   const { t } = useI18n();
   const auth = useAuth();
-  const initials = auth.isAuthenticated && auth.user?.name ? teamInitials({ name: auth.user.name }).slice(0, 2) : null;
+  // An image that failed to load falls back until the user's avatar changes.
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const avatar = homeAvatar({
+    isAuthenticated: auth.isAuthenticated,
+    user: auth.user,
+    failedUri,
+    resolveImage: storageUrl,
+    initialsOf: (name) => teamInitials({ name }),
+  });
 
   return (
     <View style={local.brandRow}>
@@ -63,8 +75,16 @@ export function BrandHeader() {
         hitSlop={3}
         style={({ pressed }) => [local.avatar, { backgroundColor: theme.colors.hero, opacity: pressed ? 0.85 : 1 }]}
       >
-        {initials ? (
-          <AppText variant="label" tone="onHero" style={local.initials}>{initials}</AppText>
+        {avatar.kind === "image" ? (
+          <Image
+            source={{ uri: avatar.uri }}
+            style={local.avatarImage}
+            resizeMode="cover"
+            accessible={false}
+            onError={() => setFailedUri(avatar.uri)}
+          />
+        ) : avatar.kind === "initials" ? (
+          <AppText variant="label" tone="onHero" style={local.initials}>{avatar.initials}</AppText>
         ) : (
           <SymbolView
             accessible={false}
@@ -102,6 +122,7 @@ const local = {
   logo: { width: 36, height: 36 },
   appName: { fontSize: 18, lineHeight: 22 },
   // v3: 38pt night circle; kept at the 44pt minimum touch target via hitSlop.
-  avatar: { width: 38, height: 38, borderRadius: 19, alignItems: "center" as const, justifyContent: "center" as const },
+  avatar: { width: 38, height: 38, borderRadius: 19, overflow: "hidden" as const, alignItems: "center" as const, justifyContent: "center" as const },
+  avatarImage: { width: "100%" as const, height: "100%" as const },
   initials: { fontSize: 13, lineHeight: 17 },
 };

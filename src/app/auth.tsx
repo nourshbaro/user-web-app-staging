@@ -31,6 +31,7 @@ import {
   type PhoneValue,
 } from "@/lib/phoneNumber";
 import { backendProvidedError, userFacingError } from "@/lib/userFacingError";
+import { credentialOutcome, credentialUserId } from "@/lib/authCredentialOutcome";
 import { getSafeAuthReturnRoute } from "@/lib/authReturnRoute";
 
 type Mode =
@@ -52,46 +53,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
 const readString = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : null;
 
-const getUserId = (payload: unknown) => {
-  if (!isRecord(payload)) return null;
-  if (
-    typeof payload.user_id === "number" ||
-    typeof payload.user_id === "string"
-  )
-    return String(payload.user_id);
-  if (
-    isRecord(payload.user) &&
-    (typeof payload.user.id === "number" || typeof payload.user.id === "string")
-  ) {
-    return String(payload.user.id);
-  }
-  if (isRecord(payload.data)) return getUserId(payload.data);
-  return null;
-};
-
-const hasSessionToken = (payload: unknown): boolean => {
-  if (!isRecord(payload)) return false;
-  if (readString(payload.token) || readString(payload.access_token))
-    return true;
-  return hasSessionToken(payload.data);
-};
-
-const getVerificationStatus = (payload: unknown): boolean | null => {
-  if (!isRecord(payload)) return null;
-  if (typeof payload.email_verified === "boolean")
-    return payload.email_verified;
-  if (typeof payload.verified === "boolean") return payload.verified;
-  if (typeof payload.is_verified === "boolean") return payload.is_verified;
-  if (
-    typeof payload.email_verified_at === "string" &&
-    payload.email_verified_at.trim()
-  )
-    return true;
-  if (payload.email_verified_at === null) return false;
-  return (
-    getVerificationStatus(payload.user) ?? getVerificationStatus(payload.data)
-  );
-};
+const getUserId = credentialUserId;
 
 const getMessage = (payload: unknown, fallback: string) => {
   if (!isRecord(payload)) return fallback;
@@ -172,19 +134,9 @@ export default function AuthScreen() {
     setMessage(null);
     try {
       if (mode === "login") {
+        // No OTP step of its own: a code is asked for only when the backend
+        // withholds the session (`credentialOutcome`), never pre-emptively.
         const trimmedEmail = email.trim();
-        const verification =
-          await authService.checkEmailVerification(trimmedEmail);
-        if (!mountedRef.current) return;
-        if (verification && getVerificationStatus(verification) === false) {
-          showOtp(
-            verification,
-            "Please verify your email. A new code has been sent.",
-            trimmedEmail,
-          );
-          return;
-        }
-
         const result = await authService.login(
           trimmedEmail,
           password,
@@ -199,8 +151,7 @@ export default function AuthScreen() {
           return;
         }
         const payload = result.payload;
-        const userId = getUserId(payload);
-        if (userId && !hasSessionToken(payload)) {
+        if (credentialOutcome(payload) === "verify") {
           showOtp(
             payload,
             "Please verify your email. A new code has been sent.",
@@ -265,11 +216,25 @@ export default function AuthScreen() {
           toBackendPhoneDigits(registrationPhone.canonicalPhone),
         );
         if (!mountedRef.current) return;
-        showOtp(
-          payload,
-          "Account created. Enter the 6-digit OTP sent to your email.",
-        );
-        return;
+        const outcome = credentialOutcome(payload);
+        if (outcome === "verify") {
+          // The backend withheld the session: its verification code is required.
+          showOtp(
+            payload,
+            "Account created. Enter the 6-digit OTP sent to your email.",
+          );
+          return;
+        }
+        if (outcome === "signIn") {
+          // Created without a session: sign in normally (no OTP step).
+          setPassword("");
+          setPasswordConfirmation("");
+          setMode("login");
+          setMessage("Account created. Sign in to continue.");
+          toast.showToast({ variant: "success", title: "Account created", message: "Sign in to continue." });
+          return;
+        }
+        // `session`: the service already saved the token; finish below.
       }
 
       if (mode === "otp") {

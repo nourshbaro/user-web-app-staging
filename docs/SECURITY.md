@@ -147,6 +147,24 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   `ticketQrSource`). SVG, URLs, storage paths and other schemes are rejected;
   the client never generates or encodes QR data, and never derives it from
   `ticket_code`.
+- Reservation expiry keeps only a display snapshot (unique match ids and
+  whether a payment touched the session) to present v3 "Reservation expired";
+  no seats, lock keys, session, checkout or payment data survive the clear,
+  and "Start again" never re-reserves. "No payment was taken" is shown only
+  when no attempt, pending BLUE request or unknown outcome existed.
+- Switching payment method: a BLUE request whose page was left is parked
+  (`parkPaymentAttempt`), so Other may start its own card attempt and BLUE
+  resumes its stored URL without resubmitting. In-progress attempts and
+  unknown outcomes still block every method; a restart with an unsettled
+  record still fails closed. A BLUE order left open may be approved later in
+  the BLUE app even after a card success (backend reconciliation, not
+  visible to the app).
+- Login / Register never impose a client-side OTP; the backend decides by
+  withholding the session (`credentialOutcome`). A backend-required code is
+  still collected; password recovery keeps its OTP steps.
+- The BLUE handoff record carries an optional display-only
+  `purchasedMatchId` (success → "View my ticket"); it never takes part in URL
+  validation, terminal handling, payment locks or cart clearing.
 - Avatar upload / removal results are published into `AuthContext` only while
   the authentication generation that started them is current
   (`runOwnedAvatarMutation`), so one account's result never reaches another.

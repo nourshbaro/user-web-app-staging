@@ -88,8 +88,10 @@ const local = {
     paddingHorizontal: spacing.xl,
     borderRadius: radius.xl,
   },
-  title: { fontSize: 17, lineHeight: 22 },
-  message: { fontSize: 14, lineHeight: 20 },
+  // Full width (centred text, not a shrink-wrapped box): Android can measure a
+  // shrink-wrapped bold line short and drop its last word ("Your cart is").
+  title: { fontSize: 17, lineHeight: 22, alignSelf: "stretch" as const },
+  message: { fontSize: 14, lineHeight: 20, alignSelf: "stretch" as const },
   icon: {
     width: 48,
     height: 48,

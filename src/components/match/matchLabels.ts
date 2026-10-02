@@ -1,6 +1,6 @@
 import type { useI18n } from "@/i18n/I18nProvider";
 import { formatCalendarDate, formatTime } from "@/lib/format";
-import { matchScore, matchStatusPresentation } from "@/lib/matchDiscovery";
+import { liveClockOf, matchScore, matchStatusPresentation } from "@/lib/matchDiscovery";
 import type { ApiMatch } from "@/types";
 
 type I18n = ReturnType<typeof useI18n>;
@@ -25,9 +25,15 @@ export function matchLabels(match: ApiMatch, i18n: I18n) {
           : status.known === "unknown"
             ? i18n.t("match.status.unknown")
             : status.raw;
+  // The backend live minute (list clock), never a client clock.
+  const clock = liveClockOf(match);
   return {
     home,
     away,
+    liveMinute: clock.minute,
+    clockRunning: clock.running,
+    /** v3 "LIVE 67'" on list rows; plain "Live" without a backend minute. */
+    liveLabel: clock.minute !== null ? i18n.t("match.status.liveMinute", { minute: clock.minute }) : i18n.t("match.status.live"),
     date,
     time,
     venue,

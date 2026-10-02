@@ -6,17 +6,17 @@ import { useEffect, useState } from "react";
 import { Animated, Text, View } from "react-native";
 
 /**
- * v3 live indicator: a red dot that blinks (static under reduced motion).
- * Shown only for a backend `live` status; it never carries a minute, which
- * the API does not provide.
+ * v3 live indicator: a red dot that blinks while the backend clock runs
+ * (static when `clock_running` is false, and under reduced motion). Shown
+ * only for a backend `live` status.
  */
-export function LiveDot({ size = 6 }: { size?: number }) {
+export function LiveDot({ size = 6, running = true }: { size?: number; running?: boolean | null }) {
   const theme = useTheme();
   const reducedMotion = useReducedMotion();
   const [blink] = useState(() => new Animated.Value(1));
 
   useEffect(() => {
-    if (reducedMotion) {
+    if (reducedMotion || running === false) {
       blink.setValue(1);
       return;
     }
@@ -29,7 +29,7 @@ export function LiveDot({ size = 6 }: { size?: number }) {
     );
     loop.start();
     return () => loop.stop();
-  }, [blink, reducedMotion]);
+  }, [blink, reducedMotion, running]);
 
   return (
     <Animated.View
@@ -40,8 +40,8 @@ export function LiveDot({ size = 6 }: { size?: number }) {
   );
 }
 
-/** v3 row badge for a live match: dot + label on the soft brand surface. */
-export function LiveBadge({ label }: { label: string }) {
+/** v3 row badge for a live match: dot + label ("LIVE 67'" with a backend minute) on the soft brand surface. */
+export function LiveBadge({ label, running }: { label: string; running?: boolean | null }) {
   const theme = useTheme();
   const { meta } = useI18n();
   return (
@@ -51,7 +51,7 @@ export function LiveBadge({ label }: { label: string }) {
       accessibilityLabel={label}
       style={[local.badge, { backgroundColor: theme.colors.selectedSurface }]}
     >
-      <LiveDot />
+      <LiveDot running={running} />
       <Text
         numberOfLines={1}
         style={[local.text, fontStyleFor("text", "600", meta.script), { color: theme.colors.brandInk }, meta.script === "latin" && local.upper]}

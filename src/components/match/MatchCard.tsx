@@ -60,7 +60,7 @@ export function MatchCard({ match, onPress, variant = "listed", first = false, i
           date: labels.date,
           time: labels.time,
           venue: labels.venue,
-          status: labels.statusLabel,
+          status: labels.isLive ? labels.liveLabel : labels.statusLabel,
           score: labels.score ?? "",
         })}
         accessibilityHint={i18n.t("match.openHint")}
@@ -101,7 +101,7 @@ export function MatchCard({ match, onPress, variant = "listed", first = false, i
           {labels.isScheduled ? (
             <AppText variant="caption" tone="muted" numberOfLines={1}>{labels.statusLabel}</AppText>
           ) : labels.isLive ? (
-            <LiveBadge label={labels.statusLabel} />
+            <LiveBadge label={labels.liveLabel} running={labels.clockRunning} />
           ) : (
             // Any other backend status (e.g. completed → "Full time", or none) shown as-is, neutrally.
             <View style={[local.otherBadge, { backgroundColor: theme.colors.bgAlt }]}>

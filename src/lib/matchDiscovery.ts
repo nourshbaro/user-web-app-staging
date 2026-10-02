@@ -2,9 +2,10 @@
  * Match-discovery presentation rules (pure module, unit-tested).
  *
  * Backend reality (see docs/API_INTEGRATION.md §5): `/matches/scheduled`
- * returns scheduled fixtures only — `match_date` ("YYYY-MM-DD"), a clock-only
- * or ISO `kickoff_at`, and a `status` string. There is no live, score, result
- * or competition data, so nothing here derives those states.
+ * returns fixtures with `match_date` ("YYYY-MM-DD"), a clock-only or ISO
+ * `kickoff_at` and a `status` string; `status=live|completed` lists add
+ * nullable scores and the flat live clock (`clock_minute`, `clock_running`).
+ * Nothing here derives a state, score or minute the backend did not send.
  *
  * Timezone: the backend contract for `match_date` + clock-only `kickoff_at` is
  * not documented. These values are read as local wall-clock time (as the app
@@ -271,6 +272,28 @@ export function latestCompletedMatch<T extends Pick<ApiMatch, "match_date" | "ki
 export type MatchTab = "upcoming" | "live" | "results";
 
 export const MATCH_TABS: readonly MatchTab[] = ["upcoming", "live", "results"];
+
+/** The Matches route opened on a segment (Home "See all"); Upcoming is the plain route. */
+export function matchesTabRoute(tab: MatchTab) {
+  return tab === "upcoming" ? ("/matches" as const) : { pathname: "/matches" as const, params: { tab } };
+}
+
+/** A `tab` route parameter (e.g. Home "See all" → `/matches?tab=live`); anything else is Upcoming. */
+export function matchTabFromParam(value: unknown): MatchTab {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return MATCH_TABS.find((tab) => tab === raw) ?? "upcoming";
+}
+
+/**
+ * The backend live clock of a list match (`clock_minute` / `clock_running`
+ * from `/matches/scheduled`), only for a `live` status. A null, negative or
+ * non-numeric minute is "no minute" — there is no client-side match clock.
+ */
+export function liveClockOf(match: Pick<ApiMatch, "status" | "clock_minute" | "clock_running">) {
+  if (matchStatusPresentation(match.status).known !== "live") return { minute: null as number | null, running: null as boolean | null };
+  const minute = typeof match.clock_minute === "number" && Number.isFinite(match.clock_minute) && match.clock_minute >= 0 ? Math.floor(match.clock_minute) : null;
+  return { minute, running: typeof match.clock_running === "boolean" ? match.clock_running : null };
+}
 
 /** `/matches/scheduled` status for a tab: Upcoming is the default list (no status). */
 export function statusForTab(tab: MatchTab): MatchFilters["status"] {

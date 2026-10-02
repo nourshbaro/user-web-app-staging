@@ -1,4 +1,4 @@
-import { AppText, DirectionalChevron, StatusBadge } from "@/components/foundation";
+import { AppText, DirectionalChevron, SegmentedControl, StatusBadge } from "@/components/foundation";
 import { PitchArt } from "@/components/match/PitchArt";
 import { TeamCrest } from "@/components/match/TeamCrest";
 import { matchLabels } from "@/components/match/matchLabels";
@@ -6,6 +6,8 @@ import { useTheme } from "@/components/ui";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useI18n } from "@/i18n/I18nProvider";
 import type { MessageKey } from "@/i18n/messages/en";
+import { EASE_OUT_V3, statBarMotion, statBarOrigin, timelineRowMotion } from "@/lib/matchMotion";
+import { shortPlayerName } from "@/lib/playerName";
 import { layout, size, spacing } from "@/lib/designTokens";
 import {
   matchDetailFacts,
@@ -21,7 +23,8 @@ import type { ApiMatchDetail } from "@/types";
 import { StatusBar } from "expo-status-bar";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useState } from "react";
-import { Animated, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Animated, Easing, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import Reanimated, { FadeInDown } from "react-native-reanimated";
 
 type Tab = "timeline" | "stats";
 
@@ -58,11 +61,12 @@ export function MatchInfoView({
   const theme = useTheme();
   const i18n = useI18n();
   const [tab, setTab] = useState<Tab>("timeline");
+  const reducedMotion = useReducedMotion();
   const labels = matchLabels(match, i18n);
   const facts = matchDetailFacts(match);
   const rows = timelineRows(match);
   const stats = statRows(match);
-  const scorers = scorerLines(rows);
+  const scorers = scorerLines(rows, shortPlayerName);
   const context = [facts.competitionName, facts.roundLabel, labels.date].filter(Boolean).join(" · ");
   const location = match.stadium?.location?.trim();
   const venue = location ? `${labels.venue}, ${location}` : labels.venue;
@@ -166,40 +170,25 @@ export function MatchInfoView({
 
       <View style={[local.sheet, { backgroundColor: theme.colors.background }]}>
         <View style={[local.column, { width: contentWidth }]}>
-          <View accessibilityRole="tablist" style={[local.segments, { backgroundColor: theme.colors.segment }]}>
-            {(["timeline", "stats"] as const).map((key) => {
-              const selected = tab === key;
-              return (
-                <Pressable
-                  key={key}
-                  onPress={() => setTab(key)}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected }}
-                  aria-selected={selected}
-                  // The 40pt v3 segment reaches 46pt through the track padding.
-                  hitSlop={{ top: 3, bottom: 3 }}
-                  // Both states define boxShadow: a processed style key is never dropped between renders.
-                  style={[
-                    local.segment,
-                    selected
-                      ? { backgroundColor: theme.colors.surface, boxShadow: "0px 1px 4px rgba(0,0,0,0.12)" }
-                      : { backgroundColor: "transparent", boxShadow: "0px 0px 0px rgba(0,0,0,0)" },
-                  ]}
-                >
-                  <AppText variant="meta" style={{ fontWeight: selected ? "600" : "400", fontSize: 14 }}>
-                    {key === "timeline" ? i18n.t("matchInfo.tab.timeline") : i18n.t("matchInfo.tab.stats")}
-                  </AppText>
-                </Pressable>
-              );
-            })}
-          </View>
+          {/* v3 sliding thumb (shared control; instant under reduced motion). */}
+          <SegmentedControl
+            options={[
+              { key: "timeline", label: i18n.t("matchInfo.tab.timeline") },
+              { key: "stats", label: i18n.t("matchInfo.tab.stats") },
+            ]}
+            value={tab}
+            onChange={setTab}
+            accessibilityLabel={i18n.t("matchInfo.tabs.a11y")}
+          />
 
           <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
             {tab === "timeline" ? (
               rows.length ? (
                 <>
                   {rows.map((row, index) => (
-                    <TimelineItem key={row.key} row={row} first={index === 0} />
+                    <Reanimated.View key={row.key} entering={rowEntrance(index, reducedMotion)}>
+                      <TimelineItem row={row} first={index === 0} />
+                    </Reanimated.View>
                   ))}
                   {experience === "result" ? (
                     <View style={[local.marker, { borderTopColor: theme.colors.hairline }]}>
@@ -224,8 +213,9 @@ export function MatchInfoView({
                   <AppText variant="overline" tone="muted" numberOfLines={1} style={local.shrink}>{labels.home}</AppText>
                   <AppText variant="overline" tone="muted" numberOfLines={1} style={local.shrink}>{labels.away}</AppText>
                 </View>
-                {stats.map((stat) => (
-                  <StatItem key={stat.key} stat={stat} />
+                {stats.map((stat, index) => (
+                  // v3: Stats rows do not rise in; only their bars grow (StatItem).
+                  <StatItem key={stat.key} stat={stat} index={index} />
                 ))}
               </>
             ) : (
@@ -246,6 +236,55 @@ function HeroTeam({ name, team, crestSize }: { name: string; team: ApiMatchDetai
       <TeamCrest team={team} size={crestSize} onHero />
       <AppText variant="bodyStrong" tone="onHero" align="center" numberOfLines={3} style={local.teamName}>{name}</AppText>
     </View>
+  );
+}
+
+/**
+ * v3 timeline row entrance (`lfEnter .36s`, 60ms + 35ms per row) when the
+ * Timeline is shown. None under reduced motion; presentation only.
+ */
+function rowEntrance(index: number, reducedMotion: boolean) {
+  const motion = timelineRowMotion(index, reducedMotion);
+  return motion ? FadeInDown.delay(motion.delay).duration(motion.duration) : undefined;
+}
+
+/**
+ * One v3 share bar: the real share as its width, grown from the centre line
+ * (`lfBar`, `statBarMotion`). Final width at once under reduced motion.
+ */
+function StatBar({ share, color, side, index }: { share: number; color: string; side: "home" | "away"; index: number }) {
+  const reducedMotion = useReducedMotion();
+  const { isRTL } = useI18n();
+  const [grow] = useState(() => new Animated.Value(statBarMotion(index, reducedMotion) ? 0 : 1));
+  useEffect(() => {
+    const motion = statBarMotion(index, reducedMotion);
+    if (!motion) {
+      grow.setValue(1);
+      return;
+    }
+    grow.setValue(0);
+    const animation = Animated.timing(grow, {
+      toValue: 1,
+      duration: motion.duration,
+      delay: motion.delay,
+      easing: Easing.bezier(...EASE_OUT_V3),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [grow, index, reducedMotion]);
+  return (
+    <Animated.View
+      style={[
+        local.fill,
+        {
+          width: `${share}%`,
+          backgroundColor: color,
+          transformOrigin: statBarOrigin(side, isRTL),
+          transform: [{ scaleX: grow }],
+        },
+      ]}
+    />
   );
 }
 
@@ -284,10 +323,11 @@ function TimelineItem({ row, first }: { row: TimelineRow; first: boolean }) {
   const kindLabel = i18n.t(TIMELINE_KIND_LABEL[row.kind]);
   const substitution = row.kind === "substitution";
   // v3: a substitution names the player coming on, with "Off {player}" beneath.
-  const title = (substitution ? row.playerIn : row.player) ?? row.teamName ?? kindLabel;
+  // v3 "F. LastName" display; the spoken label below keeps the full backend name.
+  const title = shortPlayerName(substitution ? row.playerIn : row.player) ?? row.teamName ?? kindLabel;
   const detail =
     substitution && row.playerOut
-      ? i18n.t("matchInfo.event.subOff", { player: row.playerOut })
+      ? i18n.t("matchInfo.event.subOff", { player: shortPlayerName(row.playerOut) ?? row.playerOut })
       : row.kind !== "other"
         ? kindLabel
         : row.side === null
@@ -355,7 +395,7 @@ function TimelineItem({ row, first }: { row: TimelineRow; first: boolean }) {
   );
 }
 
-function StatItem({ stat }: { stat: StatRow }) {
+function StatItem({ stat, index }: { stat: StatRow; index: number }) {
   const theme = useTheme();
   const i18n = useI18n();
   const label = i18n.t(`matchInfo.stat.${stat.key}`);
@@ -384,10 +424,10 @@ function StatItem({ stat }: { stat: StatRow }) {
       {bars ? (
         <View style={local.bars} accessible={false} importantForAccessibility="no-hide-descendants">
           <View style={[local.track, local.trackHome, { backgroundColor: theme.colors.bgAlt }]}>
-            <View style={[local.fill, { width: `${stat.homeShare ?? 0}%`, backgroundColor: (stat.home ?? 0) >= (stat.away ?? 0) ? theme.colors.textStrong : theme.colors.textMuted }]} />
+            <StatBar side="home" index={index} share={stat.homeShare ?? 0} color={(stat.home ?? 0) >= (stat.away ?? 0) ? theme.colors.textStrong : theme.colors.textMuted} />
           </View>
           <View style={[local.track, { backgroundColor: theme.colors.bgAlt }]}>
-            <View style={[local.fill, { width: `${stat.awayShare ?? 0}%`, backgroundColor: (stat.away ?? 0) >= (stat.home ?? 0) ? theme.colors.textStrong : theme.colors.textMuted }]} />
+            <StatBar side="away" index={index} share={stat.awayShare ?? 0} color={(stat.away ?? 0) >= (stat.home ?? 0) ? theme.colors.textStrong : theme.colors.textMuted} />
           </View>
         </View>
       ) : null}
@@ -441,8 +481,6 @@ const local = {
     paddingHorizontal: layout.gutter,
   },
   column: { alignSelf: "center" as const, gap: 14 },
-  segments: { flexDirection: "row" as const, padding: 3, borderRadius: 12 },
-  segment: { flex: 1, minHeight: 40, borderRadius: 9, alignItems: "center" as const, justifyContent: "center" as const },
   card: { borderRadius: 20, overflow: "hidden" as const },
   empty: { paddingVertical: spacing.xl, paddingHorizontal: spacing.lg },
   // v3 timeline row: grid 1fr 56 1fr, padding 11 14.

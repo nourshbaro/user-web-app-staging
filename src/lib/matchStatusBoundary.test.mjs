@@ -320,7 +320,7 @@ test("the timeline view presents each known kind and keeps the neutral fallback"
   assert.match(view, /theme\.colors\.eventRedCard/);
   assert.match(view, /swap_horiz/);
   assert.match(view, /local\.neutralDot/);
-  assert.match(view, /i18n\.t\("matchInfo\.event\.subOff", \{ player: row\.playerOut \}\)/);
+  assert.match(view, /i18n\.t\("matchInfo\.event\.subOff", \{ player: shortPlayerName\(row\.playerOut\) \?\? row\.playerOut \}\)/);
   // Kinds are the mapped backend type only, never re-derived in the view.
   assert.doesNotMatch(view, /event\.type|row\.player(In|Out) \?\s*"substitution"/);
 });

@@ -8,16 +8,16 @@
  */
 
 /**
- * Routes that present the reservation countdown themselves (so a second timer
- * would repeat it), or that must keep the provider/transaction surface free:
- * the Cart (its v3 countdown card), the Card and BLUE payment screens, and the
- * payment result screens. Match Details, ticket holders and Checkout show this
- * indicator as their one countdown (v3).
+ * Routes without this indicator: the Cart (its v3 countdown card is the same
+ * owner value) and the payment result screens (the reservation is settled
+ * there). Everywhere else in the purchase journey — Match Details, ticket
+ * holders, Checkout and the Card / BLUE payment screens — this bar is the one
+ * countdown (v3); the payment screens no longer draw their own timer.
  */
 const OWN_COUNTDOWN_OR_TRANSACTION_ROUTES = [
   /^\/cart$/,
-  /^\/checkout\/(card|blue)(\/.*)?$/,
   /^\/checkout\/(success|failed)$/,
+  /^\/checkout\/blue\/(success|failed)$/,
 ];
 
 export function reservationIndicatorAllowedOn(pathname: string) {

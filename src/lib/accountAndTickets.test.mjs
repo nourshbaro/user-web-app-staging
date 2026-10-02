@@ -275,7 +275,7 @@ test("standings service: malformed success, server and network failures reject (
 
 test("the Competitions screen gives 'unavailable' its own honest, retryable state", async () => {
   const screen = await read("../app/competitions.tsx");
-  assert.match(screen, /view === "unavailable" \? \(\s*<StatePanel[\s\S]*?competitions\.standings\.unavailable\.title[\s\S]*?onPress: \(\) => selectedId !== null && void loadDetail\(selectedId\)/);
+  assert.match(screen, /view === "unavailable" \? \(\s*<StatePanel[\s\S]*?competitions\.standings\.unavailable\.title[\s\S]*?onPress: \(\) => selectedId !== null && void loadDetail\(selectedId, knockout\)/);
   assert.match(screen, /standings\.data\?\.kind === "table"/);
 });
 

@@ -20,6 +20,7 @@ import {
   readPendingBluePaymentAttempt,
   savePendingBluePaymentAttempt,
 } from "@/lib/bluePaymentHandoff";
+import { singlePurchasedMatchId } from "@/lib/checkoutResultParams";
 import { validateBluePaymentUrl } from "@/lib/bluePaymentRedirect";
 import {
   beginCaptureContextRequest,
@@ -190,7 +191,7 @@ function CheckoutScreen() {
   );
 
   const launchBluePayment = useCallback(
-    (paymentUrl: string, sessionId: string) => {
+    (paymentUrl: string, sessionId: string, purchasedMatchId: string | null = null) => {
       if (Platform.OS === "web" && typeof window === "undefined") {
         throw new Error("Blue payment navigation is unavailable.");
       }
@@ -206,7 +207,7 @@ function CheckoutScreen() {
         return;
       }
 
-      const handoffId = createBluePaymentHandoff(paymentUrl, sessionId);
+      const handoffId = createBluePaymentHandoff(paymentUrl, sessionId, purchasedMatchId);
       try {
         router.navigate({
           pathname: "/checkout/blue/payment",
@@ -230,9 +231,10 @@ function CheckoutScreen() {
   }, [onHardwareBack]);
 
   useEffect(() => {
-    if (isFocused && !cart.isLoading && !cart.sessionId && !cart.items.length)
+    // After expiry the owner has already routed Home under its sheet.
+    if (isFocused && !cart.isLoading && !cart.sessionId && !cart.items.length && !cart.expiredHold)
       router.replace("/cart");
-  }, [cart.isLoading, cart.items.length, cart.sessionId, isFocused]);
+  }, [cart.expiredHold, cart.isLoading, cart.items.length, cart.sessionId, isFocused]);
 
   const loadCaptureContext = useCallback(
     (sessionId: string, force = false): Promise<string> => {
@@ -360,10 +362,10 @@ function CheckoutScreen() {
       cartSessionTicket.sessionId as string,
     );
     if (reusableAttempt) {
-      // Continuing the held BLUE attempt reopens its own URL; nothing is
-      // submitted. If a provider failure redirect released the session's
-      // gate, reopening re-acquires it first (so Card stays blocked while
-      // the BLUE page is open again). Another method's attempt blocks it.
+      // Continuing the BLUE request reopens its own stored URL; nothing is
+      // submitted, so no second BLUE order is created. A parked attempt
+      // (the BLUE page was left) is re-held first, so another method waits
+      // while the BLUE page is open again. A running card attempt blocks it.
       const held = readPaymentAttempt(reusableAttempt.sessionId);
       if (held && held.method !== "blue") {
         toast.showToast({
@@ -391,6 +393,8 @@ function CheckoutScreen() {
         launchBluePayment(
           reusableAttempt.paymentUrl,
           reusableAttempt.sessionId,
+          // The match this BLUE order was submitted for, kept with the order.
+          reusableAttempt.purchasedMatchId ?? null,
         );
       } catch {
         toast.showToast({
@@ -472,9 +476,11 @@ function CheckoutScreen() {
         config.bluePaymentAllowedOrigin,
       );
 
+      const purchasedMatchId = singlePurchasedMatchId(ticketsByMatch);
       savePendingBluePaymentAttempt({
         sessionId: submissionTicket.sessionId,
         paymentUrl: validatedUrl,
+        purchasedMatchId,
         ...(response.order_id !== undefined
           ? { orderId: String(response.order_id) }
           : {}),
@@ -491,7 +497,7 @@ function CheckoutScreen() {
             : {}),
       });
 
-      launchBluePayment(validatedUrl, submissionTicket.sessionId);
+      launchBluePayment(validatedUrl, submissionTicket.sessionId, purchasedMatchId);
       return;
     } catch (err) {
       const failure = paymentFailureKind(errorFacts(err));

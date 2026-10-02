@@ -107,7 +107,7 @@ response shape at runtime and throws on mismatch.
 | `POST /auth/login` | `email, password, remember` | May return `reason: "phone_required"` (2xx or error body) |
 | `POST /auth/complete-phone` | `email, password, phone` | Saves session |
 | `POST /auth/register` | `name, email, password, password_confirmation, phone` | Saves session |
-| `POST /auth/verify-otp` | `user_id` and/or `email`, `code` | Saves session |
+| `POST /auth/verify-otp` | `user_id` and/or `email`, `code` | Saves session. Used after Login / Register **only** when the backend returns an account id without a session token (`credentialOutcome`) |
 | `POST /auth/resend-otp` | `user_id` and/or `email` | |
 | `POST /auth/check-email-verification` → `/auth/check-email` → `/auth/email-verification-status` | `email` | Tries in order, skipping 404/405; returns `null` if none exist |
 | `POST /auth/forgot-password` | `email` | |
@@ -154,6 +154,15 @@ All four are cached in a module-level map for 5 minutes, keyed by path;
   (`reason`, `status_changed_by`, `status_changed_at`) where returned. They
   are **flat** on the list item (`ApiMatch.clock_minute`, …), unlike the
   single-match response below; the two shapes are never merged into one type.
+  Staging (2026-10-01) also returns them on `?status=completed` items.
+- **Authoritative live minute in lists:** `clock_minute` / `clock_running`
+  of the list item itself (`liveClockOf`, `src/lib/matchDiscovery.ts`), shown
+  only for a `live` status ("LIVE 67'"; the dot blinks only while
+  `clock_running` is true). A null / negative / non-numeric minute shows plain
+  "Live". No per-card detail request and no client clock.
+- **Competition matches carry no clock** (`/competitions/{id}/matches` has no
+  `clock_*` fields): competition cards show "Live" without a minute.
+  **Backend dependency:** the list clock fields on that endpoint.
 - No favourite or availability/sold-out data; the app does not derive any.
   `/matches/scheduled/filters` lists teams/stadiums of scheduled fixtures.
 
@@ -227,7 +236,13 @@ country: "LB" }`, `tickets_by_match: { [matchId]: [{ holder_name }] }`,
 `payment.transient_token`.
 `CheckoutSubmitResponse` (all optional): `order_id`, `order_number`,
 `reference`, `payment_reference`, `status`, `payment { payment_url, reference,
-payment_reference, status }`.
+payment_reference, status }`. It identifies **no ticket**. "View my ticket"
+after success therefore uses the submitted `tickets_by_match` key when the
+order covered exactly one match (`singlePurchasedMatchId`; display-only
+`match_id` result param) and the backend `order_code` of that match's portal
+tickets (`ticketFocusIndex`). Several matches → the My Tickets list.
+**Backend dependency** for a direct ticket link: ticket codes (or the order's
+match ids) in the submit / BLUE return response.
 
 ### Portal (orders and tickets) — `profileService` in `src/services/auth.ts`
 | Method & path | Notes |
@@ -390,6 +405,21 @@ than adding a parallel one.
 - Server-side idempotency of `/checkout/mobile/submit` for a repeated session.
 - Backend behavior on BLUE callback, and how web BLUE results are finalized.
 - The meaning of the `password` header and of `remember` on login.
+- **BLUE order left open when paying by card.** "Continue with BLUE" makes the
+  backend create a BLUE order (staging: the BLUE page shows its order id).
+  The app lets the user pay by card afterwards (a separate submit for the
+  same `checkout_session_id`, as the web client already does); it cannot
+  cancel the BLUE order or read its status, and submit idempotency is
+  unconfirmed. Whether the backend accepts a card submit while a BLUE order
+  is pending, and what happens if that BLUE order is approved after a card
+  success, is backend-owned and unverified from the client.
+- **App version authority (none exists).** No endpoint returns a minimum
+  supported or latest app version, and no store URLs are configured
+  (searched this app, the admin dashboard and the sibling apps; probed
+  version / config paths on staging → 404). Required / available update is
+  **not implemented**. Needed contract: per platform (`ios` / `android`) the
+  minimum supported and latest version (and build), plus the official store
+  URL / id, from an unauthenticated endpoint the app reads at startup.
 - Ticket `qr_image` representation. Only raster base64 data URIs are
   established (this repo's fixtures, and the LFA web client's allowlist for
   the same API). Whether production ever sends an http(s) URL, a storage path

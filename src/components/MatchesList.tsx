@@ -15,12 +15,13 @@ import {
   groupMatchesByDate,
   matchListState,
   matchQueryFor,
+  matchTabFromParam,
   needsSeparateLiveProbe,
   sortMatchesByKickoff,
   type MatchTab,
 } from "@/lib/matchDiscovery";
 import type { ApiMatch, FilterOption, MatchFilters } from "@/types";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { RefreshControl, ScrollView, View } from "react-native";
 
@@ -52,7 +53,9 @@ function optionName(options: FilterOption[], slug?: string) {
 export function MatchesList() {
   const { t, plural } = useI18n();
   const [filters, setFilters] = useState<MatchFilters>({});
-  const [tab, setTab] = useState<MatchTab>("upcoming");
+  // Home "See all" opens Live / Results directly (`/matches?tab=…`); validated, default Upcoming.
+  const params = useLocalSearchParams<{ tab?: string | string[] }>();
+  const [tab, setTab] = useState<MatchTab>(() => matchTabFromParam(params.tab));
   const [sheetOpen, setSheetOpen] = useState(false);
   // New key per opening, so the sheet's draft always starts from the applied selection.
   const [sheetKey, setSheetKey] = useState(0);

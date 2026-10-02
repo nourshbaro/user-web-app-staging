@@ -7,6 +7,7 @@ import {
   getCheckoutResultMetadata,
   getCheckoutResultPresentation,
   getCheckoutResultProviderKey,
+  purchasedTicketsAction,
   type CheckoutResultOutcome,
 } from "@/lib/checkoutResultPresentation";
 import { spacing } from "@/lib/designTokens";
@@ -32,6 +33,7 @@ export function CheckoutPaymentResult({ outcome, result }: Props) {
   const insets = useSafeAreaInsets();
   const succeeded = outcome === "success";
   const presentation = getCheckoutResultPresentation(outcome);
+  const ticketsAction = purchasedTicketsAction(result);
   const title = i18n.t(presentation.titleKey);
   const providerKey = getCheckoutResultProviderKey(result.provider);
   const rows = [
@@ -58,10 +60,17 @@ export function CheckoutPaymentResult({ outcome, result }: Props) {
           variant={succeeded ? "success" : "failed"}
           title={title}
           message={i18n.t(presentation.messageKey)}
-          action={{
-            label: i18n.t(presentation.primaryAction.labelKey),
-            onPress: () => router.replace(presentation.primaryAction.href),
-          }}
+          action={
+            succeeded
+              ? {
+                  label: i18n.t(ticketsAction.labelKey),
+                  onPress: () => router.replace(ticketsAction.href),
+                }
+              : {
+                  label: i18n.t(presentation.primaryAction.labelKey),
+                  onPress: () => router.replace(presentation.primaryAction.href),
+                }
+          }
           secondaryAction={{
             label: i18n.t(presentation.secondaryAction.labelKey),
             onPress: () => router.replace("/"),

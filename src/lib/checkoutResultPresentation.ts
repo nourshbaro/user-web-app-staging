@@ -28,6 +28,22 @@ export function getCheckoutResultPresentation(outcome: CheckoutResultOutcome) {
   } as const;
 }
 
+/**
+ * "View my ticket" after success: the purchased match's tickets in My Tickets
+ * (opened at the order's first ticket) when the order covered one match;
+ * otherwise the My Tickets list. Built only from the result's backend ids.
+ */
+export function purchasedTicketsAction(result: CheckoutResultParams) {
+  if (!result.match_id) return { labelKey: "result.success.tickets" as const, href: "/tickets" as const };
+  return {
+    labelKey: "result.success.ticket" as const,
+    href: {
+      pathname: "/tickets" as const,
+      params: { match: result.match_id, ...(result.order_number ? { order: result.order_number } : {}) },
+    },
+  };
+}
+
 /** "Paid with" label key, only when the provider is known. */
 export function getCheckoutResultProviderKey(provider: CheckoutResultParams["provider"]) {
   if (provider === "blue") return "result.provider.blue" as const;

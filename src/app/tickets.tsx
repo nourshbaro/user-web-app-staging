@@ -16,7 +16,7 @@ import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useI18n } from "@/i18n/I18nProvider";
-import { layout, radius, size, spacing } from "@/lib/designTokens";
+import { layout, size, spacing } from "@/lib/designTokens";
 import { formatDate, formatDateTime, formatTime } from "@/lib/format";
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import {
@@ -26,6 +26,8 @@ import {
   ticketListView,
   ticketQrSource,
   withBackendQrs,
+  purchasedTicketFocus,
+  ticketFocusIndex,
   ticketSeatFacts,
   ticketVisualState,
   TICKET_FILTERS,
@@ -35,11 +37,12 @@ import {
 import { getUserScopedCacheGeneration } from "@/lib/userScopedCache";
 import { profileService } from "@/services/auth";
 import type { PortalMatch, PortalTicket } from "@/types";
-import { router, Stack } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
+  Easing,
   Image,
   Modal,
   Platform,
@@ -75,6 +78,10 @@ function TicketsScreen() {
   const [detailError, setDetailError] = useState(false);
   const [listRequest] = useState(createRequestAuthority);
   const [detailRequest] = useState(createRequestAuthority);
+  // After a purchase ("View my ticket"): the match the order covered and its order number.
+  const params = useLocalSearchParams<{ match?: string | string[]; order?: string | string[] }>();
+  const [purchaseFocus] = useState(() => purchasedTicketFocus(params));
+  const focusConsumed = useRef(false);
 
   const load = useCallback(() => {
     if (!auth.isReady || !auth.isAuthenticated) return;
@@ -167,6 +174,16 @@ function TicketsScreen() {
     }
   };
 
+  // Opens the purchased match once, from this screen's own backend list. A
+  // match not in the list (e.g. not yet visible) simply leaves the list shown.
+  useEffect(() => {
+    if (!purchaseFocus || focusConsumed.current || loading) return;
+    focusConsumed.current = true;
+    const target = matches.find((match) => match.match_id === purchaseFocus.matchId);
+    // Deferred a tick so no state is set synchronously inside the effect.
+    if (target) void Promise.resolve().then(() => openMatch(target));
+  });
+
   const view = ticketListView({ loading, error, count: matches.length });
   const sections = ticketListSections(filter, matches);
   const filterLabel = (key: TicketFilter) => i18n.t(`myTickets.filter.${key}`);
@@ -192,7 +209,7 @@ function TicketsScreen() {
           {view === "loading" ? (
             <SkeletonGroup label={i18n.t("myTickets.loading")}>
               {[0, 1, 2].map((key) => (
-                <SkeletonBlock key={key} height={104} borderRadius={radius.xl} />
+                <TicketCardSkeleton key={key} />
               ))}
             </SkeletonGroup>
           ) : view === "error" ? (
@@ -232,6 +249,7 @@ function TicketsScreen() {
       {selected ? (
         <TicketViewer
           match={selected}
+          focusOrder={purchaseFocus && purchaseFocus.matchId === selected.match_id ? purchaseFocus.order : null}
           tickets={tickets}
           loading={detailLoading}
           error={detailError}
@@ -302,12 +320,34 @@ function PortalMatchCard({ match, onPress }: { match: PortalMatch; onPress: () =
   );
 }
 
+/** The v3 ticket stub's outline: crests + title + facts, and the 86pt stub. */
+function TicketCardSkeleton() {
+  const theme = useTheme();
+  return (
+    <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
+      <View style={local.cardMain}>
+        <View style={local.cardTeams}>
+          <SkeletonBlock width={40} height={22} borderRadius={11} />
+          <SkeletonBlock width="60%" height={16} />
+        </View>
+        <SkeletonBlock width="45%" height={12} />
+        <SkeletonBlock width="35%" height={12} />
+      </View>
+      <View style={[local.stub, { borderColor: theme.colors.border }]}>
+        <SkeletonBlock width={28} height={24} />
+        <SkeletonBlock width={44} height={10} />
+      </View>
+    </View>
+  );
+}
+
 /**
  * v3 ticket screen for one match: a pager of flip tickets. Presented modally
  * over My Tickets so the list's request ownership is unchanged.
  */
 function TicketViewer({
   match,
+  focusOrder,
   tickets,
   loading,
   error,
@@ -315,6 +355,8 @@ function TicketViewer({
   onClose,
 }: {
   match: PortalMatch;
+  /** The purchased order (after checkout): the pager opens at its first ticket. */
+  focusOrder: string | null;
   tickets: PortalTicket[];
   loading: boolean;
   error: boolean;
@@ -330,6 +372,7 @@ function TicketViewer({
   const [index, setIndex] = useState(0);
   const pageWidth = Math.min(width, layout.readableWidth + layout.gutter * 2);
   const total = tickets.length;
+  const focusedRef = useRef(false);
 
   const goTo = (next: number) => {
     const clamped = Math.max(0, Math.min(total - 1, next));
@@ -353,7 +396,7 @@ function TicketViewer({
         {loading ? (
           <View style={local.viewerBody}>
             <SkeletonGroup label={i18n.t("myTickets.detail.loading")}>
-              <SkeletonBlock height={520} borderRadius={22} />
+              <SkeletonBlock height={600} borderRadius={22} />
             </SkeletonGroup>
           </View>
         ) : error && !total ? (
@@ -391,10 +434,20 @@ function TicketViewer({
               pagingEnabled
               showsHorizontalScrollIndicator={false}
               onMomentumScrollEnd={(event) => setIndex(Math.round(event.nativeEvent.contentOffset.x / pageWidth))}
+              onContentSizeChange={() => {
+                // Once, after the tickets render: page to the purchased order's first ticket.
+                if (focusedRef.current || !focusOrder || !total) return;
+                focusedRef.current = true;
+                const focus = ticketFocusIndex(tickets, focusOrder);
+                if (focus > 0) {
+                  setIndex(focus);
+                  pagerRef.current?.scrollTo({ x: focus * pageWidth, animated: false });
+                }
+              }}
               style={[local.pager, { width: pageWidth }]}
             >
               {tickets.map((ticket, ticketIndex) => (
-                <View key={ticket.ticket_code || String(ticketIndex)} style={{ width: pageWidth, paddingHorizontal: layout.gutter }}>
+                <View key={ticket.ticket_code || String(ticketIndex)} style={[local.page, { width: pageWidth }]}>
                   <FlipTicket ticket={ticket} match={match} />
                 </View>
               ))}
@@ -445,8 +498,9 @@ function stateLabel(i18n: I18n, state: TicketVisualState, status: string) {
 /**
  * v3 flip ticket. Front: the match ticket with the backend facts; back: the
  * backend QR (`qr_image`), dimmed and stamped when the backend status says it
- * can no longer be scanned. The flip is a 3D turn, or a plain swap under
- * reduced motion.
+ * can no longer be scanned. Tapping anywhere on the ticket flips it (the
+ * buttons stay the accessible / keyboard path). The flip is a 3D turn with
+ * the v3 QR fade-in and stamp pop, or a plain swap under reduced motion.
  */
 function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatch }) {
   const theme = useTheme();
@@ -454,6 +508,9 @@ function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatc
   const reducedMotion = useReducedMotion();
   const [flipped, setFlipped] = useState(false);
   const [turn] = useState(() => new Animated.Value(0));
+  // v3 back-face entrance: QR `lfQr .35s .3s`, stamp `lfStamp .42s .55s` (overshoot).
+  const [qrIn] = useState(() => new Animated.Value(0));
+  const [stampIn] = useState(() => new Animated.Value(0));
   const state = ticketVisualState(ticket);
   const scannable = ticketIsScannable(state);
   const qr = ticketQrSource(ticket);
@@ -464,11 +521,22 @@ function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatc
 
   useEffect(() => {
     if (reducedMotion) {
+      // Same information, no movement: the face swaps with the QR and stamp in place.
       turn.setValue(flipped ? 1 : 0);
+      qrIn.setValue(1);
+      stampIn.setValue(1);
       return;
     }
-    Animated.timing(turn, { toValue: flipped ? 1 : 0, duration: 700, useNativeDriver: true }).start();
-  }, [flipped, reducedMotion, turn]);
+    Animated.timing(turn, { toValue: flipped ? 1 : 0, duration: 700, easing: Easing.bezier(0.3, 0.7, 0.2, 1), useNativeDriver: true }).start();
+    // Turning away keeps the back face as it is; each turn to the back replays its entrance.
+    if (!flipped) return;
+    qrIn.setValue(0);
+    stampIn.setValue(0);
+    Animated.parallel([
+      Animated.timing(qrIn, { toValue: 1, delay: 300, duration: 350, easing: Easing.bezier(0.16, 1, 0.3, 1), useNativeDriver: true }),
+      Animated.timing(stampIn, { toValue: 1, delay: 550, duration: 420, easing: Easing.bezier(0.34, 1.56, 0.64, 1), useNativeDriver: true }),
+    ]).start();
+  }, [flipped, qrIn, reducedMotion, stampIn, turn]);
 
   const faceStyle = (back: boolean) =>
     reducedMotion
@@ -525,6 +593,7 @@ function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatc
         importantForAccessibility={flipped ? "no-hide-descendants" : "auto"}
         accessibilityElementsHidden={flipped}
       >
+        <Pressable accessible={false} onPress={() => setFlipped(true)} style={local.faceSurface}>
         <View style={[local.ticketHero, { backgroundColor: theme.colors.hero }]}>
           <View style={{ opacity: scannable ? 1 : 0.4, ...local.fill }}>
             <PitchArt />
@@ -570,6 +639,7 @@ function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatc
           <AppText variant="displayDay" tone="muted" style={local.admitText}>{i18n.t("myTickets.admitOne")}</AppText>
           <AppText variant="caption" tone="muted" style={local.mono} numberOfLines={1}>{ticket.order_code}</AppText>
         </View>
+        </Pressable>
       </Animated.View>
 
       {/* Back */}
@@ -579,6 +649,7 @@ function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatc
         importantForAccessibility={flipped ? "auto" : "no-hide-descendants"}
         accessibilityElementsHidden={!flipped}
       >
+        <Pressable accessible={false} onPress={() => setFlipped(false)} style={local.faceSurface}>
         <View style={[local.backHeader, { backgroundColor: theme.colors.hero }]}>
           <AppText variant="displayNumeral" tone="onHero" numberOfLines={1} style={local.backTitle}>
             {`${match.home_team.name} v ${match.away_team.name}`}
@@ -597,21 +668,34 @@ function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatc
           {/* Scannable geometry: never mirrored. */}
           <PhysicalLayout style={local.qrBox}>
             {qr ? (
-              <Image
-                source={{ uri: qr }}
-                style={[local.qrImage, { opacity: state === "valid" || state === "other" ? 1 : 0.3 }]}
-                resizeMode="contain"
-                accessibilityLabel={i18n.t("myTickets.qr.a11y", { holder: ticket.holder_name })}
-              />
+              <Animated.View style={{ opacity: qrIn, transform: [{ scale: qrIn.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) }] }}>
+                <Image
+                  source={{ uri: qr }}
+                  style={[local.qrImage, { opacity: state === "valid" || state === "other" ? 1 : 0.3 }]}
+                  resizeMode="contain"
+                  accessibilityLabel={i18n.t("myTickets.qr.a11y", { holder: ticket.holder_name })}
+                />
+              </Animated.View>
             ) : (
               <AppText variant="meta" style={local.qrUnavailable}>{i18n.t("myTickets.qr.unavailable")}</AppText>
             )}
             {state === "used" || state === "expired" || state === "cancelled" ? (
-              <View style={[local.stamp, { borderColor: state === "used" ? "#3B3D47" : "#C8102E" }]} accessible={false}>
+              <Animated.View
+                style={[
+                  local.stamp,
+                  {
+                    borderColor: state === "used" ? "#3B3D47" : "#C8102E",
+                    opacity: stampIn,
+                    // v3 lfStamp: lands from 1.6× with an overshoot, rotated −9°.
+                    transform: [{ rotate: "-9deg" }, { scale: stampIn.interpolate({ inputRange: [0, 1], outputRange: [1.6, 1] }) }],
+                  },
+                ]}
+                accessible={false}
+              >
                 <AppText variant="bodyStrong" style={[local.stampText, { color: state === "used" ? "#3B3D47" : "#C8102E" }]}>
                   {i18n.t(`myTickets.state.${state}`)}
                 </AppText>
-              </View>
+              </Animated.View>
             ) : null}
           </PhysicalLayout>
           <View style={[local.note, { backgroundColor: noteTone.bg }]} accessibilityLiveRegion="polite">
@@ -629,6 +713,7 @@ function FlipTicket({ ticket, match }: { ticket: PortalTicket; match: PortalMatc
             icon={<SymbolView name={{ ios: "arrow.triangle.2.circlepath", android: "flip", web: "flip" } as never} size={17} tintColor={theme.colors.textStrong} fallback={<View />} />}
           />
         </View>
+        </Pressable>
       </Animated.View>
     </View>
   );
@@ -697,6 +782,10 @@ const local = {
   viewerScroll: { paddingTop: spacing.sm, paddingBottom: spacing.xxl, alignItems: "center" as const },
   viewerNotice: { width: "100%" as const, paddingHorizontal: layout.gutter, marginBottom: spacing.md },
   pager: { flexGrow: 0 },
+  // The paging ScrollView clips its content: each page leaves room for the
+  // ticket's raised shadow (`shadowRaised`: 18pt offset, 40pt blur).
+  page: { paddingHorizontal: layout.gutter, paddingTop: 12, paddingBottom: 48 },
+  faceSurface: { flex: 1 },
   pagerControls: { flexDirection: "row" as const, alignItems: "center" as const, gap: 18, marginTop: spacing.lg },
   pagerButton: { width: size.touchTargetMin, height: size.touchTargetMin, borderRadius: 22, alignItems: "center" as const, justifyContent: "center" as const },
   dots: { flexDirection: "row" as const, gap: 5, alignItems: "center" as const },
@@ -777,7 +866,6 @@ const local = {
     borderWidth: 3,
     borderRadius: 10,
     backgroundColor: "rgba(255,255,255,0.94)",
-    transform: [{ rotate: "-9deg" }],
   },
   stampText: { fontSize: 20, letterSpacing: 2, textTransform: "uppercase" as const },
   note: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: spacing.sm },

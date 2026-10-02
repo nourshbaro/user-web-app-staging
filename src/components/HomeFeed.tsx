@@ -15,7 +15,7 @@ import { useScheduledMatches } from "@/hooks/useScheduledMatches";
 import { useI18n } from "@/i18n/I18nProvider";
 import { radius, spacing } from "@/lib/designTokens";
 import { formatDate, formatTime } from "@/lib/format";
-import { latestCompletedMatch, selectHomeMatches, sortMatchesByKickoff } from "@/lib/matchDiscovery";
+import { latestCompletedMatch, matchesTabRoute, selectHomeMatches, sortMatchesByKickoff, type MatchTab } from "@/lib/matchDiscovery";
 import { setPrimaryTabTransitionDirection, type PrimaryTabRoute } from "@/lib/navigationPresentation";
 import type { MatchFilters } from "@/types";
 import { router } from "expo-router";
@@ -41,8 +41,9 @@ function switchTab(route: PrimaryTabRoute) {
  * matches. Every section is backend data through the existing owners:
  * `useScheduledMatches` (scheduled / `status=live` / `status=completed`) and
  * the portal (`useNextTicketMatch`). Live now and Latest result appear only
- * when the backend returns such matches; nothing is fabricated (no minutes,
- * events or statistics, which the API does not provide).
+ * when the backend returns such matches; their cards open Match Details and
+ * "See all" opens Matches on the Live / Results segment. A live minute is the
+ * backend list clock only.
  */
 export function HomeFeed() {
   const { t } = useI18n();
@@ -63,10 +64,10 @@ export function HomeFeed() {
   const latestResult = useMemo(() => latestCompletedMatch(completed.matches), [completed.matches]);
   const hasMatches = data.matches.length > 0;
 
-  const openAllMatches = () => {
+  const openAllMatches = (tab: MatchTab = "upcoming") => {
     // Same semantics as the bottom tab: replace, forward transition.
     setPrimaryTabTransitionDirection(1);
-    router.replace("/matches");
+    router.replace(matchesTabRoute(tab));
   };
 
   const refreshAll = () => {
@@ -114,7 +115,7 @@ export function HomeFeed() {
               variant="empty"
               title={t("home.noUpcoming.title")}
               message={t("home.noUpcoming.message")}
-              action={{ label: t("home.upcoming.viewAll"), onPress: openAllMatches }}
+              action={{ label: t("home.upcoming.viewAll"), onPress: () => openAllMatches() }}
             />
           )}
         </>
@@ -126,15 +127,23 @@ export function HomeFeed() {
 
       {liveMatch ? (
         <View style={local.section}>
-          <SectionHeader display title={t("home.live.title")} />
-          <ScoreCard match={liveMatch} />
+          <SectionHeader
+            display
+            title={t("home.live.title")}
+            action={{ label: t("home.upcoming.viewAll"), onPress: () => openAllMatches("live"), accessibilityHint: t("home.live.viewAllHint") }}
+          />
+          <ScoreCard match={liveMatch} onPress={() => openMatch(liveMatch)} />
         </View>
       ) : null}
 
       {latestResult ? (
         <View style={local.section}>
-          <SectionHeader display title={t("home.result.title")} />
-          <ScoreCard match={latestResult} />
+          <SectionHeader
+            display
+            title={t("home.result.title")}
+            action={{ label: t("home.upcoming.viewAll"), onPress: () => openAllMatches("results"), accessibilityHint: t("home.result.viewAllHint") }}
+          />
+          <ScoreCard match={latestResult} onPress={() => openMatch(latestResult)} />
         </View>
       ) : null}
 
@@ -143,7 +152,7 @@ export function HomeFeed() {
           <SectionHeader
             display
             title={t("home.upcoming.title")}
-            action={{ label: t("home.upcoming.viewAll"), onPress: openAllMatches, accessibilityHint: t("home.upcoming.viewAllHint") }}
+            action={{ label: t("home.upcoming.viewAll"), onPress: () => openAllMatches(), accessibilityHint: t("home.upcoming.viewAllHint") }}
           />
           <MatchGroup>
             {upcoming.map((match, index) => (

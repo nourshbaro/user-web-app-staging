@@ -11,7 +11,7 @@ const cartScreen = strip(await read("../../app/cart.tsx"));
 const cartSheet = strip(await read("../CartSheet.tsx"));
 const lineItem = strip(await read("./CartLineItem.tsx"));
 const reservation = strip(await read("./ReservationStatus.tsx"));
-const expiryNotice = strip(await read("./ReservationExpiryNotice.tsx"));
+const expiredSheet = strip(await read("./HoldExpiredSheet.tsx"));
 const orderSummary = strip(await read("./OrderSummary.tsx"));
 const holdersBlock = strip(await read("../TicketHoldersBlock.tsx"));
 const holdersScreen = strip(await read("../../app/checkout/ticket-holders.tsx"));
@@ -85,9 +85,10 @@ test("the reservation countdown is read-only, urgency is not colour-only, and an
   assert.match(reservation, /accessibilityRole="timer"/);
   assert.match(reservation, /if \(RANK\[urgency\] <= RANK\[previous\]\) return;/);
   assert.match(reservation, /cart\.reservation\.low|cart\.reservation\.critical/);
-  assert.doesNotMatch(expiryNotice, /clearCart|refreshCart|removeItem|addItem|updateItem|router\./, "the expiry notice only observes");
-  assert.match(expiryNotice, /reservationJustExpired\(previousRef\.current, next\)/);
-  assert.match(layout, /<ReservationExpiryNotice \/>/);
+  // The v3 expired sheet presents the owner's snapshot; it never clears, refreshes or re-reserves.
+  assert.doesNotMatch(expiredSheet, /clearCart|refreshCart|removeItem|addItem|updateItem|setInterval|expires_?at/);
+  assert.match(expiredSheet, /const hold = cart\.expiredHold;/);
+  assert.doesNotMatch(layout, /ReservationExpiryNotice/);
 });
 
 test("cart lines expose named, state-aware controls and no optimistic change", () => {
@@ -112,7 +113,8 @@ test("the holder form keeps its rule and navigation, and focuses the first incom
   assert.match(finish, /focusSlot\(completeness\.firstIncompleteKey\);\s*return;/);
   assert.match(finish, /if \(isEditMode\) router\.dismissTo\("\/checkout"\);\s*else router\.replace\("\/checkout"\);/);
   assert.match(holdersScreen, /if \(isEditMode\) \{\s*router\.dismissTo\("\/checkout"\);\s*return;\s*\}\s*router\.replace\("\/cart"\);/);
-  assert.match(holdersScreen, /if \(!ticketSlots\.length\) router\.replace\("\/cart"\);/);
+  // Empty → Cart, except while the owner presents an expired hold (it already routed Home).
+  assert.match(holdersScreen, /if \(!ticketSlots\.length && !cart\.expiredHold\) router\.replace\("\/cart"\);/);
   assert.match(holdersScreen, /initializeFirstHolder\(firstSlot\.key, profileName\)/);
   assert.match(holdersScreen, /aria-invalid=\{showError\}/);
   assert.match(holdersScreen, /accessibilityLabel=\{i18n\.t\("holders\.field\.a11y", \{ ticket: slot\.label \}\)\}/);
@@ -130,7 +132,8 @@ test("checkout readiness includes expiry, the payload builder is shared, and not
 });
 
 test("payment methods are exactly the supported ones, with radio semantics", () => {
-  assert.deepEqual(methods.match(/id: "(\w+)"/g), ['id: "cybersource"', 'id: "blue"']);
+  // Product order: BLUE Wallet first, then "Other" (the card path); backend ids unchanged.
+  assert.deepEqual(methods.match(/id: "(\w+)"/g), ['id: "blue"', 'id: "cybersource"']);
   assert.match(methods, /accessibilityRole="radiogroup"/);
   assert.match(methods, /accessibilityRole="radio"/);
   assert.match(methods, /aria-checked=\{active\}/);
@@ -278,12 +281,16 @@ test("BLUE keeps its WebView policy and never clears for an unmatched result", (
   assert.match(blue, /label: i18n\.t\("payment\.viewTickets"\)/);
 });
 
-test("AppHeader's optional backDisabled makes back inert and announced; other callers are unaffected", async () => {
-  const header = strip(await read("../AppHeader.tsx"));
+test("the payment screens use the v3 flow header; its backDisabled makes Back inert and announced", async () => {
+  const header = strip(await read("../FlowHeader.tsx"));
   assert.match(header, /backDisabled = false,/);
-  assert.match(header, /const handleBack = \(\) => \{\s*if \(backDisabled\) return;/);
+  assert.match(header, /if \(!backDisabled\) onBack\(\);/);
   assert.match(header, /disabled=\{backDisabled\}/);
   assert.match(header, /aria-disabled=\{backDisabled\}/);
+  // Card keeps its in-flight guard on Back; BLUE keeps its leave confirmation.
+  assert.match(card, /<FlowHeader[\s\S]*?onBack=\{\(\) => \{\s*if \(canLeavePayment\(submittingRef\)\) returnToCheckout\(\);\s*\}\}\s*backDisabled=\{processing\}/);
+  assert.match(blue, /<FlowHeader[^>]*onBack=\{confirmLeave\}/);
+  assert.doesNotMatch(card + blue, /AppHeader|showTimer|CartTimer/);
 });
 
 test("no fabricated payment, order or ticket data enters Cart or Checkout", () => {
@@ -323,9 +330,14 @@ test("the holder form has exactly one field per physical ticket slot", () => {
   assert.match(holdersScreen, /onPress: finish,/);
 });
 
-test("expiry and result copy never claim that no payment or order exists", async () => {
+test("expiry and result copy claim 'no payment was taken' only when no payment ever touched the session", async () => {
   const { en } = await import("../../i18n/messages/en.ts");
-  for (const key of ["cart.expiredNotice.title", "cart.expiredNotice.message", "cart.expired.title", "cart.expired.message", "result.failed.message"]) {
+  const { holdExpiredMessageKey } = await import("../../lib/holdExpiry.ts");
+  for (const key of ["holdExpired.title", "holdExpired.messagePayment", "cart.expired.title", "cart.expired.message", "result.failed.message"]) {
     assert.doesNotMatch(en[key], /no payment was taken|no order was created|not charged/i, key);
   }
+  // The v3 sentence is reserved for a hold no payment attempt, BLUE request or unknown outcome touched.
+  assert.equal(holdExpiredMessageKey({ matchIds: ["4"], paymentTouched: true }), "holdExpired.messagePayment");
+  assert.equal(holdExpiredMessageKey({ matchIds: ["4"], paymentTouched: false }), "holdExpired.message");
+  assert.match(en["holdExpired.message"], /No payment was taken/);
 });

@@ -9,7 +9,6 @@ import {
   groupSubtotal,
   quantityChangeConfirmed,
   removalConfirmed,
-  reservationJustExpired,
   reservationUrgency,
   ticketCount,
 } from "./cartPresentation.ts";
@@ -35,16 +34,6 @@ test("reservation urgency follows the owner's countdown only", () => {
   assert.equal(reservationUrgency(-5), "expired");
   assert.deepEqual(countdownParts(245), { minutes: 4, seconds: 5 });
   assert.deepEqual(countdownParts(-3), { minutes: 0, seconds: 0 });
-});
-
-test("expiry is recognised only from the owner's expiry transition, never from a paid clear", () => {
-  const active = { sessionId: "S", secondsLeft: 0, itemCount: 2 };
-  const cleared = { sessionId: null, secondsLeft: 0, itemCount: 0 };
-  assert.equal(reservationJustExpired(active, cleared), true);
-  assert.equal(reservationJustExpired({ ...active, secondsLeft: 240 }, cleared), false, "payment success clears with time remaining");
-  assert.equal(reservationJustExpired({ ...active, itemCount: 0 }, cleared), false);
-  assert.equal(reservationJustExpired(null, cleared), false);
-  assert.equal(reservationJustExpired(active, { ...active, sessionId: "S2" }), false);
 });
 
 test("missing prices are never shown or summed as zero", () => {

@@ -1,4 +1,4 @@
-import { AppHeader } from "@/components/AppHeader";
+import { FlowHeader } from "@/components/FlowHeader";
 import { PaymentOutcomePanel, UnknownOutcomeSteps } from "@/components/checkout/PaymentOutcome";
 import { AppText } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
@@ -6,6 +6,7 @@ import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
 import { useAlertDialog } from "@/context/AlertDialogContext";
 import {
+  blueSuccessResultParams,
   clearBluePaymentHandoff,
   clearPendingBluePaymentAttempt,
   readBluePaymentHandoff,
@@ -13,7 +14,7 @@ import {
 import { blueResultDisplayParams, decideBlueNavigation } from "@/lib/bluePaymentRedirect";
 import { blueSuccessCompletion } from "@/lib/checkoutFlow";
 import { config } from "@/lib/config";
-import { markPaymentOutcomeUnknown, settlePaymentAttempt } from "@/lib/paymentOutcomeLock";
+import { markPaymentOutcomeUnknown, parkPaymentAttempt, settlePaymentAttempt } from "@/lib/paymentOutcomeLock";
 import { useI18n } from "@/i18n/I18nProvider";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -57,10 +58,12 @@ export default function BluePaymentScreen() {
       confirmLabel: i18n.t("payment.blue.leave.confirm"),
     }).then((leave) => {
       if (!leave) return;
+      // Parked before Checkout regains focus and re-reads the gate.
+      if (!terminalHandledRef.current && handoff) parkPaymentAttempt(handoff.sessionId);
       clearBluePaymentHandoff(handoffId);
       router.dismissTo("/checkout");
     });
-  }, [alertDialog, handoffId, i18n]);
+  }, [alertDialog, handoff, handoffId, i18n]);
 
   useEffect(() => {
     activeRef.current = true;
@@ -72,8 +75,11 @@ export default function BluePaymentScreen() {
       activeRef.current = false;
       subscription.remove();
       clearBluePaymentHandoff(handoffId);
+      // Left without a result: the BLUE request stays resumable (its stored
+      // URL), but it no longer blocks paying another way.
+      if (!terminalHandledRef.current && handoff) parkPaymentAttempt(handoff.sessionId);
     };
-  }, [confirmLeave, handoffId]);
+  }, [confirmLeave, handoff, handoffId]);
 
   const handleTerminal = useCallback(async (terminalUrl: string, result: "success" | "failed") => {
     if (!activeRef.current || terminalHandledRef.current) return;
@@ -127,7 +133,8 @@ export default function BluePaymentScreen() {
     resetRouter.dismissAll?.();
     router.replace({
       pathname: "/checkout/success",
-      params: { provider: "blue", ...displayParams },
+      // Display-only: which match's tickets "View my ticket" opens.
+      params: blueSuccessResultParams(handoff, displayParams),
     });
   }, [cart, handoff, handoffId, i18n, toast]);
 
@@ -223,7 +230,8 @@ export default function BluePaymentScreen() {
       />
 
       <View style={local.header}>
-        <AppHeader title={i18n.t("payment.blue.title")} subtitle={i18n.t("payment.secure")} hideCart showTimer onBack={confirmLeave} />
+        {/* v3 flow header; the reservation countdown is the one global bar above (read-only here). */}
+        <FlowHeader title={i18n.t("payment.blue.title")} subtitle={i18n.t("payment.secure")} backLabel={i18n.t("checkout.title")} onBack={confirmLeave} />
       </View>
 
       <View style={local.paymentArea}>

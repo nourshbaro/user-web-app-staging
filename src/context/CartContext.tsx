@@ -12,7 +12,9 @@ import { createCartOperationQueue } from "@/lib/cartOperationQueue";
 import {
   clearPendingBluePaymentAttempt,
   invalidatePendingBluePaymentAttemptUnlessSession,
+  readPendingBluePaymentAttempt,
 } from "@/lib/bluePaymentHandoff";
+import { expiredHoldFrom, type ExpiredHold } from "@/lib/holdExpiry";
 import {
   clearCartSessionIfCurrent,
   createCartSessionAuthority,
@@ -40,6 +42,8 @@ import { errorFacts } from "@/lib/apiErrorFacts";
 import {
   configurePaymentOutcomeStore,
   discardPaymentOutcomeUnlessSession,
+  readPaymentAttempt,
+  readPaymentOutcomeLock,
   restorePaymentOutcomeLock,
 } from "@/lib/paymentOutcomeLock";
 import { storage } from "@/lib/storage";
@@ -115,6 +119,13 @@ type CartContextValue = {
   captureCartSession: () => CartSessionTicket | null;
   isCartSessionCurrent: (ticket: CartSessionTicket) => boolean;
   clearCartIfSession: (ticket: CartSessionTicket) => Promise<CartSessionTicket | null>;
+  /**
+   * The reservation that just expired (v3 "Reservation expired"): only its
+   * unique match ids and whether a payment touched it, captured before the
+   * clear. Presentation data, never a cart authority.
+   */
+  expiredHold: ExpiredHold | null;
+  dismissExpiredHold: () => void;
 };
 
 const CartContext = createContext<CartContextValue | null>(null);
@@ -133,6 +144,7 @@ export function CartProvider({ children }: PropsWithChildren) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [total, setTotal] = useState(0);
   const [currency, setCurrency] = useState("USD");
+  const [expiredHold, setExpiredHold] = useState<ExpiredHold | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [isLoading, setLoading] = useState(false);
   const [cartRefreshError, setCartRefreshError] = useState<string | null>(null);
@@ -173,6 +185,9 @@ export function CartProvider({ children }: PropsWithChildren) {
 
   const resetCartDisplayState = useCallback(() => {
     clearPendingBluePaymentAttempt();
+    // A later reset (logout, another session) also retires an expired-hold notice;
+    // expiry sets its snapshot after this reset.
+    setExpiredHold(null);
     setSessionId(null);
     setExpiresAt(null);
     setItems([]);
@@ -317,17 +332,35 @@ export function CartProvider({ children }: PropsWithChildren) {
 
     expiryHandledRef.current = true;
     refreshGuardRef.current.invalidate();
+    // Captured before the clear destroys it (the clear also drops the pending BLUE request).
+    const snapshot = expiredHoldFrom(
+      itemsRef.current,
+      Boolean(
+        readPaymentOutcomeLock(expected.sessionId)
+          || readPaymentAttempt(expected.sessionId)
+          || readPendingBluePaymentAttempt(expected.sessionId ?? ""),
+      ),
+    );
     const cleared = await clearCartSessionIfCurrent({
       authority: sessionAuthorityRef.current,
       expected,
       removePersistedSession: () => storage.remove(SESSION_KEY),
       canCommit: () => mountedRef.current,
-      resetDisplayState: resetCartDisplayState,
+      // Published in the same update as the clear, so screens never see an
+      // empty cart without `expiredHold` (their empty-cart redirects stand down).
+      resetDisplayState: () => {
+        resetCartDisplayState();
+        setExpiredHold(snapshot);
+      },
     });
     if (!cleared) return;
 
+    // Transaction screens (and any payment WebView) are dismissed; the v3
+    // sheet is presented over Home by AppChrome.
     dismissEverythingAndGoHome();
   }, [resetCartDisplayState]);
+
+  const dismissExpiredHold = useCallback(() => setExpiredHold(null), []);
 
   const refreshCartForSession = useCallback(async (expected: CartSessionTicket): Promise<CartPublication> => {
     if (
@@ -669,6 +702,8 @@ export function CartProvider({ children }: PropsWithChildren) {
     captureCartSession,
     isCartSessionCurrent,
     clearCartIfSession,
+    expiredHold,
+    dismissExpiredHold,
   }), [
     addItem,
     captureCartSession,
@@ -690,6 +725,8 @@ export function CartProvider({ children }: PropsWithChildren) {
     sessionId,
     total,
     updateItem,
+    dismissExpiredHold,
+    expiredHold,
   ]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

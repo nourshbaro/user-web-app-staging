@@ -159,11 +159,12 @@ export type CheckoutOwnerSnapshot = {
 };
 
 /**
- * Whether the session's held attempt blocks a new payment from Checkout.
- * The only way through is to continue that same attempt: a BLUE attempt
- * whose validated payment URL is already held (the existing reuse path) may
- * be reopened with BLUE. Anything else (another method, or no reusable URL)
- * would start a second payment for the session.
+ * Whether the session's *in-progress* attempt blocks a new payment from
+ * Checkout. A BLUE request whose page was left is parked
+ * (`parkPaymentAttempt`) and is not in progress, so it blocks neither method:
+ * BLUE resumes its stored URL, and Other starts its own card attempt. An
+ * attempt still in progress lets through only the same BLUE attempt with its
+ * reusable URL; anything else would run two payments at once.
  */
 export function checkoutAttemptBlocks({
   heldMethod,

@@ -1,7 +1,8 @@
-import { useTheme } from "@/components/ui";
+import { AppText } from "@/components/foundation";
+import { Button, useTheme } from "@/components/ui";
 import { SymbolView } from "expo-symbols";
 import { createContext, type PropsWithChildren, useCallback, useContext, useMemo, useRef, useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { Modal, Platform, Pressable, StyleSheet, View } from "react-native";
 
 type AlertVariant = "info" | "confirm" | "destructive";
 type AlertOptions = {
@@ -40,24 +41,25 @@ export function AlertDialogProvider({ children }: PropsWithChildren) {
     <AlertDialogContext.Provider value={value}>
       {children}
       <Modal visible={Boolean(active)} transparent animationType="fade" onRequestClose={() => { if (dismissible) finish(false); }}>
+        {/* v3 dialog: dark scrim, card surface, title / message, stacked full-width actions (primary first). */}
         <Pressable style={styles.backdrop} onPress={() => { if (dismissible) finish(false); }} accessibilityRole="button" accessibilityLabel={dismissible ? "Dismiss alert" : undefined}>
-          <Pressable accessibilityViewIsModal onPress={(event) => event.stopPropagation()} style={[styles.dialog, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
+          <Pressable accessibilityViewIsModal onPress={(event) => event.stopPropagation()} style={[styles.dialog, { backgroundColor: theme.colors.surface, boxShadow: "0px 24px 60px rgba(0,0,0,0.35)" }]}>
             {dismissible ? (
               <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => finish(false)} style={styles.close}>
-                <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={19} tintColor={theme.colors.ink} fallback={<View />} />
+                <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={19} tintColor={theme.colors.textMuted} fallback={<View />} />
               </Pressable>
             ) : null}
-            <Text style={[styles.title, { color: theme.colors.ink }]}>{active?.title}</Text>
-            <Text style={[styles.message, { color: theme.colors.muted }]}>{active?.message}</Text>
+            <AppText variant="bodyStrong" accessibilityRole="header" style={[styles.title, dismissible && styles.titleWithClose]}>{active?.title}</AppText>
+            <AppText variant="meta" tone="muted" style={styles.message}>{active?.message}</AppText>
             <View style={styles.actions}>
+              <Button
+                title={active?.confirmLabel ?? "OK"}
+                variant={active?.variant === "destructive" ? "danger" : "primary"}
+                onPress={() => finish(true)}
+              />
               {active?.variant !== "info" ? (
-                <Pressable accessibilityRole="button" accessibilityLabel={active?.cancelLabel ?? "Cancel"} onPress={() => finish(false)} style={[styles.button, { backgroundColor: theme.colors.panelSoft, borderColor: theme.colors.line }]}>
-                  <Text style={[styles.buttonText, { color: theme.colors.ink }]}>{active?.cancelLabel ?? "Cancel"}</Text>
-                </Pressable>
+                <Button title={active?.cancelLabel ?? "Cancel"} variant="tonal" onPress={() => finish(false)} />
               ) : null}
-              <Pressable accessibilityRole="button" accessibilityLabel={active?.confirmLabel ?? "OK"} onPress={() => finish(true)} style={[styles.button, { backgroundColor: active?.variant === "destructive" ? theme.colors.danger : theme.colors.primary, borderColor: "transparent" }]}>
-                <Text style={[styles.buttonText, { color: "#FFFFFF" }]}>{active?.confirmLabel ?? "OK"}</Text>
-              </Pressable>
             </View>
           </Pressable>
         </Pressable>
@@ -72,13 +74,13 @@ export function useAlertDialog() {
   return value;
 }
 
+// v3: scrim rgba(0,0,0,.45), padding 36; dialog radius 16 (iOS) / 28 (Android), padding 22 20 16, gap 10.
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: "rgba(15,23,42,0.58)", padding: 20, alignItems: "center", justifyContent: "center" },
-  dialog: { width: "100%", maxWidth: 440, borderRadius: 22, borderWidth: 1, padding: 20, gap: 12 },
-  close: { position: "absolute", end: 8, top: 8, width: 44, height: 44, alignItems: "center", justifyContent: "center", zIndex: 1 },
-  title: { fontSize: 20, lineHeight: 26, fontWeight: "900", paddingEnd: 32 },
-  message: { fontSize: 14, lineHeight: 21 },
-  actions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 6 },
-  button: { minWidth: 100, minHeight: 46, borderRadius: 14, borderWidth: 1, paddingHorizontal: 16, alignItems: "center", justifyContent: "center", flexShrink: 1 },
-  buttonText: { fontSize: 15, fontWeight: "800", textAlign: "center" },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", padding: 36, alignItems: "center", justifyContent: "center" },
+  dialog: { width: "100%", maxWidth: 420, borderRadius: Platform.OS === "android" ? 28 : 16, paddingTop: 22, paddingHorizontal: 20, paddingBottom: 16, gap: 10 },
+  close: { position: "absolute", end: 6, top: 6, width: 44, height: 44, alignItems: "center", justifyContent: "center", zIndex: 1 },
+  title: { fontSize: 18, lineHeight: 24, fontWeight: "600" },
+  titleWithClose: { paddingEnd: 32 },
+  message: { fontSize: 14, lineHeight: 20 },
+  actions: { gap: 8, marginTop: 10 },
 });

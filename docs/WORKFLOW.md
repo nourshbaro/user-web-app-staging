@@ -157,6 +157,16 @@ redesign has no further planned batches.
 The former Phase 5 (Tickets), Phase 6 (Profile + supporting screens) and
 Phase 7 (cross-app polish) were delivered by v3 Batches 7–9 and Batch 10.
 
+### Post-redesign corrections (product-owner review)
+
+Implemented after Batch 10 on its commit, pending review (`docs/STATUS.md`):
+Home See all / clickable cards, live minutes, Timeline / Stats motion and
+names, ticket flip / stamps / shadow, cup competitions, payment ordering and
+unbranded copy, "View my ticket", no Login / Register OTP, skeleton geometry.
+Android emulator is the primary runtime target from here on; web is
+secondary. The required / available update system is blocked on a backend
+version contract (`docs/API_INTEGRATION.md`).
+
 ### Beyond the redesign (not started)
 
 Each is a separate, explicitly scoped task:

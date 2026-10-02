@@ -161,9 +161,12 @@ export function timelineRows(match: ApiMatchDetail): TimelineRow[] {
   return rows.map((item) => item.row);
 }
 
-/** v3 scorer lines under the score: "Player 1'" per goal, by side. Only goals with a named player. */
-export function scorerLines(rows: readonly TimelineRow[]) {
-  const line = (row: TimelineRow) => [row.player, row.minuteLabel].filter(Boolean).join(" ");
+/**
+ * v3 scorer lines under the score: "Player 1'" per goal, by side. Only goals
+ * with a named player. `formatName` is display formatting (e.g. "F. Last").
+ */
+export function scorerLines(rows: readonly TimelineRow[], formatName: (name: string) => string | null = (name) => name) {
+  const line = (row: TimelineRow) => [row.player ? formatName(row.player) : null, row.minuteLabel].filter(Boolean).join(" ");
   const goals = rows.filter((row) => row.kind === "goal" && row.player);
   return {
     home: goals.filter((row) => row.side === "home").map(line),

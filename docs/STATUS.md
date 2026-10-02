@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-10-01 · v3 Redesign Batch 10 (final batch; implementation checkpoint, uncommitted on `a046a11`)
+**As of:** 2026-10-02 · Post-redesign product corrections, passes 1 and 2 (implementation checkpoint, uncommitted on `75cb896`)
 
 ---
 
@@ -25,14 +25,148 @@
 - ✅ v3 Batches 7–9 — My Tickets, Competitions, Profile / Settings / Legal /
   Contact / Auth, with the Codex corrections and the match-event kinds
   (`a046a11`).
-- ✅ **v3 Batch 10 — whole-app accessibility, RTL, responsive, motion,
-  cleanup and regression closure: implemented, pending independent review.**
-  Uncommitted on `a046a11`. This is the last redesign batch.
-- ▶ **Next:** Codex review of Batch 10. After that the in-place redesign is
-  complete; what remains is the runtime coverage and backend dependencies
-  below, and Arabic (a separate task).
+- ✅ v3 Batch 10 — whole-app accessibility, RTL, responsive, motion, cleanup
+  and regression closure (`75cb896`). The in-place redesign is complete.
+- ✅ **Post-redesign product corrections (passes 1 and 2): implemented,
+  pending review.** Uncommitted on `75cb896`.
+- ▶ **Next:** review of the corrections; the backend dependencies below.
 
-## Batch 10 checkpoint (v3, final)
+## Post-redesign corrections (product-owner review)
+
+**Runtime target:** Android emulator (`LFA_Phone_API35`: Android 15 / API
+35, 1080×2400 @ 420 dpi ≈ 411 dp; also resized to 720×1520 @ 320 dpi ≈ 360 dp
+and 1600×2560 @ 320 dpi ≈ 800 dp), the user's dev build, signed in, staging.
+No iOS simulator exists on Windows: iOS is source / test / export verified.
+
+**Implemented and Android-runtime verified (signed in, staging):**
+- Home "See all" on Latest result → Matches on the Results segment; the
+  result card opens Match Details.
+- Match result view: Timeline / Stats on the shared sliding control; v3
+  "F. LastName" names in the timeline, substitution "Off …" line and
+  scorer lines (all five event kinds, match 17).
+- Competitions: card shadows no longer clipped; the cup shows the knockout
+  note and no table; league table unchanged.
+- My Tickets: tapping the ticket surface flips it; the inner "Ticket
+  details" button flips exactly once; the raised shadow fades fully (pager
+  padding), no hard cut.
+- Checkout: BLUE Wallet first, "Other — Debit or credit card" second; no
+  provider branding in the card note or card screen.
+- A real staging card purchase (test card) completed: order ORD-1028, the
+  match's ticket count went 6 → 7, and My Tickets opened that match's viewer
+  on the new Zone A ticket. (The success screen itself was not captured;
+  focus index 0 was also the list's first ticket.)
+- Reservation expiry on the card screen returned to Home with the hold
+  cleared (existing behaviour).
+- Narrow (≈360 dp) and tablet-width (≈800 dp) layouts of My Tickets,
+  Competitions and the result view.
+
+**Implemented, source / test verified only:**
+- Live minute ("LIVE 67'", blink only while `clock_running`) on Home, list
+  cards and the score card: nothing was live on staging.
+- Live "See all" (no live match to show the section).
+- Ticket QR / stamp entrance animation (no used / expired / cancelled
+  ticket on the account).
+- Login / Register without a client-imposed OTP (`credentialOutcome`);
+  no account was registered or logged in again during the check.
+- BLUE "View my ticket" (`purchasedMatchId` on the in-memory handoff).
+- Skeletons in final geometry (Match Details, standings, competition
+  matches, ticket stubs, the 600 pt ticket, the cart card).
+
+**Blocked by backend:**
+- Required / available app update: no version endpoint or store URLs exist
+  (`docs/API_INTEGRATION.md`). Not implemented.
+- Live minutes on competition match cards: the competition-matches endpoint
+  has no clock fields.
+- A direct ticket link for multi-match orders: the submit response carries
+  no ticket codes or match ids.
+
+**Not verified:** iOS / iPad runtime; BLUE handoff at runtime; a live match;
+the reduced-motion setting on the device.
+
+**Request audit (source):** no new requests. Live minutes come from the
+existing list responses (no per-card detail fetch, no new polling); cups skip
+their standings request; QR detail fetches still only when the list lacks a
+usable QR; one reservation timer; Show / Hide map still fetch-free; the
+purchased-ticket focus reuses the viewer's single tickets request.
+
+### Pass 2 (reservation lifecycle, payment switching, Stats motion)
+
+**Implemented:**
+- One reservation countdown: the global v3 bar (`ReservationHoldBar`) on
+  Match Details, holders, Checkout and the Card / BLUE payment screens; Cart
+  shows the same `CartContext.secondsLeft` in its v3 card. The legacy
+  `AppHeader` / `CartTimer` / `HeaderActions` and `ReservationExpiryNotice`
+  are removed.
+- v3 "Reservation expired" sheet (`HoldExpiredSheet`) from a minimal
+  snapshot taken by `CartContext.expireCart` before clearing (unique match
+  ids + whether a payment touched the session). Start again → the one
+  match's Match Details, or Matches on Upcoming for several matches; Back to
+  home → Home. Both reset to a clean Home stack first.
+- Payment switching (final): a BLUE request whose page was left is parked,
+  so Other stays payable and BLUE resumes the same URL without resubmitting;
+  the "cancel BLUE first" message is removed. Android-verified: BLUE (order
+  #1034) → Back → Other opened the card form; → Back → BLUE reopened #1034
+  with no second submit; on a fresh session Other → Back → BLUE submitted
+  once (#1036). Not run: a card submit after BLUE (no real payment).
+- Home avatar: the signed-in user's profile image from `AuthContext`
+  (resolved like Profile's), v3 initials without an image or on load failure,
+  the person mark when signed out (`homeAvatar`). Android-verified with an
+  image; Home makes no `/auth/me` request.
+- Card / BLUE payment screens on the v3 `FlowHeader`; the shared alert
+  dialog in the v3 dialog presentation.
+- Completed match: Stats bars grow from the centre line (v3 `lfBar`), rows
+  static; Timeline rows keep `lfEnter`; reduced motion → final state.
+- Expiry snapshot published with the clear; Checkout / holders empty-cart
+  redirects stand down while it is shown (previously an empty Cart could
+  appear under the sheet). `StatePanel` text spans the panel (Android
+  dropped "empty" from "Your cart is empty" at tablet width).
+
+**Android-runtime verified (phone ≈411 dp and tablet ≈800 dp):**
+- Expiry during Cart (single match) → sheet over Home → Start again → that
+  match's Details with a clean selection → Back → Home.
+- Expiry on the card screen (two matches) → sheet ("No payment was taken")
+  → Start again → Matches on Upcoming.
+- Expiry during Checkout → sheet over Home (after the redirect fix);
+  Back to home → Home, no navigation warnings.
+- Tablet: hold sheet, Checkout, Timeline / Stats, empty Cart.
+- One countdown on Cart / holders / Checkout / card screen; the hold
+  survives an app reload (restored by `CartContext`).
+- BLUE → Other selection switch and Other → Back → BLUE (Continue with BLUE
+  enabled; not submitted).
+- Stats bars animate from the centre each time Stats is shown.
+
+- Expiry during the BLUE page → WebView closed, sheet over Home with the
+  "check My Tickets" copy (a BLUE request had been sent).
+
+**Source / test only:** reduced motion on the device; the Home avatar when
+signed out, on image-load failure, and after a change from Profile (the
+account's real photo was not modified); iOS.
+
+**Backend-dependent:** BLUE ↔ Other switching itself is implemented in the
+app (a BLUE order whose page was left is parked; BLUE resumes it, Other pays
+with its own order). The app cannot cancel a pending BLUE order or read its
+status: cancelling, status and reconciling an outstanding BLUE order —
+especially after another method succeeded for the same reservation — need
+backend support (`docs/API_INTEGRATION.md`).
+- A resumed BLUE payment keeps the match its order was submitted for
+  (`purchasedMatchId` on the pending BLUE record), so success still opens
+  that match's tickets; several matches → My Tickets.
+
+## Validation (post-redesign corrections working tree)
+
+| Check | Result |
+| ----- | ------ |
+| `npx tsc --noEmit` | PASS |
+| `npx expo lint` | 0 errors, 1 existing warning (`services/auth.ts` `fields`) |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | **863/863 passing** (incl. resumed-BLUE routing) |
+| `git diff --check 75cb896` | clean |
+| Web / Android / iOS export | PASS |
+| Android emulator runtime (dev build, signed in, staging) | PASS for the items listed above |
+| iOS / iPad runtime | NOT VERIFIED (no simulator on Windows) |
+
+## Batch 10 record
+
+### Batch 10 checkpoint (v3, final)
 
 **Implemented (source):**
 - **Dead code removed** (no importer; orphaned by redesign commits):
@@ -86,7 +220,7 @@ tests pass unchanged.
 - On wide screens the subpage Back sits at the screen edge while content stays
   in a readable column (consistent across subpages).
 
-## Validation (Batch 10 working tree)
+### Validation (Batch 10, at that checkpoint)
 
 | Check | Result |
 | ----- | ------ |

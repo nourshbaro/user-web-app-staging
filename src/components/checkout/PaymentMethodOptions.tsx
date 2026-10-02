@@ -7,10 +7,14 @@ import { size, spacing } from "@/lib/designTokens";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
-/** Only the methods the backend supports. No other method may be added here. */
-const METHODS: { id: PaymentMethodOption; titleKey: "checkout.payment.card.title" | "checkout.payment.blue.title"; detailKey: "checkout.payment.card.detail" | "checkout.payment.blue.detail" }[] = [
-  { id: "cybersource", titleKey: "checkout.payment.card.title", detailKey: "checkout.payment.card.detail" },
+/**
+ * Only the methods the backend supports, in the product's order: BLUE Wallet,
+ * then "Other" (the card path). The ids are the backend `payment_method`
+ * values and never change for presentation. No other method may be added.
+ */
+export const PAYMENT_METHOD_ORDER: { id: PaymentMethodOption; titleKey: "checkout.payment.card.title" | "checkout.payment.blue.title"; detailKey: "checkout.payment.card.detail" | "checkout.payment.blue.detail" }[] = [
   { id: "blue", titleKey: "checkout.payment.blue.title", detailKey: "checkout.payment.blue.detail" },
+  { id: "cybersource", titleKey: "checkout.payment.card.title", detailKey: "checkout.payment.card.detail" },
 ];
 
 /**
@@ -37,7 +41,7 @@ export function PaymentMethodOptions({
 
   return (
     <View accessibilityRole="radiogroup" accessibilityLabel={i18n.t("checkout.payment.title")} style={local.group}>
-      {METHODS.map((method) => {
+      {PAYMENT_METHOD_ORDER.map((method) => {
         const active = selected === method.id;
         const title = i18n.t(method.titleKey);
         const detail = i18n.t(method.detailKey);

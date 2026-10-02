@@ -23,6 +23,17 @@
  *    the lock on an unknown outcome (`markPaymentOutcomeUnknown`), and ends
  *    with the session when a trusted success clears the cart.
  *
+ * A parked BLUE attempt. When the user leaves the BLUE page without a
+ * terminal result, the BLUE request (its backend order and `payment_url`) may
+ * still be open, so its attempt is *parked* (`parkPaymentAttempt`): its
+ * record stays persisted, but it no longer blocks the session. Another method
+ * may then acquire an attempt of its own (a card submit is a separate backend
+ * order; the BLUE order is never reused for it); BLUE re-acquires the same
+ * parked attempt to resume its stored URL. While another attempt runs on top
+ * of the parked one, the record names that attempt's method; settling it
+ * restores the parked record. A trusted success clears the session, and an
+ * unknown outcome locks it, ending the parked attempt either way.
+ *
  * Restart safety. The cart session id is persisted and restored by
  * `CartContext`, so in-memory state alone would disappear with the process
  * and the restored session would become payable again. When `CartContext`
@@ -63,6 +74,8 @@ const RECORD_VERSION = 1;
 
 let lock: PaymentOutcomeLock | null = null;
 let attempt: PaymentAttempt | null = null;
+/** A BLUE attempt whose page was left without a result; blocks nothing, keeps its record. */
+let parked: PaymentAttempt | null = null;
 let attemptSequence = 0;
 let store: PaymentOutcomeStore | null = null;
 let tail: Promise<unknown> = Promise.resolve();
@@ -104,8 +117,9 @@ export function configurePaymentOutcomeStore(next: PaymentOutcomeStore | null) {
 
 export function markPaymentOutcomeUnknown(sessionId: string, method: PaymentMethodKind) {
   lock = { sessionId, method };
-  // The lock supersedes the attempt: the session stays blocked for everyone.
+  // The lock supersedes the attempt (and any parked one): the session stays blocked for everyone.
   if (attempt?.sessionId === sessionId) attempt = null;
+  if (parked?.sessionId === sessionId) parked = null;
   const current = store;
   // The attempt was already recorded before its submit; this keeps the
   // record in place (idempotent) for locks raised without a prior record.
@@ -117,9 +131,25 @@ export function readPaymentOutcomeLock(sessionId: string | null): PaymentOutcome
   return sessionId !== null && lock?.sessionId === sessionId ? lock : null;
 }
 
-/** The attempt in progress for this session, or null. */
+/** The attempt in progress for this session, or null. A parked attempt is not in progress. */
 export function readPaymentAttempt(sessionId: string | null): PaymentAttempt | null {
   return sessionId !== null && attempt?.sessionId === sessionId ? attempt : null;
+}
+
+/** The parked BLUE attempt for this session, or null. */
+export function readParkedPaymentAttempt(sessionId: string | null): PaymentAttempt | null {
+  return sessionId !== null && parked?.sessionId === sessionId ? parked : null;
+}
+
+/**
+ * The BLUE page was left without a terminal result: the in-progress BLUE
+ * attempt for this session stops blocking other methods but keeps its record
+ * (so a restart still fails closed). Only an in-progress BLUE attempt parks.
+ */
+export function parkPaymentAttempt(sessionId: string) {
+  if (attempt?.sessionId !== sessionId || attempt.method !== "blue") return;
+  parked = attempt;
+  attempt = null;
 }
 
 /**
@@ -135,6 +165,7 @@ export function isPaymentAttemptHeldByOther(sessionId: string | null, own: Payme
 export function clearPaymentOutcomeLockUnlessSession(sessionId: string | null) {
   if (lock && lock.sessionId !== sessionId) lock = null;
   if (attempt && attempt.sessionId !== sessionId) attempt = null;
+  if (parked && parked.sessionId !== sessionId) parked = null;
 }
 
 /**
@@ -150,6 +181,24 @@ export function acquirePaymentAttempt(sessionId: string, method: PaymentMethodKi
   }
   const current = store;
   if (!current) return Promise.resolve({ ok: false, reason: "notRecorded" });
+  // Resuming the parked BLUE attempt re-holds that same attempt (its record is already persisted).
+  const resumed = readParkedPaymentAttempt(sessionId);
+  if (resumed && resumed.method === method) {
+    parked = null;
+    attempt = resumed;
+    return enqueue(async () => {
+      await current.set(serializeRecord(sessionId, method));
+    }).then(
+      (): PaymentAttemptAcquisition => ({ ok: true, attempt: resumed }),
+      (): PaymentAttemptAcquisition => {
+        if (attempt?.id === resumed.id) {
+          attempt = null;
+          parked = resumed;
+        }
+        return { ok: false, reason: "notRecorded" };
+      },
+    );
+  }
   attemptSequence += 1;
   const claimed: PaymentAttempt = { id: attemptSequence, sessionId, method };
   attempt = claimed;
@@ -180,6 +229,12 @@ export function settlePaymentAttempt(sessionId: string, attemptId?: number): Pro
   return enqueue(async () => {
     // A newer attempt (or a lock) for this session may have been acquired meanwhile.
     if (readPaymentOutcomeLock(sessionId) || readPaymentAttempt(sessionId)) return;
+    // A parked BLUE request is still open: its record comes back, not removed.
+    const stillParked = readParkedPaymentAttempt(sessionId);
+    if (stillParked) {
+      await current.set(serializeRecord(sessionId, stillParked.method));
+      return;
+    }
     const record = parsePaymentOutcomeRecord(await current.get());
     if (record !== null && record !== "malformed" && record.sessionId === sessionId) await current.remove();
   }).catch(() => undefined);

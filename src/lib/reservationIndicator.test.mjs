@@ -19,14 +19,12 @@ test("shown only while the cart owner reports an active reservation", () => {
 
 test("appears on normal screens and stays off screens that own a countdown or a transaction", () => {
   // v3: Match Details, ticket holders and Checkout use this indicator as their one countdown.
-  for (const pathname of ["/", "/matches", "/tickets", "/competitions", "/profile", "/settings", "/about", "/edit-profile", "/auth", "/match/42", "/checkout/ticket-holders", "/checkout"]) {
+  for (const pathname of ["/", "/matches", "/tickets", "/competitions", "/profile", "/settings", "/about", "/edit-profile", "/auth", "/match/42", "/checkout/ticket-holders", "/checkout", "/checkout/card/payment", "/checkout/blue/payment"]) {
     assert.equal(reservationIndicatorAllowedOn(pathname), true, pathname);
   }
-  // Cart has its own countdown card; payment and result screens stay free of it.
+  // Cart has its own countdown card (same owner value); the result screens stay free of it.
   for (const pathname of [
     "/cart",
-    "/checkout/card/payment",
-    "/checkout/blue/payment",
     "/checkout/success",
     "/checkout/failed",
     "/checkout/blue/success",
@@ -76,9 +74,8 @@ test("the indicator is presentation only: one expiry authority (CartContext)", a
   assert.doesNotMatch(bar, /useCart/);
   // Opens the existing cart experience.
   assert.match(chrome, /router\.navigate\("\/cart"\)/);
-  // Expiry explanation stays with the single existing notice.
-  const layout = strip(await read("../app/_layout.tsx"));
-  assert.equal(layout.match(/<ReservationExpiryNotice \/>/g)?.length, 1);
+  // Expiry is explained once, by the v3 sheet mounted in the chrome (never by the bar).
+  assert.equal(chrome.match(/<HoldExpiredSheet \/>/g)?.length, 1);
   assert.doesNotMatch(bar + chrome, /no payment was taken/i);
 });
 
@@ -101,8 +98,20 @@ test("accessible, not chatty: one labelled button, no per-second announcements, 
   assert.match(bar, /minHeight: RESERVATION_HOLD_BAR_HEIGHT/);
 });
 
-test("header actions no longer repeat the countdown", async () => {
-  const actions = strip(await read("../components/HeaderActions.tsx"));
-  assert.doesNotMatch(actions, /CartTimerPill|secondsLeft/);
-  assert.match(actions, /accessibilityRole="button"/);
+test("one redesigned countdown everywhere: the payment screens show the global bar and draw no timer of their own", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const components = await readdir(new URL("../components/", import.meta.url));
+  // The legacy timer pill and the header that carried it are gone.
+  assert.equal(components.includes("CartTimer.tsx"), false);
+  assert.equal(components.includes("AppHeader.tsx"), false);
+  for (const path of ["../components/CardPaymentScreen.tsx", "../components/BluePaymentScreen.native.tsx"]) {
+    const source = strip(await read(path));
+    assert.doesNotMatch(source, /secondsLeft|showTimer|CartTimer|minutesSeconds|setInterval/, path);
+  }
+  // The bar is allowed on the payment routes (read-only there) and still hidden on Cart and the results.
+  assert.equal(shouldShowReservationIndicator({ pathname: "/checkout/card/payment", sessionId: "S", itemCount: 1, secondsLeft: 300, onboardingVisible: false }), true);
+  assert.equal(shouldShowReservationIndicator({ pathname: "/checkout/blue/payment", sessionId: "S", itemCount: 1, secondsLeft: 300, onboardingVisible: false }), true);
+  assert.equal(reservationIndicatorInteractive("/checkout/card/payment"), false);
+  assert.equal(shouldShowReservationIndicator({ pathname: "/cart", sessionId: "S", itemCount: 1, secondsLeft: 300, onboardingVisible: false }), false);
+  assert.equal(shouldShowReservationIndicator({ pathname: "/checkout/success", sessionId: "S", itemCount: 1, secondsLeft: 300, onboardingVisible: false }), false);
 });

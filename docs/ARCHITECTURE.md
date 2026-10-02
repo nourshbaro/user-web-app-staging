@@ -56,11 +56,11 @@ GestureHandlerRootView
             └─ CartProvider key={userCacheKey | "authenticated" | "guest"}
                └─ TicketHoldersProvider
                   └─ CartSheetProvider  (renders <CartSheet>)
-                     ├─ ReservationExpiryNotice  (observes expiry; renders nothing)
                      └─ MaintenanceGuard
                         └─ AppChrome        (src/components/AppChrome.tsx)
                            ├─ ReservationHoldBar  (global reservation indicator, §8)
                            ├─ <Stack> (all routes)
+                           ├─ HoldExpiredSheet    (v3 "Reservation expired", §8)
                            └─ OnboardingFlow      (first-run overlay, §2.1)
 ```
 
@@ -300,8 +300,11 @@ Not used by any route (do not assume they own anything):
     "Upcoming" with "See all" (tab-replace to `/matches`);
   - Live now / Latest result: `useScheduledMatches` with `status: "live"`
     / `"completed"` (same service, cache and guards); shown only when the
-    backend returns such matches; backend scores only (`matchScore`), no
-    minutes, events or statistics; display-only (no result screen yet);
+    backend returns such matches; backend scores only (`matchScore`); the
+    live minute is the list item's own clock (`liveClockOf`). Each card
+    opens `/match/[id]`; "See all" opens Matches on the Live / Results
+    segment (`matchesTabRoute` → `/matches?tab=…`, read once by
+    `MatchesList` through `matchTabFromParam`; no new owner);
   - My Tickets card: `useNextTicketMatch` (`profileService.matches("upcoming")`,
     request authority + user-scoped generation, signed-in only) → "{n}
     tickets for {home} v {away}"; otherwise the plain entry; always a tab
@@ -521,9 +524,22 @@ Not used by any route (do not assume they own anything):
   (`refreshCart`) before retrying, and never replay a mutation blindly. Match
   Details applies this (§7).
 - **Expiry**: a 1-second tick computes `secondsLeft`; at zero, or when the app
-  returns to foreground past expiry, the session is cleared and the stack is
-  reset to `/`. `ReservationExpiryNotice` observes that transition and shows a
-  toast; it never changes cart state.
+  returns to foreground past expiry, `expireCart` first captures a minimal
+  snapshot (`expiredHoldFrom`, `src/lib/holdExpiry.ts`): the expired cart's
+  unique match ids and whether any payment touched the session (attempt,
+  pending BLUE request or unknown-outcome lock). It then clears the session
+  (same-session guarded), dismisses every transaction screen (and any payment
+  WebView) to `/`, and publishes the snapshot as `expiredHold`.
+  `HoldExpiredSheet` (in `AppChrome`) presents the v3 "Reservation expired"
+  sheet over Home: **Start again** → the one match's `/match/[id]` (a fresh
+  selection; nothing is re-reserved) or Matches on Upcoming when the hold
+  spanned several matches; **Back to home** (and Android back) closes it. "No
+  payment was taken" appears only when no payment touched the session. The
+  snapshot holds no seats, lock keys, session, checkout state or payment data,
+  and any later reset (logout, a new session) retires it. The snapshot is
+  published in the same update as the clear, and the Checkout / holders
+  empty-cart redirects to `/cart` stand down while `expiredHold` is set, so
+  Home (not an empty Cart) stays under the sheet.
 - **Global reservation indicator** (`ReservationHoldBar`, mounted once in
   `AppChrome`): "Reservation held · mm:ss · View" while the owner reports a
   session with items and `secondsLeft > 0`. It shows `CartContext.secondsLeft`
@@ -692,6 +708,40 @@ entry is always CyberSource's own form.
 
 ---
 
+### Payment-method switching (post-redesign)
+
+- Choosing a method holds nothing; opening the card form and backing out
+  holds nothing (the attempt is acquired only when the card token is
+  submitted). So BLUE ↔ Other is freely reversible until a payment request is
+  sent.
+- "Continue with BLUE" submits to the backend, which creates the BLUE order
+  (`order_id` / `order_number`; the BLUE page shows it) and returns its
+  `payment_url`; the URL is stored with the pending attempt
+  (`savePendingBluePaymentAttempt`). While the BLUE page is open the attempt
+  is in progress (Card waits). Leaving the BLUE page without a result
+  **parks** the attempt (`parkPaymentAttempt`): it keeps its restart record but
+  blocks nothing, so both methods stay selectable:
+  - BLUE re-holds the parked attempt and reopens the stored URL; nothing is
+    submitted, so no second BLUE order is created.
+  - Other starts its own card attempt (`/checkout/mobile/submit` with a
+    transient token is a separate backend order; the BLUE order is never
+    reused or rewritten). A definite card failure restores the parked BLUE
+    attempt and record; an unknown card outcome locks the session for every
+    method; a card success clears the session (and the pending BLUE record).
+- Still blocking: an in-progress attempt (card submit in flight, BLUE page
+  open), an unknown outcome, and a restart with an unsettled record (the
+  stored BLUE URL lived only in memory, so it fails closed).
+- BLUE deep-link results (`/checkout/blue/success|failed`) are display-only;
+  only the live BLUE WebView for the handoff's own session can clear a cart.
+  **Backend dependency:** a BLUE order left open can still be approved in the
+  BLUE app after a card payment completed for the same reservation; the app
+  cannot see or cancel it (no cancel / status endpoint, no idempotency
+  contract). Reconciling that is backend-owned.
+- Card and BLUE payment screens use the v3 `FlowHeader` and the global
+  reservation bar (read-only there); the legacy `AppHeader`, its
+  `CartTimerPill` and `HeaderActions` are removed. The shared alert dialog
+  uses the v3 dialog presentation.
+
 ## 11. Tickets, orders, QR, PDF (`src/app/tickets.tsx`)
 
 - List: `profileService.matches(filter)` with filter `all | upcoming | past`
@@ -716,7 +766,15 @@ entry is always CyberSource's own form.
   kickoff date.
 - **Presentation (v3):** stub cards grouped Upcoming / Past, and a modal ticket
   viewer (pager of flip tickets: front = backend facts, back = QR). Gate,
-  block, price and category are not shown (no such fields).
+  block, price and category are not shown (no such fields). Tapping the ticket
+  surface flips it (the buttons stay the accessible path; each surface sets an
+  explicit face, so nested buttons never double-flip). The back face replays
+  the v3 QR fade-in and the used / cancelled / expired stamp pop
+  (`lfStamp`); reduced motion swaps faces with both in place. Each pager page
+  reserves room for the raised shadow (the paging `ScrollView` clips).
+- **After a purchase:** `/tickets?match=…&order=…` opens that match's viewer
+  once (from the screen's own list) at the order's first ticket
+  (`purchasedTicketFocus`, `ticketFocusIndex`).
 - Payment details / PDF: the v3 screen has no entry point (the previous UI had
   already commented them out). `profileService.order`, `orderPdf` and
   `downloadProfileOrderPdf` are unchanged for a future caller.
@@ -733,7 +791,9 @@ entry is always CyberSource's own form.
   standings"; a 404 → "Standings unavailable" with retry (never "No
   standings": the 404 is ambiguous, see `docs/API_INTEGRATION.md`); a
   malformed success (no `standings` array, or any incomplete row), server or
-  network failure → error with retry. Every
+  network failure → error with retry. A `cup` (backend `format`,
+  `standingsPlanFor`) requests no standings at all: a knockout note, then
+  its matches. Every
   match opens `/match/[id]`, whose backend status decides purchase vs
   live/result. No second Match Details.
 - **Profile**: data from `/auth/me` (cached `auth.user` until it loads).
@@ -753,10 +813,14 @@ entry is always CyberSource's own form.
   is not available and shows no action. Appearance = `ThemeProvider` mode. Language is shown,
   not switchable (English is the only complete catalog). Account deletion =
   `AccountDeletionModal`.
-- **Auth** (`/auth`): v3 presentation over the unchanged production flows:
-  login (+ phone completion), register → email OTP (+ resend), forgot password
-  → email → OTP → new password. Change password stays in `ChangePassword`
-  (sheet, from the Profile menu). No startup authentication.
+- **Auth** (`/auth`): v3 presentation over the production flows: login
+  (+ phone completion), register, forgot password → email → OTP → new
+  password. Login and Register have **no OTP step of their own**
+  (`credentialOutcome`, `src/lib/authCredentialOutcome.ts`): a token → signed
+  in; an account id without a token → the backend's verification code
+  (`verify-otp`); neither → sign in. The former client-side email
+  verification pre-check before Login is removed. Change password stays in
+  `ChangePassword` (sheet, from the Profile menu). No startup authentication.
 
 ## 12. Push notifications and device registration
 
@@ -888,9 +952,14 @@ retry, so recovery requires an app restart.
   sliding segment thumbs, the live-dot blink, skeleton shimmer, and the
   slide-in of every modal sheet (`BottomSheetModal`, `ProfilePhotoSheet`,
   the ticket viewer, the phone-country picker), which fades in place instead.
+- Completed match (`src/lib/matchMotion.ts`): Timeline rows rise in (v3
+  `lfEnter`); Stats rows do not move — only the share bars grow from the
+  centre line (v3 `lfBar` 0.7 s, 120 ms + 50 ms per row, ease-out) each time
+  Stats is shown. Values and labels are final from the first frame; a missing
+  statistic keeps "—" and has no bar. Reduced motion: final state at once.
 - RTL readiness (English only today): layouts use start/end props;
   forward/back and disclosure arrows use `DirectionalChevron` (including the
-  legacy `AppHeader` used by the payment screens and the ticket pager);
+  payment screens' `FlowHeader` and the ticket pager);
   stadium, seat and QR geometry sit in `PhysicalLayout`; Arabic text falls
   back to the platform font for both type roles (`fontFamilyFor`).
 - Touch targets: controls drawn smaller than 44pt to match v3 (segments,
@@ -1009,7 +1078,7 @@ enabled.** No third-party i18n library is used.
 20. An unknown payment outcome, or an unfinished attempt found after a restart, locks that cart session for every payment method until a different session exists; a stale lock or attempt never applies to another session (§10).
 21. `expo-notifications` is imported at runtime only by `src/lib/notifications.ts`, behind the Expo Go guard (§12).
 22. Notification permission is never requested at startup; the native prompt follows only an explicit user action, and an already granted permission keeps registering as before (§12).
-23. The global reservation indicator is presentation only: it shows `CartContext.secondsLeft` and has no clock, timestamp or reservation state of its own; expiry stays with `CartContext` and `ReservationExpiryNotice` (§8).
+23. The global reservation indicator is presentation only: it shows `CartContext.secondsLeft` and has no clock, timestamp or reservation state of its own; it is the one countdown on Match Details, holders, Checkout and the Card / BLUE payment screens (Cart shows the same value in its v3 card). Expiry stays with `CartContext`; `HoldExpiredSheet` presents its snapshot (§8).
 24. Onboarding never navigates or traps an entry: it is offered only on a normal native launch at `/`, steps aside on any navigation, and never runs for signed-in users (§2.1).
 25. Font families are chosen only through the typography roles (`fontFamilies.ts`); Arabic never resolves to a Latin family.
 

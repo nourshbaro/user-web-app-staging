@@ -119,7 +119,19 @@ function CartScreen() {
               <AppText variant="meta" tone="muted" align="center" style={local.regular}>{i18n.t("cart.pending.message")}</AppText>
             </View>
             <SkeletonGroup label={i18n.t("cart.loading")}>
-              <SkeletonBlock height={132} borderRadius={radius.xl} />
+              {/* The cart group card's outline: match header, then ticket lines. */}
+              <View style={[local.skeletonCard, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
+                <SkeletonBlock width="55%" height={16} />
+                {[0, 1].map((line) => (
+                  <View key={line} style={local.skeletonLine}>
+                    <View style={local.skeletonCopy}>
+                      <SkeletonBlock width="50%" height={14} />
+                      <SkeletonBlock width="30%" height={12} />
+                    </View>
+                    <SkeletonBlock width={96} height={36} borderRadius={18} />
+                  </View>
+                ))}
+              </View>
             </SkeletonGroup>
           </>
         ) : viewState === "refreshFailed" ? (
@@ -237,6 +249,9 @@ function CartScreen() {
 }
 
 const local = {
+  skeletonCard: { borderRadius: radius.xl, padding: spacing.lg, gap: spacing.md },
+  skeletonLine: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md },
+  skeletonCopy: { flex: 1, gap: spacing.sm },
   root: { flex: 1 },
   header: { width: "100%" as const, paddingHorizontal: layout.gutter },
   content: {

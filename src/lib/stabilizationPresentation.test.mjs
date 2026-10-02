@@ -4,7 +4,8 @@ import test from "node:test";
 
 const tickets = await readFile(new URL("../app/tickets.tsx", import.meta.url), "utf8");
 const profile = await readFile(new URL("../app/profile.tsx", import.meta.url), "utf8");
-const headerActions = await readFile(new URL("../components/HeaderActions.tsx", import.meta.url), "utf8");
+const tabHeader = await readFile(new URL("../components/TabHeader.tsx", import.meta.url), "utf8");
+const flowHeader = await readFile(new URL("../components/FlowHeader.tsx", import.meta.url), "utf8");
 const profileDetail = await readFile(new URL("../components/ProfileDetailModal.tsx", import.meta.url), "utf8");
 const pdfAuthority = await readFile(new URL("./profilePdfDownload.ts", import.meta.url), "utf8");
 
@@ -35,8 +36,8 @@ test("a signed-out gated subpage keeps a Back action (never a dead end) and tabs
   assert.doesNotMatch(gate, /MainHeader/);
 });
 
-test("appearance control is absent from the global header", () => {
-  assert.doesNotMatch(headerActions, /toggleTheme|Switch to light mode|Switch to dark mode/);
+test("appearance control lives only in Settings, never in the app headers", () => {
+  assert.doesNotMatch(tabHeader + flowHeader, /toggleTheme|setMode|Switch to light mode|Switch to dark mode/);
 });
 
 test("both ticket faces share one bounded frame and hide from assistive tech when turned away", () => {

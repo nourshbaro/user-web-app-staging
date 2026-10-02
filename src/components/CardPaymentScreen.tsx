@@ -1,4 +1,4 @@
-import { AppHeader } from "@/components/AppHeader";
+import { FlowHeader } from "@/components/FlowHeader";
 import { CybersourceUnifiedCheckout } from "@/components/CybersourceUnifiedCheckout";
 import { PaymentOutcomePanel, UnknownOutcomeSteps } from "@/components/checkout/PaymentOutcome";
 import { AppText, StatePanel } from "@/components/foundation";
@@ -15,6 +15,7 @@ import { canLeavePayment, paymentFailureKind, paymentSubmitBlocker, type Payment
 import {
   checkoutResultRouteParams,
   parseCheckoutResultParams,
+  singlePurchasedMatchId,
 } from "@/lib/checkoutResultParams";
 import { spacing } from "@/lib/designTokens";
 import { formatMoney } from "@/lib/format";
@@ -228,6 +229,8 @@ export function CardPaymentScreen() {
         const resultParams = checkoutResultRouteParams(
           parseCheckoutResultParams({
             provider: "cybersource",
+            // Display-only: which match's tickets "View my ticket" opens.
+            match_id: singlePurchasedMatchId(handoff.request.tickets_by_match),
             order_id: response.order_id,
             order_number: response.order_number,
             reference:
@@ -282,11 +285,11 @@ export function CardPaymentScreen() {
     >
       <Stack.Screen options={{ headerShown: false, gestureEnabled: false }} />
       <View style={local.header}>
-        <AppHeader
+        {/* v3 flow header; the reservation countdown is the one global bar above (read-only here). */}
+        <FlowHeader
           title={i18n.t("payment.card.title")}
           subtitle={i18n.t("payment.secure")}
-          hideCart
-          showTimer
+          backLabel={i18n.t("checkout.title")}
           // The synchronous in-flight ref decides, so a press that lands before
           // the re-render still cannot leave and drop the payment's result.
           onBack={() => {
@@ -295,7 +298,7 @@ export function CardPaymentScreen() {
           backDisabled={processing}
         />
         {!sessionMismatch && !failure ? (
-          <View style={[local.amount, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
+          <View style={[local.amount, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
             <AppText variant="meta" tone="muted">{i18n.t("checkout.total")}</AppText>
             <AppText variant="numeric">{formatMoney(cart.total, cart.currency)}</AppText>
           </View>
@@ -345,7 +348,7 @@ export function CardPaymentScreen() {
                 aria-busy
               >
                 <View
-                  style={[local.processingPanel, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+                  style={[local.processingPanel, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowRaised }]}
                   accessible
                   accessibilityRole="progressbar"
                   accessibilityLiveRegion="assertive"
@@ -388,14 +391,14 @@ export function CardPaymentScreen() {
 const local = StyleSheet.create({
   root: { flex: 1, width: "100%" },
   header: { width: "100%", paddingHorizontal: 14, gap: spacing.sm, paddingBottom: spacing.sm },
+  // v3 summary card (surface + card shadow, radius 16), not the legacy bordered box.
   amount: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 16,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
   },
   paymentArea: { flex: 1, width: "100%" },
   messageArea: { flex: 1, padding: spacing.xxl, justifyContent: "center" },
@@ -404,8 +407,7 @@ const local = StyleSheet.create({
   processingPanel: {
     width: "100%",
     maxWidth: 320,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 20,
     padding: spacing.xl,
     alignItems: "center",
     gap: spacing.sm,

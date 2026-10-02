@@ -96,13 +96,15 @@ test("Blue handoff is created while the authoritative cart session remains activ
   );
   const blueIndex = source.indexOf("const submitBlue = async");
   const handoffIndex = source.indexOf(
-    "launchBluePayment(validatedUrl, submissionTicket.sessionId)",
+    "launchBluePayment(validatedUrl, submissionTicket.sessionId, purchasedMatchId)",
     blueIndex,
   );
   const blueBranchEnd = source.indexOf("const canContinue", blueIndex);
   const blueBranch = source.slice(blueIndex, blueBranchEnd);
 
   assert.ok(handoffIndex > blueIndex);
+  // The match comes from the submitted tickets and is saved with the BLUE order.
+  assert.match(blueBranch, /const purchasedMatchId = singlePurchasedMatchId\(ticketsByMatch\);\s*savePendingBluePaymentAttempt\(\{\s*sessionId: submissionTicket\.sessionId,\s*paymentUrl: validatedUrl,\s*purchasedMatchId,/);
   assert.doesNotMatch(blueBranch, /clearCartIfSession/);
   assert.match(blueBranch, /launchBluePayment/);
 });
@@ -115,7 +117,8 @@ test("returning from BLUE releases the route-launch guard and reuses the same se
 
   assert.match(source, /useFocusEffect\(\s*useCallback\(\(\) => \{[\s\S]*blueHandoffStartedRef\.current = false;/);
   assert.match(source, /readPendingBluePaymentAttempt\(\s*cartSessionTicket\.sessionId as string,?\s*\)/);
-  assert.match(source, /launchBluePayment\(\s*reusableAttempt\.paymentUrl,\s*reusableAttempt\.sessionId,?\s*\)/);
+  // Resuming reopens the same URL with the BLUE order's own submitted match.
+  assert.match(source, /launchBluePayment\(\s*reusableAttempt\.paymentUrl,\s*reusableAttempt\.sessionId,\s*(?:\/\/[^\n]*\n\s*)?reusableAttempt\.purchasedMatchId \?\? null,?\s*\)/);
   assert.match(source, /savePendingBluePaymentAttempt\(\{/);
 });
 test("card payment is a dedicated route rather than a Checkout modal", async () => {
@@ -160,7 +163,7 @@ test("background Checkout cannot replace authoritative Card success with Cart", 
   const checkout = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
   const cardScreen = await readFile(new URL("../components/CardPaymentScreen.tsx", import.meta.url), "utf8");
 
-  assert.match(checkout, /if \(isFocused && !cart\.isLoading && !cart\.sessionId && !cart\.items\.length\)\s*router\.replace\("\/cart"\)/);
+  assert.match(checkout, /if \(isFocused && !cart\.isLoading && !cart\.sessionId && !cart\.items\.length && !cart\.expiredHold\)\s*router\.replace\("\/cart"\)/);
   assert.match(cardScreen, /await cart\.clearCartIfSession\(cartTicket\)/);
   assert.match(cardScreen, /resetRouter\.dismissAll\?\.\(\)/);
   assert.match(cardScreen, /pathname: "\/checkout\/success"/);

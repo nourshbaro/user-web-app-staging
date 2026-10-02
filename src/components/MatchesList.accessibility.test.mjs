@@ -105,7 +105,7 @@ test("nested control icons are decorative", () => {
 
 test("applied filter values stay owned by the Matches screen, not the filter components", () => {
   assert.match(list, /const \[filters, setFilters\] = useState<MatchFilters>\(\{\}\);/);
-  assert.match(list, /const \[tab, setTab\] = useState<MatchTab>\("upcoming"\);/);
+  assert.match(list, /const \[tab, setTab\] = useState<MatchTab>\(\(\) => matchTabFromParam\(params\.tab\)\);/);
   assert.match(list, /const query = useMemo\(\(\) => matchQueryFor\(filters, tab\), \[filters, tab\]\);/);
   assert.match(list, /useScheduledMatches\(query, \{ withFilterOptions: true \}\)/);
   // The sheet only edits a draft until "Show matches"; it never loads data.

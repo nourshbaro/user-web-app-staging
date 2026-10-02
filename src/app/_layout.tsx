@@ -1,5 +1,4 @@
 import { AppChrome } from "@/components/AppChrome";
-import { ReservationExpiryNotice } from "@/components/cart/ReservationExpiryNotice";
 import { ThemeProvider, useTheme } from "@/components/ui";
 import { AlertDialogProvider } from "@/context/AlertDialogContext";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -144,7 +143,6 @@ function AppProviders() {
           <TicketHoldersProvider>
             <CartSheetProvider>
               <StatusBar style={theme.isDark ? "light" : "dark"} />
-              <ReservationExpiryNotice />
               <MaintenanceGuard>
                 <AppChrome onboarding={onboarding}>
                   <Stack

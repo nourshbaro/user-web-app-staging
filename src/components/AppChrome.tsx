@@ -1,3 +1,4 @@
+import { HoldExpiredSheet } from "@/components/cart/HoldExpiredSheet";
 import { ReservationHoldBar } from "@/components/cart/ReservationHoldBar";
 import { LaunchSplash } from "@/components/onboarding/LaunchSplash";
 import { OnboardingFlow } from "@/components/onboarding/OnboardingFlow";
@@ -48,6 +49,8 @@ export function AppChrome({ onboarding, children }: PropsWithChildren<{ onboardi
         {showHold ? <ReservationHoldBar secondsLeft={cart.secondsLeft} topInset={insets.top} onPress={reservationIndicatorInteractive(pathname) ? openCart : undefined} /> : null}
         <SafeAreaInsetsContext.Provider value={contentInsets}>{children}</SafeAreaInsetsContext.Provider>
       </View>
+      {/* v3 hold_expired: presented over Home after the owner clears an expired reservation. */}
+      {!covered ? <HoldExpiredSheet /> : null}
       {onboarding.visible ? (
         <OnboardingFlow
           offerNotifications={onboarding.offerNotifications}

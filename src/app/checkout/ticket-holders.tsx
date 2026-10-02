@@ -70,8 +70,9 @@ function TicketHoldersScreen() {
   }, [isEditMode]);
 
   useEffect(() => {
-    if (!ticketSlots.length) router.replace("/cart");
-  }, [ticketSlots.length]);
+    // After expiry the owner has already routed Home under its sheet.
+    if (!ticketSlots.length && !cart.expiredHold) router.replace("/cart");
+  }, [cart.expiredHold, ticketSlots.length]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {

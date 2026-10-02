@@ -128,3 +128,33 @@ export function ticketListView({ loading, error, count }: { loading: boolean; er
   if (error) return "error";
   return count ? "list" : "empty";
 }
+
+/**
+ * "View my ticket" after a purchase opens My Tickets with `match` (the one
+ * match the order covered) and `order` (its order number). Validated here;
+ * anything else is no focus (the plain list).
+ */
+export function purchasedTicketFocus(params: { match?: unknown; order?: unknown }) {
+  const first = (value: unknown) => (Array.isArray(value) ? value[0] : value);
+  const match = first(params.match);
+  const text = typeof match === "string" ? match.trim() : typeof match === "number" ? String(match) : "";
+  if (!/^\d{1,12}$/.test(text)) return null;
+  const order = first(params.order);
+  return { matchId: Number(text), order: typeof order === "string" && order.trim() ? order.trim() : null };
+}
+
+/** "ORD-1172", "ord-1172" and "1172" name the same order (the portal strips `ORD-`). */
+function orderKey(value: string) {
+  return value.trim().replace(/^ord-/i, "").toLowerCase();
+}
+
+/**
+ * Where the ticket pager opens: the first ticket of the purchased order (by
+ * the backend `order_code`), else the first ticket. Never a guessed ticket.
+ */
+export function ticketFocusIndex(tickets: readonly { order_code: string }[], order: string | null) {
+  if (!order) return 0;
+  const key = orderKey(order);
+  const index = tickets.findIndex((ticket) => typeof ticket.order_code === "string" && orderKey(ticket.order_code) === key);
+  return index < 0 ? 0 : index;
+}

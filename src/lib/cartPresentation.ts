@@ -53,23 +53,6 @@ export function reservationUrgency(secondsLeft: number): ReservationUrgency {
   return "normal";
 }
 
-export type ReservationSnapshot = { sessionId: string | null; secondsLeft: number; itemCount: number };
-
-/**
- * True when the owner has just cleared a reservation whose countdown had
- * reached zero while it still held items — the CartContext expiry path. A
- * clear with time remaining (payment success, logout) is never reported as
- * expiry. Observation only: it never clears or changes anything.
- */
-export function reservationJustExpired(previous: ReservationSnapshot | null, next: ReservationSnapshot) {
-  if (!previous) return false;
-  return (
-    previous.sessionId !== null &&
-    previous.itemCount > 0 &&
-    previous.secondsLeft <= 0 &&
-    next.sessionId === null
-  );
-}
 
 /** Whole minutes and seconds for a spoken countdown ("4 minutes 5 seconds"). */
 export function countdownParts(secondsLeft: number) {

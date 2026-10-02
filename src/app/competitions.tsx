@@ -2,12 +2,14 @@ import { TabHeader } from "@/components/TabHeader";
 import { AppText, SkeletonBlock, SkeletonGroup, StatePanel } from "@/components/foundation";
 import { MatchCard } from "@/components/match/MatchCard";
 import { MatchGroup } from "@/components/match/MatchGroup";
+import { MatchListSkeleton } from "@/components/match/MatchSkeletons";
 import { TeamCrest } from "@/components/match/TeamCrest";
 import { Screen, useResponsive, useTheme } from "@/components/ui";
 import { useI18n } from "@/i18n/I18nProvider";
 import {
   competitionMatchRoute,
   formatGoalDifference,
+  standingsPlanFor,
   standingsView,
   type CompetitionMatch,
   type StandingsResult,
@@ -20,6 +22,7 @@ import { createRequestAuthority } from "@/lib/requestAuthority";
 import { competitionsService } from "@/services/competitions";
 import type { ApiMatch } from "@/types";
 import { router } from "expo-router";
+import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useState } from "react";
 import { Image, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
@@ -68,18 +71,21 @@ export default function CompetitionsScreen() {
   }, [listRequest]);
 
   const loadDetail = useCallback(
-    (id: number) => {
+    (id: number, knockout: boolean) => {
       const ticket = detailRequest.begin(String(id));
-      setStandings({ loading: true, error: false, data: null });
+      // A cup (backend format) has no league table: its standings are never requested.
+      setStandings({ loading: !knockout, error: false, data: null });
       setMatches({ loading: true, error: false, data: [] });
-      const standingsTask = competitionsService
-        .standings(id)
-        .then((data) => {
-          if (detailRequest.isCurrent(ticket)) setStandings({ loading: false, error: false, data });
-        })
-        .catch(() => {
-          if (detailRequest.isCurrent(ticket)) setStandings({ loading: false, error: true, data: null });
-        });
+      const standingsTask = knockout
+        ? Promise.resolve()
+        : competitionsService
+            .standings(id)
+            .then((data) => {
+              if (detailRequest.isCurrent(ticket)) setStandings({ loading: false, error: false, data });
+            })
+            .catch(() => {
+              if (detailRequest.isCurrent(ticket)) setStandings({ loading: false, error: true, data: null });
+            });
       const matchesTask = competitionsService
         .matches(id)
         .then((data) => {
@@ -98,25 +104,27 @@ export default function CompetitionsScreen() {
     return () => listRequest.invalidate();
   }, [listRequest, loadList]);
 
+  const selected = list.data.find((item) => item.id === selectedId) ?? null;
+  const knockout = standingsPlanFor(selected?.format) === "knockout";
+
   useEffect(() => {
     if (selectedId === null) return;
     let active = true;
     // Deferred a tick so the loading state is not set synchronously inside the effect.
     void Promise.resolve().then(() => {
-      if (active) return loadDetail(selectedId);
+      if (active) return loadDetail(selectedId, knockout);
     });
     return () => {
       active = false;
       detailRequest.invalidate();
     };
-  }, [detailRequest, loadDetail, selectedId]);
+  }, [detailRequest, knockout, loadDetail, selectedId]);
 
   const refresh = () => {
     setRefreshing(true);
-    void Promise.all([loadList(), selectedId !== null ? loadDetail(selectedId) : null]).finally(() => setRefreshing(false));
+    void Promise.all([loadList(), selectedId !== null ? loadDetail(selectedId, knockout) : null]).finally(() => setRefreshing(false));
   };
 
-  const selected = list.data.find((item) => item.id === selectedId) ?? null;
   const table = standings.data?.kind === "table" ? standings.data.standings : null;
   const view = standingsView({ loading: standings.loading, error: standings.error, standings: standings.data });
 
@@ -132,9 +140,10 @@ export default function CompetitionsScreen() {
           {list.loading ? (
             <SkeletonGroup label={i18n.t("competitions.loading")}>
               <View style={local.cardsRow}>
-                {[0, 1, 2].map((key) => <SkeletonBlock key={key} width={124} height={96} borderRadius={radius.lg} />)}
+                {[0, 1, 2].map((key) => <SkeletonBlock key={key} width={124} height={96} borderRadius={16} />)}
               </View>
-              <SkeletonBlock height={320} borderRadius={radius.xl} />
+              <SkeletonBlock width="45%" height={22} />
+              <StandingsSkeleton narrow={responsive.width < 360} />
             </SkeletonGroup>
           ) : list.error ? (
             <StatePanel
@@ -180,23 +189,29 @@ export default function CompetitionsScreen() {
                 </View>
               ) : null}
 
-              {view === "loading" ? (
+              {knockout ? (
+                // v3 cup: no table; a restrained note and the knockout matches lead.
+                <View style={[local.knockout, { backgroundColor: theme.colors.surfaceSecondary }]}>
+                  <SymbolView name={{ ios: "trophy", android: "emoji_events", web: "emoji_events" } as never} size={16} tintColor={theme.colors.textMuted} fallback={<View />} />
+                  <AppText variant="meta" tone="muted" style={local.knockoutText}>{i18n.t("competitions.knockout.note")}</AppText>
+                </View>
+              ) : view === "loading" ? (
                 <SkeletonGroup label={i18n.t("competitions.standings.loading")}>
-                  <SkeletonBlock height={280} borderRadius={radius.xl} />
+                  <StandingsSkeleton narrow={responsive.width < 360} />
                 </SkeletonGroup>
               ) : view === "error" ? (
                 <StatePanel
                   variant="error"
                   title={i18n.t("competitions.standings.error.title")}
                   message={i18n.t("competitions.error.message")}
-                  action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId) }}
+                  action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId, knockout) }}
                 />
               ) : view === "unavailable" ? (
                 <StatePanel
                   variant="empty"
                   title={i18n.t("competitions.standings.unavailable.title")}
                   message={i18n.t("competitions.standings.unavailable.message")}
-                  action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId) }}
+                  action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId, knockout) }}
                 />
               ) : view === "none" ? (
                 <StatePanel
@@ -210,15 +225,13 @@ export default function CompetitionsScreen() {
 
               <View style={local.matches}>
                 {matches.loading ? (
-                  <SkeletonGroup label={i18n.t("competitions.matches.loading")}>
-                    <SkeletonBlock height={140} borderRadius={radius.xl} />
-                  </SkeletonGroup>
+                  <MatchListSkeleton label={i18n.t("competitions.matches.loading")} count={3} />
                 ) : matches.error ? (
                   <StatePanel
                     variant="error"
                     title={i18n.t("competitions.matches.error.title")}
                     message={i18n.t("competitions.error.message")}
-                    action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId) }}
+                    action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId, knockout) }}
                   />
                 ) : matches.data.length ? (
                   <MatchGroup heading={i18n.t("competitions.matches.title")}>
@@ -244,6 +257,31 @@ export default function CompetitionsScreen() {
   );
 }
 
+/** The standings table's outline: header row, then rank · crest · team · numbers rows. */
+function StandingsSkeleton({ narrow }: { narrow: boolean }) {
+  const theme = useTheme();
+  const numbers = narrow ? 3 : 6;
+  return (
+    <View style={[local.table, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
+      <View style={[local.tableRow, local.tableHead, { backgroundColor: theme.colors.surfaceSecondary }]}>
+        <SkeletonBlock width="30%" height={10} />
+      </View>
+      {[0, 1, 2, 3].map((row) => (
+        <View key={row} style={[local.tableRow, { borderTopWidth: 1, borderTopColor: theme.colors.hairline }]}>
+          <SkeletonBlock width={12} height={12} />
+          <View style={[local.teamCell, local.teamInner]}>
+            <SkeletonBlock width={24} height={24} borderRadius={12} />
+            <SkeletonBlock width="55%" height={13} />
+          </View>
+          {Array.from({ length: numbers }, (_, cell) => (
+            <SkeletonBlock key={cell} width={cell >= numbers - 2 ? 22 : 14} height={12} />
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /** v3 competition card: the selected one is the night card. */
 function CompetitionCard({ competition, selected, onPress }: { competition: CompetitionSummary; selected: boolean; onPress: () => void }) {
   const theme = useTheme();
@@ -265,10 +303,9 @@ function CompetitionCard({ competition, selected, onPress }: { competition: Comp
       aria-checked={selected}
       style={({ pressed }) => [
         local.compCard,
-        // Both states define boxShadow (a processed key is never dropped between renders).
-        selected
-          ? { backgroundColor: theme.colors.hero, boxShadow: theme.colors.shadowRaised }
-          : { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard },
+        // One card shadow in both states (the night card is the selection cue);
+        // both define boxShadow, so the processed key is never dropped.
+        { backgroundColor: selected ? theme.colors.hero : theme.colors.surface, boxShadow: theme.colors.shadowCard },
         pressed && { opacity: 0.85 },
       ]}
     >
@@ -349,7 +386,11 @@ function StandingsTable({ rows, narrow }: { rows: StandingRow[]; narrow: boolean
 const local = {
   shell: { flex: 1, alignSelf: "center" as const },
   content: { gap: spacing.lg, paddingBottom: spacing.xxxl, paddingTop: spacing.sm },
-  cardsRow: { flexDirection: "row" as const, gap: 10, paddingVertical: spacing.xs },
+  // The horizontal ScrollView clips its content: the vertical padding is the
+  // card shadow's room (`shadowCard`: 6pt offset, 20pt blur), offset by margins.
+  cardsRow: { flexDirection: "row" as const, gap: 10, paddingVertical: 14, paddingHorizontal: spacing.xs, marginVertical: -10, marginHorizontal: -spacing.xs },
+  knockout: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.sm, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  knockoutText: { flex: 1 },
   // v3: 124pt card, padding 12, radius 16.
   compCard: { width: 124, gap: 10, padding: 12, borderRadius: 16, minHeight: 96 },
   compMark: { width: 34, height: 34, borderRadius: 17, alignItems: "center" as const, justifyContent: "center" as const, overflow: "hidden" as const },

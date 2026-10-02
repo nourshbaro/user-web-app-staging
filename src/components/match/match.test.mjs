@@ -47,7 +47,7 @@ test("cards use backend fields through shared labels, semantic tokens and direct
   const shared = await read("./matchLabels.ts");
   assert.match(shared, /const score = matchScore\(match\);/);
   assert.match(card, /\{labels\.score \?\? labels\.time\}/);
-  assert.match(card, /labels\.isLive \? \(\s*<LiveBadge label=\{labels\.statusLabel\} \/>/);
+  assert.match(card, /labels\.isLive \? \(\s*<LiveBadge label=\{labels\.liveLabel\} running=\{labels\.clockRunning\} \/>/);
 });
 
 test("card entrance motion respects the OS reduce-motion setting", () => {
@@ -99,7 +99,7 @@ test("Home: banner, featured next match by a transparent rule, upcoming list, an
 test("Home's 'All matches' switches tabs with the same replace semantics as the tab bar", () => {
   const open = home.slice(home.indexOf("const openAllMatches"), home.indexOf("return (", home.indexOf("const openAllMatches")));
   assert.match(open, /setPrimaryTabTransitionDirection\(1\);/);
-  assert.match(open, /router\.replace\("\/matches"\);/);
+  assert.match(open, /router\.replace\(matchesTabRoute\(tab\)\);/);
   assert.doesNotMatch(open, /router\.push/);
 });
 

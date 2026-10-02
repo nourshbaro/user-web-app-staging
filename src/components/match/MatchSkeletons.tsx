@@ -29,29 +29,43 @@ function MatchRowSkeleton({ first }: { first: boolean }) {
   );
 }
 
-/** Placeholder with the outline of a Match Details ticket option row. */
-export function TicketOptionSkeleton() {
+/** Outline of a v3 zone radio row (`ZoneRow`): 22pt ring, name + detail, price. */
+function ZoneRowSkeleton({ first }: { first: boolean }) {
   const theme = useTheme();
   return (
-    <View style={[local.option, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-      <View style={local.optionCopy}>
-        <SkeletonBlock width="55%" height={16} />
+    <View style={[local.zoneRow, !first && { borderTopWidth: 1, borderTopColor: theme.colors.hairline }]}>
+      <SkeletonBlock width={22} height={22} borderRadius={11} />
+      <View style={local.zoneCopy}>
+        <SkeletonBlock width="45%" height={15} />
         <SkeletonBlock width="35%" height={12} />
       </View>
-      <SkeletonBlock width={112} height={40} borderRadius={radius.md} />
+      <SkeletonBlock width={64} height={15} />
     </View>
   );
 }
 
-/** One announced loading element for Match Details: hero plus ticket options. */
+/**
+ * One announced loading element for Match Details, in the final geometry:
+ * the night hero, the "Choose where to sit" title with the Show map pill,
+ * and the grouped zone list.
+ */
 export function MatchDetailSkeleton({ label }: { label: string }) {
+  const theme = useTheme();
   return (
     <SkeletonGroup label={label}>
-      <SkeletonBlock height={236} borderRadius={radius.lg} />
-      <SkeletonBlock width="40%" height={20} />
-      {[0, 1, 2].map((index) => (
-        <TicketOptionSkeleton key={index} />
-      ))}
+      <SkeletonBlock height={236} borderRadius={radius.hero} />
+      <View style={local.titleRow}>
+        <View style={local.zoneCopy}>
+          <SkeletonBlock width="60%" height={22} />
+          <SkeletonBlock width="40%" height={12} />
+        </View>
+        <SkeletonBlock width={106} height={34} borderRadius={12} />
+      </View>
+      <View style={[local.group, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
+        {[0, 1, 2].map((index) => (
+          <ZoneRowSkeleton key={index} first={index === 0} />
+        ))}
+      </View>
     </SkeletonGroup>
   );
 }
@@ -86,13 +100,7 @@ const local = {
   rowTeams: { flex: 1, gap: spacing.sm },
   rowTeam: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.sm },
   rowWhen: { alignItems: "flex-end" as const, gap: spacing.xs },
-  option: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: spacing.md,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    padding: spacing.lg,
-  },
-  optionCopy: { flex: 1, gap: spacing.sm },
+  titleRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md, paddingTop: spacing.sm },
+  zoneRow: { minHeight: 64, flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  zoneCopy: { flex: 1, gap: spacing.sm },
 };
