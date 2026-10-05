@@ -1,3 +1,4 @@
+import { createQueryCache } from "@/lib/queryCache";
 import { apiRequest } from "@/services/api";
 import type { AdsResponse, AppBannerAd } from "@/types/ads";
 
@@ -29,10 +30,16 @@ export function parseAppBannerResponse(payload: unknown): AppBannerAd[] {
   });
 }
 
+/** Public, slow-changing: Home re-reads the banner at most every 10 min (memory only). */
+export const APP_BANNER_POLICY = { freshMs: 10 * 60 * 1000, maxStaleMs: 60 * 60 * 1000 };
+const cache = createQueryCache();
+
 export const adsService = {
   async appBanner(): Promise<AppBannerAd[]> {
-    const payload = await apiRequest<AdsResponse>(APP_BANNER_PATH);
-    return parseAppBannerResponse(payload);
+    return cache.read(APP_BANNER_PATH, APP_BANNER_POLICY, async () => parseAppBannerResponse(await apiRequest<AdsResponse>(APP_BANNER_PATH)));
+  },
+  peekAppBanner() {
+    return cache.peek<AppBannerAd[]>(APP_BANNER_PATH, APP_BANNER_POLICY);
   },
 };
 

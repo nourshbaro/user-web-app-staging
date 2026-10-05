@@ -9,6 +9,7 @@ const settings = await read("../app/settings.tsx");
 const tournament = await read("../app/tournament.tsx");
 const competitions = await read("../app/competitions.tsx");
 const competitionsService = await read("../services/competitions.ts");
+const cachedReads = await read("../services/cachedReads.ts");
 const about = await read("../app/about.tsx");
 const editProfile = await read("../app/edit-profile.tsx");
 const legalDocument = await read("../components/LegalDocumentScreen.tsx");
@@ -44,8 +45,11 @@ test("name, email and phone are read-only; the avatar is the only mutation", () 
 });
 
 test("tickets use the portal services and the backend QR only", () => {
-  assert.match(tickets, /profileService\s*\.matches\(filter\)/);
-  assert.match(tickets, /profileService\.tickets\(match\.match_id\)/);
+  // Through the user-scoped cached reads, which delegate to the portal service.
+  assert.match(tickets, /portalReads\s*\.matches\(filter, force\)/);
+  assert.match(tickets, /portalReads\.tickets\(match\.match_id\)/);
+  assert.match(cachedReads, /\(\) => profileService\.matches\(filter\)/);
+  assert.match(cachedReads, /\(\) => profileService\.tickets\(matchId\)/);
   assert.match(tickets, /withBackendQrs\(result\.items, \(code\) => profileService\.ticket\(code\), current\)/);
   assert.doesNotMatch(tickets, /profileService\.orders\(/);
   assert.match(tickets, /horizontal\s+pagingEnabled/);
@@ -74,9 +78,13 @@ test("legacy /tournament redirects to the single public Competitions screen fed 
   assert.match(tournament, /return <Redirect href="\/competitions" \/>;/);
   assert.doesNotMatch(tournament, /StatePanel|Screen|useI18n/);
   assert.match(competitions, /export default function CompetitionsScreen/);
-  assert.match(competitions, /competitionsService\s*\.list\(\)/);
-  assert.match(competitions, /competitionsService\s*\.standings\(id\)/);
-  assert.match(competitions, /competitionsService\s*\.matches\(id\)/);
+  assert.match(competitions, /competitionReads\s*\.list\(force\)/);
+  assert.match(competitions, /competitionReads\s*\.standings\(id, force\)/);
+  assert.match(competitions, /competitionReads\s*\.matches\(id, force\)/);
+  // The cached reads delegate to the same competition service.
+  assert.match(cachedReads, /\(\) => competitionsService\.list\(\)/);
+  assert.match(cachedReads, /\(\) => competitionsService\.standings\(id\)/);
+  assert.match(cachedReads, /\(\) => competitionsService\.matches\(id\)/);
   assert.match(competitionsService, /apiRequest<unknown>\("\/competitions"\)/);
   // Public, no auth gate, no invented data.
   const code = competitions.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

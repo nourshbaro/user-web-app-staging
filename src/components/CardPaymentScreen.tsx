@@ -19,6 +19,7 @@ import {
 } from "@/lib/checkoutResultParams";
 import { spacing } from "@/lib/designTokens";
 import { formatMoney } from "@/lib/format";
+import { PAYMENT_RECOVERY_TICKETS_ROUTE } from "@/lib/paymentRecoveryTickets";
 import {
   acquirePaymentAttempt,
   isPaymentAttemptHeldByOther,
@@ -321,7 +322,7 @@ export function CardPaymentScreen() {
               message={failure ? failureMessage(i18n, failure.kind) : i18n.t("payment.reservationGone")}
               action={
                 failure?.kind === "unknown" || failure?.kind === "locked"
-                  ? { label: i18n.t("payment.viewTickets"), onPress: () => router.replace("/tickets") }
+                  ? { label: i18n.t("payment.viewTickets"), onPress: () => router.replace(PAYMENT_RECOVERY_TICKETS_ROUTE) }
                   : { label: i18n.t("payment.back"), onPress: returnToCheckout }
               }
               secondaryAction={

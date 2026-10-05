@@ -15,6 +15,7 @@ import { blueResultDisplayParams, decideBlueNavigation } from "@/lib/bluePayment
 import { blueSuccessCompletion } from "@/lib/checkoutFlow";
 import { config } from "@/lib/config";
 import { markPaymentOutcomeUnknown, parkPaymentAttempt, settlePaymentAttempt } from "@/lib/paymentOutcomeLock";
+import { PAYMENT_RECOVERY_TICKETS_ROUTE } from "@/lib/paymentRecoveryTickets";
 import { useI18n } from "@/i18n/I18nProvider";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -284,7 +285,7 @@ export default function BluePaymentScreen() {
                       label: i18n.t("payment.viewTickets"),
                       onPress: () => {
                         clearBluePaymentHandoff(handoffId);
-                        router.replace("/tickets");
+                        router.replace(PAYMENT_RECOVERY_TICKETS_ROUTE);
                       },
                     }
                   : {

@@ -12,8 +12,14 @@
  * There is no global poller: each schedule lives only as long as its screen.
  */
 
-/** Live tab refresh period: restrained (not real-time), 10x under the 5-min cache TTL. */
+/** Live tab refresh period: restrained (not real-time); every tick is a forced read. */
 export const LIVE_REFRESH_INTERVAL_MS = 30_000;
+
+/**
+ * Why a re-read was asked for: `interval` ticks must reach the backend; a
+ * `focus` / `foreground` re-read may be answered by data that is still fresh.
+ */
+export type RevalidationReason = "focus" | "foreground" | "interval";
 
 type Timers = {
   setInterval: (callback: () => void, ms: number) => unknown;
@@ -37,7 +43,7 @@ export function createLiveRevalidationSchedule({
   intervalEnabled = false,
   timers,
 }: {
-  revalidate: () => void;
+  revalidate: (reason: RevalidationReason) => void;
   intervalMs?: number;
   intervalEnabled?: boolean;
   timers: Timers;
@@ -51,7 +57,7 @@ export function createLiveRevalidationSchedule({
   const sync = () => {
     const shouldPoll = focused && active && wantInterval;
     if (shouldPoll && handle === null) {
-      handle = timers.setInterval(revalidate, intervalMs);
+      handle = timers.setInterval(() => revalidate("interval"), intervalMs);
     } else if (!shouldPoll && handle !== null) {
       timers.clearInterval(handle);
       handle = null;
@@ -62,7 +68,7 @@ export function createLiveRevalidationSchedule({
     focus() {
       if (focused) return;
       focused = true;
-      if (focusedBefore && active) revalidate();
+      if (focusedBefore && active) revalidate("focus");
       focusedBefore = true;
       sync();
     },
@@ -72,7 +78,7 @@ export function createLiveRevalidationSchedule({
     },
     appStateChange(state) {
       const nowActive = state === "active";
-      if (nowActive && !active && focused) revalidate();
+      if (nowActive && !active && focused) revalidate("foreground");
       active = nowActive;
       sync();
     },

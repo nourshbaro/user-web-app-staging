@@ -1,4 +1,4 @@
-import { createLiveRevalidationSchedule, LIVE_REFRESH_INTERVAL_MS, type LiveRevalidationSchedule } from "@/lib/liveRevalidation";
+import { createLiveRevalidationSchedule, LIVE_REFRESH_INTERVAL_MS, type LiveRevalidationSchedule, type RevalidationReason } from "@/lib/liveRevalidation";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
@@ -10,7 +10,7 @@ import { AppState } from "react-native";
  * owner's own background reload (`useScheduledMatches().revalidate`), so cache,
  * request authority and error handling stay with that owner.
  */
-export function useLiveRevalidation(revalidate: () => void, { poll = false }: { poll?: boolean } = {}) {
+export function useLiveRevalidation(revalidate: (reason: RevalidationReason) => void, { poll = false }: { poll?: boolean } = {}) {
   // Always call the latest owner callback from the long-lived schedule.
   const revalidateRef = useRef(revalidate);
   useEffect(() => {
@@ -19,7 +19,7 @@ export function useLiveRevalidation(revalidate: () => void, { poll = false }: { 
 
   const [schedule] = useState<LiveRevalidationSchedule>(() =>
     createLiveRevalidationSchedule({
-      revalidate: () => revalidateRef.current(),
+      revalidate: (reason) => revalidateRef.current(reason),
       intervalMs: LIVE_REFRESH_INTERVAL_MS,
       intervalEnabled: false,
       timers: { setInterval: (callback, ms) => setInterval(callback, ms), clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>) },

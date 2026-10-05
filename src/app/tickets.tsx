@@ -36,6 +36,7 @@ import {
 } from "@/lib/ticketPresentation";
 import { getUserScopedCacheGeneration } from "@/lib/userScopedCache";
 import { profileService } from "@/services/auth";
+import { beginTicketsVisit, portalReads } from "@/services/cachedReads";
 import type { PortalMatch, PortalTicket } from "@/types";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { SymbolView } from "expo-symbols";
@@ -68,8 +69,15 @@ function TicketsScreen() {
   const i18n = useI18n();
   const responsive = useResponsive();
   const [filter, setFilter] = useState<TicketFilter>("all");
-  const [matches, setMatches] = useState<PortalMatch[]>([]);
-  const [loading, setLoading] = useState(true);
+  // After a purchase ("View my ticket"): the match the order covered and its order number.
+  // From unknown-payment recovery: `refresh=payment` (see `beginTicketsVisit`).
+  const params = useLocalSearchParams<{ match?: string | string[]; order?: string | string[]; refresh?: string | string[] }>();
+  // Runs before the cache seed below: a recovery visit drops the portal reads, so it renders from the backend.
+  useState(() => beginTicketsVisit(params.refresh));
+  // This identity's recent list renders at once (the portal cache is user-scoped and memory only).
+  const [cachedList] = useState(() => (auth.isAuthenticated ? portalReads.peekMatches("all") : null));
+  const [matches, setMatches] = useState<PortalMatch[]>(() => cachedList?.value.items ?? []);
+  const [loading, setLoading] = useState(cachedList === null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   const [selected, setSelected] = useState<PortalMatch | null>(null);
@@ -78,20 +86,18 @@ function TicketsScreen() {
   const [detailError, setDetailError] = useState(false);
   const [listRequest] = useState(createRequestAuthority);
   const [detailRequest] = useState(createRequestAuthority);
-  // After a purchase ("View my ticket"): the match the order covered and its order number.
-  const params = useLocalSearchParams<{ match?: string | string[]; order?: string | string[] }>();
   const [purchaseFocus] = useState(() => purchasedTicketFocus(params));
   const focusConsumed = useRef(false);
 
-  const load = useCallback(() => {
+  const load = useCallback((force = false) => {
     if (!auth.isReady || !auth.isAuthenticated) return;
     const request = listRequest.begin(filter);
     const generation = getUserScopedCacheGeneration();
     const current = () =>
       listRequest.isCurrent(request) &&
       generation === getUserScopedCacheGeneration();
-    return profileService
-      .matches(filter)
+    return portalReads
+      .matches(filter, force)
       .then((result) => {
         if (current()) {
           setMatches(result.items);
@@ -129,13 +135,13 @@ function TicketsScreen() {
   const reload = () => {
     setRefreshing(true);
     setError(false);
-    void load();
+    void load(true);
   };
 
   const retry = () => {
     setLoading(true);
     setError(false);
-    void load();
+    void load(true);
   };
 
   const changeFilter = (next: TicketFilter) => {
@@ -143,8 +149,9 @@ function TicketsScreen() {
     listRequest.invalidate();
     detailRequest.invalidate();
     setSelected(null);
-    setMatches([]);
-    setLoading(true);
+    const cached = portalReads.peekMatches(next);
+    setMatches(cached?.value.items ?? []);
+    setLoading(cached === null);
     setError(false);
     setFilter(next);
   };
@@ -155,12 +162,14 @@ function TicketsScreen() {
     const current = () =>
       detailRequest.isCurrent(request) &&
       generation === getUserScopedCacheGeneration();
+    // Recently opened tickets show at once; the service re-reads them when stale.
+    const cachedTickets = portalReads.peekTickets(match.match_id);
     setSelected(match);
-    setTickets([]);
+    setTickets(cachedTickets?.value.items ?? []);
     setDetailError(false);
-    setDetailLoading(true);
+    setDetailLoading(cachedTickets === null);
     try {
-      const result = await profileService.tickets(match.match_id);
+      const result = await portalReads.tickets(match.match_id);
       if (!current()) return;
       setTickets(result.items);
       // A listed ticket without a usable backend QR image takes the QR from

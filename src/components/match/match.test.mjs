@@ -70,12 +70,14 @@ test("list skeletons are one announced loading element shaped like the cards", (
 
 test("the scheduled-matches owner keeps the existing service, cache and stale-response guard", () => {
   assert.match(hook, /matchesService\.list\(requestFilters, forceRefresh\)/);
-  assert.match(hook, /matchesService\.filters\(forceRefresh\)/);
+  // Filter options are forced by pull-to-refresh only, never by a Live poll.
+  assert.match(hook, /matchesService\.filters\(mode === "refresh"\)/);
   assert.match(hook, /requestAuthority\.begin\(/);
   assert.match(hook, /if \(!requestAuthority\.isCurrent\(ticket\)\) return;/);
   assert.match(hook, /requestAuthority\.invalidate\(filterIdentity\)/);
   // A disabled instance never requests; otherwise pull-to-refresh is a forced load.
-  assert.match(hook, /const refresh = useCallback\(\(\) => \{[\s\S]*?if \(!enabled\) return;\s*setRefreshing\(true\);\s*void load\(true\);/);
+  assert.match(hook, /const refresh = useCallback\(\(\) => \{[\s\S]*?if \(!enabled\) return;\s*setRefreshing\(true\);\s*void load\("refresh"\);/);
+  assert.match(hook, /const forceRefresh = mode === "refresh" \|\| mode === "poll";/);
 });
 
 test("Home: banner, featured next match by a transparent rule, upcoming list, and honest states", () => {
@@ -84,7 +86,8 @@ test("Home: banner, featured next match by a transparent rule, upcoming list, an
   assert.match(home, /const now = useKickoffClock\(data\.matches, data\.loadedAt\);/);
   assert.match(home, /selectHomeMatches\(data\.matches, now, HOME_MATCH_LIMIT\)/);
   assert.doesNotMatch(strip(home), /Date\.now\(\)/, "no clock reads during render");
-  assert.match(hook, /setLoadedAt\(Date\.now\(\)\);/);
+  // Load time is set when results land (the cache entry's time, else now), never during render.
+  assert.match(hook, /setLoadedAt\(matchesService\.peekList\(requestFilters\)\?\.fetchedAt \?\? Date\.now\(\)\);/);
   // Matches exist but none is upcoming: an honest panel, never a past fixture as "Next match".
   assert.match(home, /title=\{t\("home\.noUpcoming\.title"\)\}/);
   assert.match(home, /const HOME_MATCH_LIMIT = 5;/);

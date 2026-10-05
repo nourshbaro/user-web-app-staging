@@ -55,10 +55,19 @@ type BannerHandoff = {
   visible: boolean;
 };
 
+function displayBanners(items: AppBannerAd[]): DisplayBanner[] {
+  return items.flatMap((item) => {
+    const imageUrl = resolveAdImageUrl(item.image);
+    return imageUrl ? [{ ...item, imageUrl }] : [];
+  });
+}
+
 export function AppBanner() {
   const theme = useTheme();
-  const [loading, setLoading] = useState(true);
-  const [banners, setBanners] = useState<DisplayBanner[]>([]);
+  // A recent banner read renders at once on return to Home; the service decides whether to re-read.
+  const [cachedBanners] = useState(() => adsService.peekAppBanner());
+  const [loading, setLoading] = useState(cachedBanners === null);
+  const [banners, setBanners] = useState<DisplayBanner[]>(() => (cachedBanners ? displayBanners(cachedBanners.value) : []));
 
   useEffect(() => {
     let active = true;
@@ -66,10 +75,7 @@ export function AppBanner() {
     void adsService.appBanner()
       .then((items) => {
         if (!active) return;
-        setBanners(items.flatMap((item) => {
-          const imageUrl = resolveAdImageUrl(item.image);
-          return imageUrl ? [{ ...item, imageUrl }] : [];
-        }));
+        setBanners(displayBanners(items));
       })
       .catch(() => {
         if (active) setBanners([]);

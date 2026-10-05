@@ -275,7 +275,9 @@ test("standings service: malformed success, server and network failures reject (
 
 test("the Competitions screen gives 'unavailable' its own honest, retryable state", async () => {
   const screen = await read("../app/competitions.tsx");
-  assert.match(screen, /view === "unavailable" \? \(\s*<StatePanel[\s\S]*?competitions\.standings\.unavailable\.title[\s\S]*?onPress: \(\) => selectedId !== null && void loadDetail\(selectedId, knockout\)/);
+  assert.match(screen, /view === "unavailable" \? \(\s*<StatePanel[\s\S]*?competitions\.standings\.unavailable\.title[\s\S]*?onPress: retryDetail/);
+  // Retry is a real backend read, never the cached "unavailable" answer replayed.
+  assert.match(screen, /const retryDetail = \(\) => \{\s*if \(selectedId !== null\) void loadDetail\(selectedId, knockout, "retry"\);/);
   assert.match(screen, /standings\.data\?\.kind === "table"/);
 });
 

@@ -77,7 +77,10 @@ test("Home renders only backend data through the existing owners (no fabricated 
   const shortcut = home.slice(home.indexOf("function TicketsCard"));
   assert.match(shortcut, /onPress=\{\(\) => switchTab\("\/tickets"\)\}/);
   const owner = await read("../../hooks/useNextTicketMatch.ts");
-  assert.match(owner, /profileService\s*\.matches\("upcoming"\)/);
+  // Through the user-scoped cached read, which delegates to the portal service.
+  assert.match(owner, /portalReads\s*\.matches\("upcoming", force\)/);
+  const cachedReads = await read("../../services/cachedReads.ts");
+  assert.match(cachedReads, /\(\) => profileService\.matches\(filter\)/);
   assert.match(owner, /const current = \(\) => request\.isCurrent\(ticket\) && generation === getUserScopedCacheGeneration\(\);/);
   assert.match(owner, /if \(!owner\) return;/);
   assert.match(home, /function switchTab\(route: PrimaryTabRoute\) \{\s*setPrimaryTabTransitionDirection\(1\);\s*router\.replace\(route\);/);

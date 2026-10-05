@@ -42,6 +42,20 @@ function setup(intervalEnabled = false) {
   return { clock, schedule, calls: () => calls };
 }
 
+test("each re-read says why: focus, foreground or interval (only the interval is forced)", () => {
+  const clock = fakeTimers();
+  const reasons = [];
+  const schedule = createLiveRevalidationSchedule({ revalidate: (reason) => reasons.push(reason), intervalEnabled: true, timers: clock.timers });
+  schedule.focus();
+  clock.advance(LIVE_REFRESH_INTERVAL_MS);
+  schedule.appStateChange("background");
+  schedule.appStateChange("active");
+  schedule.blur();
+  schedule.focus();
+  assert.deepEqual(reasons, ["interval", "foreground", "focus"]);
+  schedule.dispose();
+});
+
 test("a restrained 30s Live interval", () => {
   assert.equal(LIVE_REFRESH_INTERVAL_MS, 30_000);
 });
@@ -129,7 +143,12 @@ test("disabled owner instances never request; revalidation is silent and goes th
   const hook = await readFile(new URL("../hooks/useScheduledMatches.ts", import.meta.url), "utf8");
   assert.match(hook, /useEffect\(\(\) => \{\s*if \(!enabled\) return;\s*const timeout = setTimeout\(\(\) => void load\(\), 0\);/);
   assert.match(hook, /const refresh = useCallback\(\(\) => \{[\s\S]*?if \(!enabled\) return;\s*setRefreshing\(true\);/);
-  // Background revalidation: a forced load without the refreshing/loading indicators.
-  assert.match(hook, /const revalidate = useCallback\(\(\) => \{\s*if \(enabled\) void load\(true\);\s*\}, \[enabled, load\]\);/);
-  assert.match(hook, /if \(!forceRefresh\) setLoadingFlag\(true\);/);
+  // Background revalidation: through the owner, without the refreshing/loading
+  // indicators. A Live interval tick is forced; focus / foreground may be
+  // answered by data that is still fresh.
+  assert.match(hook, /const revalidate = useCallback\(\(reason: RevalidationReason = "interval"\) => \{\s*if \(enabled\) void load\(reason === "interval" \? "poll" : "revalidate"\);\s*\}, \[enabled, load\]\);/);
+  assert.match(hook, /const forceRefresh = mode === "refresh" \|\| mode === "poll";/);
+  // Only an initial / retry load may show the loading state.
+  assert.match(hook, /if \(mode === "load"\) \{[\s\S]*?setLoadingFlag\(true\);/);
+  assert.doesNotMatch(hook.slice(hook.indexOf("const revalidate = useCallback")), /setLoadingFlag\(true\)|setRefreshing\(true\)/);
 });

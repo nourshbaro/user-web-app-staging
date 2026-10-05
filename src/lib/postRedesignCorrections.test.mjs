@@ -70,7 +70,9 @@ test("a cup (backend format) is decided by knockout: no standings request; anyth
 test("the Competitions screen skips the standings request for a cup and keeps it for leagues", async () => {
   const screen = await read("../app/competitions.tsx");
   assert.match(screen, /const knockout = standingsPlanFor\(selected\?\.format\) === "knockout";/);
-  assert.match(screen, /const standingsTask = knockout\s*\? Promise\.resolve\(\)\s*: competitionsService\s*\.standings\(id\)/);
+  assert.match(screen, /const standingsTask = knockout\s*\? Promise\.resolve\(\)\s*: competitionReads\s*\.standings\(id, force\)/);
+  // A cup never reads (or seeds from) cached standings either.
+  assert.match(screen, /const cachedStandings = knockout \? null : competitionReads\.peekStandings\(id\);/);
 });
 
 /* Checkout presentation ----------------------------------------------------- */

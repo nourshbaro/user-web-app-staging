@@ -224,7 +224,9 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | App language | `I18nProvider` (resolved against `ENABLED_LOCALES`) | `lfa_locale` |
 | Direction-transition marker | `I18nProvider` + `src/i18n/directionTransition.ts` | `lfa_direction_transition` = `{desired, attempts}` |
 | Format locale | `src/lib/format.ts` (`setFormatLocale`, set by `I18nProvider`) | memory |
-| Match list/detail/seat data | `src/services/matches.ts` module cache (5-min TTL) | memory |
+| Match list/detail/seat/filter reads | `src/services/matches.ts`, over the shared read cache (§5a) | memory |
+| Competition and portal reads (My Tickets, Home ticket card) | `src/services/cachedReads.ts` (`competitionReads`, `portalReads`) over the raw services, shared read cache (§5a); portal reads scoped to the user-scoped cache generation | memory |
+| Ads banner reads | `src/services/ads.ts`, shared read cache (§5a) | memory |
 | Scheduled-match screen state (Home, Matches) | `useScheduledMatches`, one instance per screen (filter-tagged snapshot, loading, refresh, retry) | memory |
 | Match filter values | `MatchesList` (composition-level `useState`) | memory |
 | Ticket-selection drafts (GA quantities, reserved-seat picks) | `src/app/match/[id].tsx` local state — transient, never a cart authority | memory only |
@@ -234,6 +236,85 @@ Not used by any route (do not assume they own anything):
 `src/context/CardPaymentPreparationContext.tsx`, `src/components/ProfileDetailModal.tsx`,
 `src/lib/bluePaymentDiagnostics.ts` (marked temporary), and
 `getExpoPushToken` / `getDevicePushToken` in `src/lib/notifications.ts`.
+
+---
+
+## 5a. Read cache (memory)
+
+Ordinary GET reads that are safe to reuse go through one small in-memory
+cache, `createQueryCache` (`src/lib/queryCache.ts`). It is not a store:
+services keep the API contract and response validation, and screens keep their
+request authorities, loading, error and empty states. Nothing is persisted.
+
+- **Owners.** `matchesService` (match lists, filters, detail, seats) and
+  `adsService` (banner) use it inside the service. Competitions and portal
+  reads use it through `src/services/cachedReads.ts` (`competitionReads`,
+  `portalReads`), which wraps the unchanged `competitionsService` /
+  `profileService`.
+- **Keys** are the request path with every meaningful parameter (filters,
+  status, date, competition, match, zone), so different requests never share
+  an entry.
+- **Freshness is per resource.** Each resource has a fresh window (served
+  without a request) and a stale limit (may be shown immediately while it
+  revalidates; older entries are not shown). Live and seat data have much
+  shorter windows than scheduled data. The current values are in
+  `docs/API_INTEGRATION.md` §13; they are tuning, not contract.
+- **In-flight deduplication.** Identical concurrent reads (e.g. Home and
+  Matches asking for the same list) share one request; a forced read starts
+  its own.
+- **Latest request wins.** A response is accepted only if no newer request
+  or invalidation for the same key happened after it started. A response
+  that lost authority is not cached, runs no side effects (`onAccept`), and
+  is not handed to its caller as data: the caller receives the newer
+  request's result, a newer accepted entry, or — after an invalidation — a
+  fresh read. So an older, slower response can never overwrite newer data or
+  regress a screen.
+- **Failures are never cached.** A failed read leaves any earlier good entry
+  untouched; the screen shows its usual error / retry.
+- **No loading flash on revisit.** Screen owners seed their first render
+  synchronously from the cache (`peek…`) — `useScheduledMatches`, Tickets,
+  Competitions, the Home ticket card and the banner — then let the service
+  decide whether a request is needed. Without a showable entry they show the
+  normal loading state.
+- **Revalidation** (`useLiveRevalidation` over `src/lib/liveRevalidation.ts`):
+  each re-read carries its reason. The Live tab's 30 s interval is always a
+  forced read (it is never skipped); a focus or foreground re-read respects
+  the resource's freshness. Background reads never show a loading or
+  refreshing indicator. Pull-to-refresh and every explicit Retry are always
+  forced (a cached answer, e.g. "Standings unavailable", is never replayed
+  as a retry).
+- **Explicit invalidation.**
+  - Successful checkout: `/checkout/success` (where card and BLUE successes
+    land) invalidates every portal read, so My Tickets and Home re-read.
+  - Unknown-payment / payment-lock recovery: the "View my tickets" actions
+    (Checkout, Card and BLUE screens) open `PAYMENT_RECOVERY_TICKETS_ROUTE`
+    (`/tickets?refresh=payment`, `src/lib/paymentRecoveryTickets.ts`). My
+    Tickets drops every portal read before its first render
+    (`beginTicketsVisit`), so it shows what the backend says now. This only
+    refreshes reads: the unknown outcome and the lock stay as they are, a
+    missing ticket is never read as a failed payment, and nothing in the
+    cart or payment state is cleared. Ordinary visits keep normal caching.
+  - Live transitions: only an **accepted** unfiltered live answer is compared
+    with the previous live set (`onAccept`). When a match entered or left
+    play, every other match list (scheduled, completed and filtered,
+    including filtered live lists) and those matches' details are dropped,
+    and competition matches / standings are dropped (list items do not name
+    their competition, so all of them; the competition list is kept). The
+    accepted live answer itself is kept. Mounted owners subscribed through
+    `onLiveTransition` — every `useScheduledMatches` instance and the
+    Competitions screen — re-read in the background instead of keeping an
+    obsolete snapshot. Nothing new polls.
+  - Identity change: see isolation below.
+- **Private data isolation.** The portal read cache is scoped to the
+  user-scoped cache generation (`src/lib/userScopedCache.ts`): login, logout,
+  account switch and 401/403 invalidation drop every entry, and a response
+  that started under the previous identity is discarded. Public match,
+  competition and ad data are not user-scoped.
+- **Outside the read cache (by design).** Cart and reservation reads and
+  mutations, checkout submission, the CyberSource capture context, BLUE,
+  payment attempts and outcomes, `/auth/me`, device registration, PDF and the
+  per-ticket QR fallback (`profileService.ticket`) do not use it. The
+  pre-commit match re-check before a cart mutation stays a forced read.
 
 ---
 
@@ -269,10 +350,12 @@ Not used by any route (do not assume they own anything):
 
 - **`matchesService`** (`src/services/matches.ts`) still owns the backend
   contract (`/matches/scheduled`, `/matches/scheduled/filters`) and its
-  module-level 5-minute cache. The data source is **scheduled matches** only.
+  read cache (§5a). The data source is **scheduled matches** only.
 - **`useScheduledMatches`** (`src/hooks/useScheduledMatches.ts`) is the
   screen-level owner:
-  - initial load, pull-to-refresh (`force`) and retry;
+  - initial load (seeded synchronously from a showable cache entry), retry,
+    pull-to-refresh (forced) and background revalidation (a forced Live
+    poll, or a focus / foreground re-read that respects freshness; §5a);
   - request authority (`createRequestAuthority`), plus a synchronous
     `invalidate(nextFilters)`;
   - loading and error state;
@@ -280,7 +363,7 @@ Not used by any route (do not assume they own anything):
     identity that produced them (`src/lib/matchQuery.ts`).
 
   Home and Matches each use their own hook instance; they share only the
-  service cache.
+  service cache (and its in-flight requests).
 - **Query/result integrity (invariant):**
   - a stale request can never publish under a newer filter selection;
   - displayed results always belong to the currently selected filters;
@@ -307,8 +390,9 @@ Not used by any route (do not assume they own anything):
     opens `/match/[id]`; "See all" opens Matches on the Live / Results
     segment (`matchesTabRoute` → `/matches?tab=…`, read once by
     `MatchesList` through `matchTabFromParam`; no new owner);
-  - My Tickets card: `useNextTicketMatch` (`profileService.matches("upcoming")`,
-    request authority + user-scoped generation, signed-in only) → "{n}
+  - My Tickets card: `useNextTicketMatch` (`portalReads.matches("upcoming")`
+    over `profileService`, request authority + user-scoped generation,
+    signed-in only) → "{n}
     tickets for {home} v {away}"; otherwise the plain entry; always a tab
     switch;
   - the featured match is **presentation-derived**, not backend metadata: the
@@ -451,8 +535,8 @@ Not used by any route (do not assume they own anything):
   - A loading or failed snapshot blocks confirmation. A mixed GA + seat
     selection is blocked by the preflight **before any cart mutation starts**.
   - Seat-load errors are scoped to the request identity that produced them.
-  - The 5-minute seat cache can age, so the backend stays the final authority
-    for races after the preflight.
+  - Seat reads are cached only briefly (§5a), but any snapshot can age, so
+    the backend stays the final authority for races after the preflight.
 - **Seat map** (physical layout, §15):
   - backend coordinates and polygons are authoritative and never mirror in
     RTL;
@@ -746,9 +830,11 @@ entry is always CyberSource's own form.
 
 ## 11. Tickets, orders, QR, PDF (`src/app/tickets.tsx`)
 
-- List: `profileService.matches(filter)` with filter `all | upcoming | past`
-  (`GET /portal/matches`), validated by `isPortalMatch`.
-- Detail: `profileService.tickets(matchId)`. A listed ticket's `qr_image` may
+- List: `portalReads.matches(filter)` → `profileService.matches(filter)` with
+  filter `all | upcoming | past` (`GET /portal/matches`), validated by
+  `isPortalMatch`. Pull-to-refresh and Retry force a read.
+- Detail: `portalReads.tickets(matchId)` → `profileService.tickets(matchId)`.
+  A listed ticket's `qr_image` may
   be absent, null or empty (the ticket stays valid); `withBackendQrs` then
   takes **only** `qr_image` from `profileService.ticket(code)`
   (`GET /portal/tickets/{ticket_code}`), when it passes `ticketQrSource`. A
@@ -781,14 +867,21 @@ entry is always CyberSource's own form.
   already commented them out). `profileService.order`, `orderPdf` and
   `downloadProfileOrderPdf` are unchanged for a future caller.
 - Staleness: `createRequestAuthority` per list/detail plus the user-scoped cache
-  generation.
+  generation. The list and detail reuse this identity's recent portal reads
+  (memory only; §5a): they render at once and revalidate when stale. A
+  successful checkout invalidates them; an identity change drops them; a
+  visit from unknown-payment / payment-lock recovery (`refresh=payment`)
+  drops them before the first render, so it always reads the backend.
 
 ---
 
 ## 11a. Competitions and account screens
 
 - **Competitions** (`src/services/competitions.ts` over `src/lib/competitions.ts`):
-  list, standings and matches; request authorities per list and per selected
+  list, standings and matches through `competitionReads` (§5a: revisiting a
+  competition reuses its recent data; pull-to-refresh and every Retry force a
+  read; a match entering or leaving play makes the selected competition
+  re-read quietly); request authorities per list and per selected
   competition. Standings states: a successful `standings: []` → "No
   standings"; a 404 → "Standings unavailable" with retry (never "No
   standings": the 404 is ambiguous, see `docs/API_INTEGRATION.md`); a
@@ -1130,6 +1223,7 @@ enabled.** No third-party i18n library is used.
 23. The global reservation indicator is presentation only: it shows `CartContext.secondsLeft` and has no clock, timestamp or reservation state of its own; it is the one countdown on Match Details, holders, Checkout and the Card / BLUE payment screens (Cart shows the same value in its v3 card). Expiry stays with `CartContext`; `HoldExpiredSheet` presents its snapshot (§8).
 24. Onboarding never navigates or traps an entry: it is offered only on a normal native launch at `/`, steps aside on any navigation, and never runs for signed-in users (§2.1).
 25. Font families are chosen only through the typography roles (`fontFamilies.ts`); Arabic never resolves to a Latin family.
+26. The shared read cache (§5a) is memory only and never caches failures; a response that lost authority never lands, never triggers side effects and is never shown; private (portal) reads are scoped to the user-scoped cache generation and never reused across identities; a successful checkout and unknown-payment recovery invalidate them; Live polling and explicit Retry stay forced reads; cart, reservation, checkout, payment, CyberSource and BLUE never go through it.
 
 ---
 

@@ -65,6 +65,7 @@ import { layout, radius, size, spacing } from "@/lib/designTokens";
 import { formatMoney } from "@/lib/format";
 import { initializePhoneValue } from "@/lib/phoneNumber";
 import { createRequestAuthority } from "@/lib/requestAuthority";
+import { PAYMENT_RECOVERY_TICKETS_ROUTE } from "@/lib/paymentRecoveryTickets";
 import { paymentError, userFacingError } from "@/lib/userFacingError";
 import { checkoutService } from "@/services/checkout";
 import { router, Stack, useFocusEffect, useIsFocused } from "expo-router";
@@ -692,7 +693,7 @@ function CheckoutScreen() {
                   variant="info"
                   title={i18n.t("checkout.paymentUnknown.title")}
                   message={i18n.t("checkout.paymentUnknown.message")}
-                  action={{ label: i18n.t("payment.viewTickets"), onPress: () => router.replace("/tickets") }}
+                  action={{ label: i18n.t("payment.viewTickets"), onPress: () => router.replace(PAYMENT_RECOVERY_TICKETS_ROUTE) }}
                 />
               ) : reconciliationRequired ? (
                 <CartNotice

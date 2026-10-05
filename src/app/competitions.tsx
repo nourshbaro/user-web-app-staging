@@ -19,7 +19,8 @@ import {
 import { storageUrl } from "@/lib/config";
 import { radius, spacing } from "@/lib/designTokens";
 import { createRequestAuthority } from "@/lib/requestAuthority";
-import { competitionsService } from "@/services/competitions";
+import { competitionReads } from "@/services/cachedReads";
+import { onLiveTransition } from "@/services/matches";
 import type { ApiMatch } from "@/types";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
@@ -31,7 +32,7 @@ type Load<T> = { loading: boolean; error: boolean; data: T };
 /**
  * Competitions (LFA Screen v3): competition cards, the standings table and
  * the competition's matches, all from the confirmed public endpoints
- * (`competitionsService`). Matches open the one Match Details route, whose
+ * (`competitionReads`). Matches open the one Match Details route, whose
  * backend status decides purchase vs live/result; nothing here decides it.
  */
 export default function CompetitionsScreen() {
@@ -39,8 +40,12 @@ export default function CompetitionsScreen() {
   const theme = useTheme();
   const i18n = useI18n();
   const currentTone = theme.colors.tones.success;
-  const [list, setList] = useState<Load<CompetitionSummary[]>>({ loading: true, error: false, data: [] });
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // A recent list renders at once on return to this tab (the service decides whether to re-read).
+  const [list, setList] = useState<Load<CompetitionSummary[]>>(() => {
+    const cached = competitionReads.peekList();
+    return cached ? { loading: false, error: false, data: cached.value } : { loading: true, error: false, data: [] };
+  });
+  const [selectedId, setSelectedId] = useState<number | null>(() => competitionReads.peekList()?.value[0]?.id ?? null);
   const [standings, setStandings] = useState<Load<StandingsResult | null>>({ loading: true, error: false, data: null });
   const [matches, setMatches] = useState<Load<CompetitionMatch[]>>({ loading: true, error: false, data: [] });
   const [refreshing, setRefreshing] = useState(false);
@@ -56,10 +61,10 @@ export default function CompetitionsScreen() {
     };
   }, [detailRequest, listRequest]);
 
-  const loadList = useCallback(() => {
+  const loadList = useCallback((force = false) => {
     const ticket = listRequest.begin("list");
-    return competitionsService
-      .list()
+    return competitionReads
+      .list(force)
       .then((data) => {
         if (!listRequest.isCurrent(ticket)) return;
         setList({ loading: false, error: false, data });
@@ -70,29 +75,46 @@ export default function CompetitionsScreen() {
       });
   }, [listRequest]);
 
+  /**
+   * `load`: cached sections at once, else skeletons; `retry`: an explicit
+   * Retry — skeletons and a forced read (a cached answer such as "Standings
+   * unavailable" is never replayed); `refresh`: pull-to-refresh, forced,
+   * keeps what is shown; `revalidate`: background (after a match entered or
+   * left play), keeps what is shown, and a failure leaves it in place.
+   */
   const loadDetail = useCallback(
-    (id: number, knockout: boolean) => {
+    (id: number, knockout: boolean, mode: "load" | "retry" | "refresh" | "revalidate" = "load") => {
       const ticket = detailRequest.begin(String(id));
+      const force = mode === "retry" || mode === "refresh";
+      const quiet = mode === "revalidate";
       // A cup (backend format) has no league table: its standings are never requested.
-      setStandings({ loading: !knockout, error: false, data: null });
-      setMatches({ loading: true, error: false, data: [] });
+      if (mode === "load") {
+        // Cached sections show at once (no skeleton) while the service serves or re-reads them.
+        const cachedStandings = knockout ? null : competitionReads.peekStandings(id);
+        const cachedMatches = competitionReads.peekMatches(id);
+        setStandings(cachedStandings ? { loading: false, error: false, data: cachedStandings.value } : { loading: !knockout, error: false, data: null });
+        setMatches(cachedMatches ? { loading: false, error: false, data: cachedMatches.value } : { loading: true, error: false, data: [] });
+      } else if (mode === "retry") {
+        setStandings({ loading: !knockout, error: false, data: null });
+        setMatches({ loading: true, error: false, data: [] });
+      }
       const standingsTask = knockout
         ? Promise.resolve()
-        : competitionsService
-            .standings(id)
+        : competitionReads
+            .standings(id, force)
             .then((data) => {
               if (detailRequest.isCurrent(ticket)) setStandings({ loading: false, error: false, data });
             })
             .catch(() => {
-              if (detailRequest.isCurrent(ticket)) setStandings({ loading: false, error: true, data: null });
+              if (detailRequest.isCurrent(ticket) && !quiet) setStandings({ loading: false, error: true, data: null });
             });
-      const matchesTask = competitionsService
-        .matches(id)
+      const matchesTask = competitionReads
+        .matches(id, force)
         .then((data) => {
           if (detailRequest.isCurrent(ticket)) setMatches({ loading: false, error: false, data });
         })
         .catch(() => {
-          if (detailRequest.isCurrent(ticket)) setMatches({ loading: false, error: true, data: [] });
+          if (detailRequest.isCurrent(ticket) && !quiet) setMatches({ loading: false, error: true, data: [] });
         });
       return Promise.all([standingsTask, matchesTask]);
     },
@@ -120,9 +142,20 @@ export default function CompetitionsScreen() {
     };
   }, [detailRequest, knockout, loadDetail, selectedId]);
 
+  // A match entered or left play: competition matches / standings were dropped; re-read them quietly.
+  useEffect(() => {
+    if (selectedId === null) return;
+    return onLiveTransition(() => void loadDetail(selectedId, knockout, "revalidate"));
+  }, [knockout, loadDetail, selectedId]);
+
   const refresh = () => {
     setRefreshing(true);
-    void Promise.all([loadList(), selectedId !== null ? loadDetail(selectedId, knockout) : null]).finally(() => setRefreshing(false));
+    void Promise.all([loadList(true), selectedId !== null ? loadDetail(selectedId, knockout, "refresh") : null]).finally(() => setRefreshing(false));
+  };
+
+  // An explicit Retry always reaches the backend.
+  const retryDetail = () => {
+    if (selectedId !== null) void loadDetail(selectedId, knockout, "retry");
   };
 
   const table = standings.data?.kind === "table" ? standings.data.standings : null;
@@ -150,7 +183,7 @@ export default function CompetitionsScreen() {
               variant="error"
               title={i18n.t("competitions.error.title")}
               message={i18n.t("competitions.error.message")}
-              action={{ label: i18n.t("common.retry"), onPress: () => { setList({ loading: true, error: false, data: [] }); void loadList(); } }}
+              action={{ label: i18n.t("common.retry"), onPress: () => { setList({ loading: true, error: false, data: [] }); void loadList(true); } }}
             />
           ) : !list.data.length ? (
             <StatePanel variant="empty" title={i18n.t("competitions.empty.title")} message={i18n.t("competitions.empty.message")} />
@@ -204,14 +237,14 @@ export default function CompetitionsScreen() {
                   variant="error"
                   title={i18n.t("competitions.standings.error.title")}
                   message={i18n.t("competitions.error.message")}
-                  action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId, knockout) }}
+                  action={{ label: i18n.t("common.retry"), onPress: retryDetail }}
                 />
               ) : view === "unavailable" ? (
                 <StatePanel
                   variant="empty"
                   title={i18n.t("competitions.standings.unavailable.title")}
                   message={i18n.t("competitions.standings.unavailable.message")}
-                  action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId, knockout) }}
+                  action={{ label: i18n.t("common.retry"), onPress: retryDetail }}
                 />
               ) : view === "none" ? (
                 <StatePanel
@@ -231,7 +264,7 @@ export default function CompetitionsScreen() {
                     variant="error"
                     title={i18n.t("competitions.matches.error.title")}
                     message={i18n.t("competitions.error.message")}
-                    action={{ label: i18n.t("common.retry"), onPress: () => selectedId !== null && void loadDetail(selectedId, knockout) }}
+                    action={{ label: i18n.t("common.retry"), onPress: retryDetail }}
                   />
                 ) : matches.data.length ? (
                   <MatchGroup heading={i18n.t("competitions.matches.title")}>

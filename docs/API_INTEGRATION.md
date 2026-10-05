@@ -128,8 +128,12 @@ response shape at runtime and throws on mismatch.
 | `GET /matches/single/{id}` | Match detail (`ApiMatchDetail`): competition, season, matchday, scores, nested live clock, events, stats, stadium with map and zones (see below) |
 | `GET /matches/{matchId}/zones/{zoneId}/seats` | `{ zone, seats }`; seat selectable iff `status === "available"` |
 
-All four are cached in a module-level map for 5 minutes, keyed by path;
-`force = true` bypasses the cache (pull-to-refresh). Not user-scoped (public data).
+All four go through the shared in-memory read cache (§13, "Read cache";
+`docs/ARCHITECTURE.md` §5a), keyed by the full path including every query
+parameter, with per-resource freshness (live lists and live match details,
+and seats, are kept much shorter than scheduled data). `force = true`
+bypasses it (pull-to-refresh, the Live interval poll, the pre-commit match
+re-check). Not user-scoped (public data).
 
 **Scheduled matches on Home and Matches:**
 - Both screens call `matchesService.list` / `.filters` through
@@ -254,11 +258,16 @@ match ids) in the submit / BLUE return response.
 | `GET /portal/orders/{orderId}/pdf` | Binary; `Accept: application/pdf,…` |
 | `GET /portal/orders` | Defined, **not called** by any screen |
 
+Screens read `/portal/matches` and `/portal/tickets?match_id=` through
+`portalReads` (`src/services/cachedReads.ts`): a short-lived, memory-only,
+user-scoped read cache over these unchanged service methods (§13). The
+per-ticket QR fallback, orders and PDF are not cached.
+
 ### Other
 | Method & path | Owner | Notes |
 | ------------- | ----- | ----- |
 | `POST /devices` | `registerAnonymousDevice` / `registerAuthenticatedDevice` | `{ token, platform: "android" \| "ios" }` |
-| `GET /ads?placement=app_banner` | `adsService` | Items filtered field-by-field; invalid items dropped |
+| `GET /ads?placement=app_banner` | `adsService` | Items filtered field-by-field; invalid items dropped; read cache (§13) |
 | `GET /legal/privacy-policy`, `GET /legal/terms-of-use` | `legalService` | String or object with content key; HTML stripped to text |
 
 ---
@@ -288,9 +297,10 @@ Full state model: `docs/ARCHITECTURE.md` §8.
 - Zone type is backend-defined: `has_seats: true` → reserved seating with seat
   IDs; otherwise general admission with a quantity.
 - Seat availability is read per zone (`/matches/{m}/zones/{z}/seats`,
-  5-min cache unless forced). A drafted seat is sent only if it is in the
-  current successful seat response, still `available`, and not already in the
-  cart. The cache can age, so the backend add remains the final authority.
+  briefly cached unless forced; §13). A drafted seat is sent only if it is in
+  the current successful seat response, still `available`, and not already in
+  the cart. Any snapshot can age, so the backend add remains the final
+  authority.
 - GA quantity changes are local drafts until the user commits; commit sends
   `add` for new lines, `PATCH` (set) for changed lines, `DELETE` for zero. The
   payloads are unchanged; success is decided from the published cart
@@ -397,7 +407,8 @@ navigator is replaced by the v3 maintenance screen (`docs/ARCHITECTURE.md` §13)
 | Mechanism | Where | Guards |
 | --------- | ----- | ------ |
 | Authentication generation | `src/services/api.ts`, `src/lib/authSessionOwnership.ts` | 401/403 invalidation, restore, logout, user refresh |
-| User-scoped cache generation | `src/lib/userScopedCache.ts` | Tickets list/detail and PDF results after identity change |
+| User-scoped cache generation | `src/lib/userScopedCache.ts` | Tickets list/detail and PDF results after identity change; scopes the portal read cache |
+| Read cache | `src/lib/queryCache.ts` (see below) | Duplicate in-flight GETs, older responses overwriting newer ones, failures stored as data |
 | Request authority | `src/lib/requestAuthority.ts` | Match detail, seats, tickets, capture context |
 | Cart session tickets | `src/lib/cartSessionAuthority.ts` | All cart mutations and payment completion |
 | Cart refresh guard | `src/lib/cartRefreshPolicy.ts` | Out-of-order refresh responses |
@@ -409,6 +420,36 @@ navigator is replaced by the v3 maintenance screen (`docs/ARCHITECTURE.md` §13)
 
 New API-backed features must use the existing mechanism for their domain rather
 than adding a parallel one.
+
+### Read cache
+
+Mechanics, ownership and invalidation are in `docs/ARCHITECTURE.md` §5a. In
+short: memory only; keys are the full request (path and parameters); identical
+concurrent reads share one request; the latest request wins (a superseded
+response is neither cached, acted on, nor returned as data); failures are not
+cached; screens seed from it on remount and revalidate when stale. Live polling,
+pull-to-refresh and explicit Retry are always forced; focus / foreground
+re-reads respect freshness. Invalidation: a successful checkout and
+unknown-payment recovery (`/tickets?refresh=payment`) drop portal reads; an
+accepted live-state change drops the other match lists, the affected match
+details and competition matches / standings, and mounted owners re-read; an
+identity change drops portal reads.
+
+Current policy (tuning, not a contract — change it in the owning module):
+
+| Resource | Fresh (no request) | Shown while revalidating up to | Owner |
+| -------- | ------------------ | ------------------------------ | ----- |
+| Scheduled / completed match lists, non-live match detail | 5 min | 30 min | `MATCH_POLICIES` (`matches.ts`) |
+| Live match list, live match detail | 30 s | 2 min | `MATCH_POLICIES.liveList` / `.liveDetail` |
+| Seat availability | 30 s | 30 s | `MATCH_POLICIES` |
+| Match filter options | 30 min | 2 h | `MATCH_POLICIES` |
+| Competition list / standings / matches | 30 min / 5 min / 2 min | 2 h / 30 min / 15 min | `COMPETITION_POLICIES` (`cachedReads.ts`) |
+| Portal matches / tickets (per user) | 30 s / 60 s | 10 min | `PORTAL_POLICIES` (`cachedReads.ts`) |
+| Ads banner | 10 min | 1 h | `APP_BANNER_POLICY` (`ads.ts`) |
+
+Not cached: `/cart*`, `/checkout/mobile/submit`, the CyberSource capture
+context, BLUE, `/auth/*` (including `/auth/me`), `/devices`, legal documents,
+`/portal/tickets/{code}`, `/portal/orders*`.
 
 ---
 
@@ -455,8 +496,9 @@ than adding a parallel one.
   a signed-in account.
 - Ticket `status` value set. The app maps `valid`/`used`/`checked_in`/`expired`/`cancelled` (`ticketVisualState`); other values are shown with their own label. Not verified against a signed-in staging account.
 - **Competitions (confirmed; integrated in `competitionsService`,
-  `src/services/competitions.ts`).** Public endpoints and their confirmed
-  response shapes — do not assume other fields:
+  `src/services/competitions.ts`; screens read them through
+  `competitionReads`, the read cache in §13).** Public endpoints and their
+  confirmed response shapes — do not assume other fields:
   - `GET /competitions` → `data[]`: `id` (the competition ID source), `name`,
     `short_name` (nullable), `slug`, `logo` (backend media path, e.g.
     `competitions/logos/….jpg`), `format` (e.g. `"league"`).

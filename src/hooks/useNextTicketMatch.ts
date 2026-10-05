@@ -2,7 +2,7 @@ import { useAuth } from "@/context/AuthContext";
 import { selectNextTicketMatch } from "@/lib/homeTickets";
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import { getUserScopedCacheGeneration, onUserScopedCacheInvalidated } from "@/lib/userScopedCache";
-import { profileService } from "@/services/auth";
+import { portalReads } from "@/services/cachedReads";
 import type { PortalMatch } from "@/types";
 import { useCallback, useEffect, useState } from "react";
 
@@ -14,8 +14,8 @@ export type NextTicketMatch =
 
 /**
  * Screen-level loader for Home's "My Tickets" card: the signed-in user's next
- * match with tickets, through the existing portal service (`profileService`,
- * `apiRequest`). Same staleness guards as the Tickets screen: a request
+ * match with tickets, through the user-scoped cached read (`portalReads`) over
+ * the existing portal service. Same staleness guards as the Tickets screen: a request
  * authority per load plus the user-scoped cache generation, so an identity
  * change can never publish another account's tickets. Signed out: nothing is
  * requested.
@@ -23,17 +23,21 @@ export type NextTicketMatch =
 export function useNextTicketMatch() {
   const auth = useAuth();
   const [request] = useState(createRequestAuthority);
-  const [state, setState] = useState<NextTicketMatch>({ status: "loading" });
+  // This identity's recent read renders at once on return to Home (user-scoped, memory-only cache).
+  const [state, setState] = useState<NextTicketMatch>(() => {
+    const cached = auth.isAuthenticated ? portalReads.peekMatches("upcoming") : null;
+    return cached ? { status: "ready", match: selectNextTicketMatch(cached.value.items) } : { status: "loading" };
+  });
   const signedIn = auth.isReady && auth.isAuthenticated;
   const owner = signedIn ? auth.userCacheKey ?? "authenticated" : null;
 
-  const load = useCallback(() => {
+  const load = useCallback((force = false) => {
     if (!owner) return;
     const ticket = request.begin(owner);
     const generation = getUserScopedCacheGeneration();
     const current = () => request.isCurrent(ticket) && generation === getUserScopedCacheGeneration();
-    return profileService
-      .matches("upcoming")
+    return portalReads
+      .matches("upcoming", force)
       .then((result) => {
         if (current()) setState({ status: "ready", match: selectNextTicketMatch(result.items) });
       })
@@ -58,5 +62,8 @@ export function useNextTicketMatch() {
     setState({ status: "loading" });
   }), [request]);
 
-  return { state: owner ? state : ({ status: "signedOut" } as const), reload: load };
+  // Pull-to-refresh: a forced read.
+  const reload = useCallback(() => load(true), [load]);
+
+  return { state: owner ? state : ({ status: "signedOut" } as const), reload };
 }
