@@ -141,6 +141,36 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
 - Web lifecycle (`src/lib/cybersourceWebLifecycle.ts`) ignores callbacks from
   superseded capture contexts.
 
+#### Vendor SDK limitation: `createTrigger("PANENTRY")` (verified 2026-10-05)
+This is a CyberSource Unified Checkout SDK defect, not an LFA backend or
+frontend requirement.
+
+- Card entry uses `client.createCheckout({ autoProcessing: false })` +
+  `checkout.mount({ paymentSelection, paymentScreen })` on native and web.
+  CyberSource renders its own "Checkout with card" selection button inside its
+  iframe; the card form opens after the user taps it.
+- Removing that step with the documented v1
+  `client.createTrigger("PANENTRY", { autoProcessing: false })` +
+  `trigger.mount("#uc-payment-form")` was investigated. On Android staging it
+  failed before rendering card entry
+  (`TypeError: Cannot read properties of undefined (reading 'telegram')`).
+- Cause: every v1 SDK build tested (`uc/v1/assets/1.0.0` through `1.3.0`;
+  production 1.0.0 is identical to test) runs `addSrcSubscriptions()` during
+  trigger setup, which reads `this.SRC.telegram` without a guard. `SRC` (the
+  Click to Pay component) only exists when the capture context allows
+  `CLICKTOPAY`. LFA's capture context is card-only (`PANENTRY`), so the
+  trigger always throws.
+- LFA intentionally does not enable `CLICKTOPAY` to work around this: "Other"
+  is card-only.
+- Do not replace `createCheckout()` with `createTrigger("PANENTRY")` until
+  CyberSource ships a version that supports PANENTRY with the production
+  card-only capture context and that version is runtime verified.
+- Do not programmatically click the CyberSource button. It is inside
+  CyberSource's cross-origin iframe, and scripted clicks on vendor payment UI
+  are out of bounds.
+- The experimental implementation was not shipped; production behavior is
+  unchanged.
+
 ### 2.9 Tickets, QR, orders, PDF
 - QR is rendered only from backend `qr_image` values that are bounded raster
   base64 data URIs (`data:image/png|jpeg|webp;base64,…`, ≤ 512,000 chars;

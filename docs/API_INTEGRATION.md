@@ -312,6 +312,11 @@ Full state model: `docs/ARCHITECTURE.md` §8.
   backend authorizes the charge.
 - Success is inferred from a **2xx** submit response for the current cart
   session. The response `status` is displayed, not evaluated.
+- Card entry uses `createCheckout()` (with CyberSource's own "Checkout with
+  card" selection step). `createTrigger("PANENTRY")` does not work with the
+  card-only capture context in SDK 1.0.0–1.3.0 because of a vendor SDK defect;
+  no capture-context change (such as enabling `CLICKTOPAY`) is requested. See
+  `docs/SECURITY.md` §2.8.
 
 ---
 
