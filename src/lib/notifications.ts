@@ -68,6 +68,17 @@ export function subscribeToNotificationResponses(onData: (data: NotificationData
   return () => subscription.remove();
 }
 
+/**
+ * Subscribes to notifications received while the app is running (foreground);
+ * returns the unsubscribe function. Used only to re-read the inbox and unread
+ * count from the backend; the payload is not trusted for any state.
+ */
+export function subscribeToReceivedNotifications(onReceive: () => void): () => void {
+  if (!Notifications) return () => {};
+  const subscription = Notifications.addNotificationReceivedListener(() => onReceive());
+  return () => subscription.remove();
+}
+
 export async function configureNotificationChannel() {
   if (Platform.OS !== "android" || !Notifications) {
     return;

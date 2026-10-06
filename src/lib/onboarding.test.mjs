@@ -64,7 +64,10 @@ test("startup never requests notification permission; granted users keep registe
   assert.match(layout, /subscribeToFcmTokenRefresh\(\(nextToken\) => \{/);
   assert.match(layout, /registerRefreshedPushDevice\(nextToken\)/);
   assert.match(layout, /getInitialNotificationData\(\)/);
-  assert.match(layout, /return subscribeToNotificationResponses\(handleNotificationNavigation\);/);
+  // A tap still routes through handleNotificationNavigation (after the inbox / unread count is invalidated).
+  assert.match(layout, /return subscribeToNotificationResponses\(\(data\) => \{\s*invalidateNotifications\(\);\s*handleNotificationNavigation\(data\);\s*\}\);/);
+  // A push received while open only re-reads the inbox; it never requests permission.
+  assert.match(layout, /useEffect\(\(\) => subscribeToReceivedNotifications\(invalidateNotifications\), \[\]\);/);
 
   const register = await read("./registerPushDevice.ts");
   const ifPermitted = register.slice(register.indexOf("export async function registerPushDeviceIfPermitted"), register.indexOf("export async function optInToPushNotifications"));

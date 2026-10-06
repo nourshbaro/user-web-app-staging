@@ -573,7 +573,7 @@ export default function AuthScreen() {
                 {mode === "register" ? (
                   <Field
                     label="Full name"
-                    placeholder="As it should appear on tickets"
+                    placeholder="Full Name"
                     value={name}
                     onChangeText={setName}
                     autoCapitalize="words"
@@ -585,7 +585,7 @@ export default function AuthScreen() {
                 {mode === "login" || mode === "register" ? (
                   <>
                     <Field
-                      label="Email"
+                      label="Email (optional)"
                       placeholder="name@example.com"
                       value={email}
                       onChangeText={setEmail}

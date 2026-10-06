@@ -138,8 +138,11 @@ All routes are plain `Stack` screens; there is no Expo Router `Tabs` layout.
 | `/match/[id]` | `match/[id].tsx` | public view; auth to add | Match hero, zones, stadium map, GA quantities, seat selection, one confirmation action |
 | `/tickets` | `tickets.tsx` | `withAuthRequired` (tab title) | v3 My Tickets: All/Upcoming/Past portal matches → flip tickets with the backend QR |
 | `/profile` | `profile.tsx` | public (own signed-out state) | v3 account hub: avatar (only editable field), read-only details, change password, settings/legal/contact, logout |
+| `/change-password` | `change-password.tsx` | `withAuthRequired` | v3 `chpw`: `ChangePassword` (same endpoint and session reset as before) |
+| `/notifications` | `notifications.tsx` | `withAuthRequired` | v3 `notifs`: read-only backend inbox (`notificationReads`); match notifications open `/match/[id]` |
 | `/edit-profile` | `edit-profile.tsx` | public | Legacy redirect → `/profile` |
-| `/settings` | `settings.tsx` | `withAuthRequired` | Theme, notification permission, account deletion |
+| `/settings` | `settings.tsx` | `withAuthRequired` | Theme, notification permission, account deletion (v3 `settings_delete` confirmation) |
+| `/delete-account` | `delete-account.tsx` | `withAuthRequired` | v3 `delete_verify`: current password → `DELETE /auth/account`; reached only from the Settings confirmation |
 | `/about` | `about.tsx` | public | Legacy redirect → `/legal` |
 | `/legal`, `/legal/privacy`, `/legal/terms` | `legal/*.tsx` | public | Legal list and the backend documents (`legalService`) |
 | `/contact` | `contact.tsx` | public | Contact LFA (`OFFICIAL_CONTACTS` only) |
@@ -215,7 +218,7 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | BLUE handoff and pending attempt | `src/lib/bluePaymentHandoff.ts` (module singletons) | memory |
 | Card handoff | `src/lib/cardPaymentHandoff.ts` (module singleton) | memory |
 | Maintenance flag | `src/services/api.ts` over `createMaintenanceAuthority` (`src/lib/maintenanceAuthority.ts`): `activateMaintenance`, `recheckMaintenance`; read by `SystemStateGate` (`useSyncExternalStore`) | memory |
-| App update decision | `useAppUpdateDecision` over `loadAppUpdatePolicy` (`src/services/appUpdate.ts`, no backend authority yet) and `src/lib/appUpdatePolicy.ts`; optional-prompt dismissal in `SystemStateGate` | memory (this launch) |
+| App update decision | `useAppUpdateDecision` over `loadAppVersionCheck` (`src/services/appUpdate.ts`, `GET /app-versions/check`, asked once per launch) and `src/lib/appUpdatePolicy.ts`; optional-prompt dismissal in `SystemStateGate` | memory (this launch) |
 | System-state dev preview | `src/lib/systemStatePreview.ts` (`__DEV__` only) | memory |
 | Theme mode | `ThemeProvider` (`system`/`light`/`dark`) | `lfa_theme` |
 | First-run onboarding seen | `useOnboardingGate` over `src/lib/onboarding.ts` | `lfa_onboarding_v1` |
@@ -247,10 +250,11 @@ services keep the API contract and response validation, and screens keep their
 request authorities, loading, error and empty states. Nothing is persisted.
 
 - **Owners.** `matchesService` (match lists, filters, detail, seats) and
-  `adsService` (banner) use it inside the service. Competitions and portal
-  reads use it through `src/services/cachedReads.ts` (`competitionReads`,
-  `portalReads`), which wraps the unchanged `competitionsService` /
-  `profileService`.
+  `adsService` (banner) use it inside the service. Competitions, portal and
+  notification reads use it through `src/services/cachedReads.ts`
+  (`competitionReads`, `portalReads`, `notificationReads`), which wraps the
+  unchanged `competitionsService` / `profileService` /
+  `notificationInboxService`.
 - **Keys** are the request path with every meaningful parameter (filters,
   status, date, competition, match, zone), so different requests never share
   an entry.
@@ -304,8 +308,12 @@ request authorities, loading, error and empty states. Nothing is persisted.
     `onLiveTransition` — every `useScheduledMatches` instance and the
     Competitions screen — re-read in the background instead of keeping an
     obsolete snapshot. Nothing new polls.
+  - A push received or opened (`invalidateNotifications`, wired in
+    `src/app/_layout.tsx`): the inbox and unread count are dropped and the
+    mounted owners (Home bell, inbox) re-read. Nothing polls.
   - Identity change: see isolation below.
-- **Private data isolation.** The portal read cache is scoped to the
+- **Private data isolation.** The portal read cache (portal matches /
+  tickets, notification inbox and unread count) is scoped to the
   user-scoped cache generation (`src/lib/userScopedCache.ts`): login, logout,
   account switch and 401/403 invalidation drop every entry, and a response
   that started under the previous identity is discarded. Public match,
@@ -906,16 +914,26 @@ entry is always CyberSource's own form.
   the phone's settings. Both exist only on iOS / Android builds with a push
   runtime (`pushSettingsSupported`); on web (and Expo Go) the card says push
   is not available and shows no action. Appearance = `ThemeProvider` mode. Language is shown,
-  not switchable (English is the only complete catalog). Account deletion =
-  `AccountDeletionModal`.
+  not switchable (English is the only complete catalog). Account deletion is
+  two explicit steps: the v3 `settings_delete` confirmation (the shared
+  destructive alert, no backdrop / Back dismissal), then `/delete-account`
+  (`DeleteAccount`, v3 `delete_verify`), which collects the current password
+  the backend requires and calls `AuthContext.deleteAccount` (unchanged:
+  `DELETE /auth/account { password }`, then session cleanup). Nothing is sent
+  without a password, a second press never sends twice, and the screen cannot
+  be left while the request is in flight.
 - **Auth** (`/auth`): v3 presentation over the production flows: login
   (+ phone completion), register, forgot password → email → OTP → new
   password. Login and Register have **no OTP step of their own**
   (`credentialOutcome`, `src/lib/authCredentialOutcome.ts`): a token → signed
   in; an account id without a token → the backend's verification code
   (`verify-otp`); neither → sign in. The former client-side email
-  verification pre-check before Login is removed. Change password stays in
-  `ChangePassword` (sheet, from the Profile menu). No startup authentication.
+  verification pre-check before Login is removed. Change password is the
+  pushed `/change-password` screen (`ChangePassword`, v3 `chpw`, from the
+  Profile menu) with the same validation, endpoint and post-change session
+  reset. Neither account screen offers v3's "Forgot password" link: the
+  recovery flow lives in the signed-out `/auth` screen. No startup
+  authentication.
 
 ## 12. Push notifications and device registration
 
@@ -937,6 +955,17 @@ entry is always CyberSource's own form.
   `subscribeToNotificationResponses`. On web `getInitialNotificationData`
   returns `null` (a push never launches the web app, and the launch response
   is not implemented there; reading it threw on every web start).
+- **Inbox freshness.** A notification received while the app is open
+  (`subscribeToReceivedNotifications`) or opened from the tray drops the
+  cached inbox and unread count (`invalidateNotifications`); the Home bell and
+  an open inbox re-read them from the backend. The push payload is never
+  trusted for any state, and there is no polling.
+- **Inbox (`/notifications`) and Home bell.** Backend data only
+  (`GET /portal/notifications`, `GET /portal/notifications/unread-count`).
+  The API is read-only: nothing marks a notification read, the count is never
+  lowered locally, and v3's "Mark all as read" is not offered. Only
+  `target_type === "match"` with a valid match id opens `/match/[id]`; other
+  notifications are plain rows.
 - Native only; web skips registration. Settings shows push as "Not
   available" on web and in Expo Go (`pushSettingsSupported`).
 - **Expo Go is not a push environment.** `src/lib/notifications.ts` is the
@@ -982,24 +1011,34 @@ layering):
     flag, and there is no polling.
   - "Contact LFA on WhatsApp" uses the official contact
     (`OFFICIAL_CONTACTS`, `src/lib/contact.ts`).
-- **Required / optional update (UI and policy implemented; no backend
-  authority).** `useAppUpdateDecision` reads `loadAppUpdatePolicy()` once
-  at startup and decides with `decideUpdate` (numeric version comparison,
-  installed version from the binary's Expo config). The provider resolves
-  `null` until a backend contract exists (`docs/API_INTEGRATION.md` §15), so
-  in production both states are inactive (fail open).
+- **Required / optional update (backend authority:
+  `GET /app-versions/check`).** `loadAppVersionCheck` asks once per launch
+  with the running platform (`android` / `ios`) and the installed version
+  (the binary's Expo config; a development client reads the dev server's
+  manifest instead). The request carries no session token and a 401 never
+  touches the session. The gate remounts when the signed-in identity changes
+  (it sits inside the identity-keyed providers), so the answer is memoized
+  for the launch; an optional-prompt dismissal resets with that remount.
+  `decideUpdate` turns the validated answer into one decision; the app does
+  no version comparison of its own. Required wins if both flags are set.
+  - **Fail open:** web, an unusable installed version, a network failure, a
+    malformed answer, or an update without a valid official store listing →
+    no update state. A failed check never blocks anyone.
   - `UpdatePromptDialog` (v3 `update_available` / `update_required`): a
     modal over the running app. Required: no "Not now", the scrim does not
     dismiss, Android Back is swallowed, opening the store never clears it.
-    Optional: "Not now" (or Back) dismisses it for that latest version, for
-    this launch; the scrim does not dismiss it.
+    Optional: "Not now" (or Back) dismisses it for the offered version (or
+    the unversioned offer), for this launch; the scrim does not dismiss it.
   - The store button opens only a validated official listing
     (`validStoreUrl`: whole-string allowlist, not `URL` parsing, because
     React Native's `URL` is a lenient shim), re-validated at the moment of
     opening. No store URL → nothing opens; an inline error is shown.
   - Copy: v3's version-specific wording only with a real `latest_version`;
-    otherwise version-free copy. The "What's new" panel renders only with
-    policy-supplied `release_notes`; there is no client list.
+    otherwise version-free copy. The "What's new" panel renders the backend
+    `message` as bullet points (`messagePoints`: a "." followed by
+    whitespace or the end ends a point, so versions, domains and decimals
+    stay intact; empty segments are dropped; plain text, never HTML); no
+    message → no panel.
 - **Development preview (`__DEV__` only).** `src/lib/systemStatePreview.ts`,
   driven by a dev deep link `lfa-app:///?systemStatePreview=maintenance` |
   `updateAvailable` | `updateRequired` | `normal`. It overrides the

@@ -125,6 +125,8 @@ function TicketHoldersScreen() {
             title={isEditMode ? i18n.t("holders.editTitle") : i18n.t("holders.title")}
             backLabel={isEditMode ? i18n.t("flow.payment") : i18n.t("flow.cart")}
             onBack={returnToParent}
+            // v3 holders: iOS shows no header title (the in-page heading is it); Android does.
+            titleOnIos={false}
           />
         </View>
         <ScrollView

@@ -1,8 +1,8 @@
-import { AccountDeletionModal } from "@/components/AccountDeletionModal";
 import { SubpageShell } from "@/components/SubpageShell";
 import { AppText, SegmentedControl } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
+import { useAlertDialog } from "@/context/AlertDialogContext";
 import { useToast } from "@/context/ToastContext";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 import { useI18n } from "@/i18n/I18nProvider";
@@ -11,8 +11,9 @@ import { registerPushDevice } from "@/lib/registerPushDevice";
 import { pushRuntimeSupported } from "@/lib/notifications";
 import { pushSettingsSupported, settingsPushState } from "@/lib/settingsPresentation";
 import type { ThemeMode } from "@/lib/themePalette";
+import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 
 const APPEARANCE: readonly ThemeMode[] = ["system", "light", "dark"];
@@ -23,13 +24,14 @@ const APPEARANCE: readonly ThemeMode[] = ["system", "light", "dark"];
  *   the phone's settings (no in-app switch pretends to persist a preference);
  * - appearance: the app theme mode (`ThemeProvider`);
  * - language: shown, not switchable — English is the only complete catalog;
- * - account deletion: the existing `AccountDeletionModal`.
+ * - account deletion: the v3 confirmation dialog (`settings_delete`), then
+ *   the current-password step (`/delete-account`, `delete_verify`).
  */
 function SettingsScreen() {
   const toast = useToast();
   const theme = useTheme();
   const i18n = useI18n();
-  const [deleteVisible, setDeleteVisible] = useState(false);
+  const alert = useAlertDialog();
   const { status: pushPermission, loading: pushPermissionLoading, openSettings } = useNotificationPermission();
   const push = settingsPushState(pushPermission, pushPermissionLoading, pushSettingsSupported(Platform.OS, pushRuntimeSupported));
 
@@ -37,6 +39,21 @@ function SettingsScreen() {
   useEffect(() => {
     if (pushPermission === "granted") void registerPushDevice().catch(() => {});
   }, [pushPermission]);
+
+  // Step 1 of 2: an explicit confirmation (no backdrop or Back dismissal);
+  // only "Delete account" continues to the password step, which is the only
+  // place the request can be sent.
+  const confirmDelete = async () => {
+    const accepted = await alert.showAlert({
+      variant: "destructive",
+      title: i18n.t("deleteAccount.dialog.title"),
+      message: i18n.t("deleteAccount.dialog.message"),
+      confirmLabel: i18n.t("deleteAccount.dialog.confirm"),
+      cancelLabel: i18n.t("deleteAccount.dialog.cancel"),
+      dismissible: false,
+    });
+    if (accepted) router.push("/delete-account");
+  };
 
   const handlePushPress = async () => {
     if (pushPermissionLoading) return;
@@ -100,7 +117,7 @@ function SettingsScreen() {
 
       <Section title={i18n.t("settings.account")}>
         <Pressable
-          onPress={() => setDeleteVisible(true)}
+          onPress={() => void confirmDelete()}
           accessibilityRole="button"
           accessibilityLabel={i18n.t("settings.deleteAccount")}
           style={({ pressed }) => [local.card, local.deleteRow, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }, pressed && { opacity: 0.85 }]}
@@ -110,7 +127,6 @@ function SettingsScreen() {
         </Pressable>
       </Section>
 
-      <AccountDeletionModal visible={deleteVisible} onClose={() => setDeleteVisible(false)} />
     </SubpageShell>
   );
 }

@@ -4,6 +4,7 @@ import { getUserScopedCacheGeneration, onUserScopedCacheInvalidated } from "@/li
 import { profileService } from "@/services/auth";
 import { competitionsService } from "@/services/competitions";
 import { onLiveTransition } from "@/services/matches";
+import { notificationInboxService } from "@/services/notificationInbox";
 
 /**
  * Cached reads over the existing services (memory only). The services keep
@@ -86,6 +87,47 @@ export const portalReads = {
 /** A purchase (or anything else that changes the user's tickets) makes every portal read stale. */
 export function invalidatePortalCache() {
   portalCache.invalidate("");
+}
+
+/**
+ * The signed-in user's notification inbox and unread count: private, in the
+ * same identity-scoped portal cache (an identity change drops them; a late
+ * response for the previous identity is discarded). Short-lived because a
+ * push can add a notification at any time. The API is read-only: nothing
+ * here (or in any screen) marks a notification read or lowers the count.
+ */
+export const NOTIFICATION_POLICIES = {
+  list: { freshMs: 30 * 1000, maxStaleMs: 10 * MINUTE },
+  unreadCount: { freshMs: 30 * 1000, maxStaleMs: 5 * MINUTE },
+} satisfies Record<string, CachePolicy>;
+
+type InboxList = Awaited<ReturnType<typeof notificationInboxService.list>>;
+
+const notificationListeners = new Set<() => void>();
+
+export const notificationReads = {
+  list: (force = false) => portalCache.read("notifications", NOTIFICATION_POLICIES.list, () => notificationInboxService.list(), { force }),
+  unreadCount: (force = false) =>
+    portalCache.read("notifications:unread-count", NOTIFICATION_POLICIES.unreadCount, () => notificationInboxService.unreadCount(), { force }),
+  peekList: () => portalCache.peek<InboxList>("notifications", NOTIFICATION_POLICIES.list),
+  peekUnreadCount: () => portalCache.peek<number>("notifications:unread-count", NOTIFICATION_POLICIES.unreadCount),
+};
+
+/**
+ * A notification may have arrived (a push was received or opened): drop the
+ * inbox and count, and tell mounted owners (the Home badge, the inbox) to
+ * re-read. This is what the backend says next, never a local guess.
+ */
+export function invalidateNotifications() {
+  portalCache.invalidate("notifications");
+  notificationListeners.forEach((listener) => listener());
+}
+
+export function onNotificationsInvalidated(listener: () => void) {
+  notificationListeners.add(listener);
+  return () => {
+    notificationListeners.delete(listener);
+  };
 }
 
 /**

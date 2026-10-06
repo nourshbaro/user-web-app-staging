@@ -1,35 +1,43 @@
 /**
  * App update policy (pure: no React Native imports).
  *
- * The backend has no version-policy contract yet (`docs/API_INTEGRATION.md`
- * §15). This module holds the rules the app applies once one exists; until
- * then the provider (`src/services/appUpdate.ts`) returns no policy, and every
- * rule here fails open (the app runs normally). A missing or malformed policy,
- * or an unreadable installed version, never blocks a user.
+ * The backend is the authority: `GET /app-versions/check?platform=&version=`
+ * answers whether this installed version must or may update, with the
+ * official store listing and an optional message. This module only validates
+ * that answer and turns it into one decision; it does not compare versions
+ * itself. Every failure fails open (the app runs normally): an unreachable or
+ * malformed answer, an unsupported platform (web), an unusable installed
+ * version, or an update without a valid official store listing never blocks
+ * or prompts a user.
  */
 
 export type AppPlatform = "android" | "ios" | "web";
 
-export type PlatformUpdatePolicy = {
-  minimumVersion: string;
-  /** Null when the policy names no latest version (no optional prompt is possible). */
+/** The validated backend answer for this platform and installed version. */
+export type AppVersionCheck = {
+  updateRequired: boolean;
+  updateAvailable: boolean;
+  /** Dotted-number version, or null when absent / not a version. */
   latestVersion: string | null;
-  storeUrl: string;
-  /** Release notes from the policy; empty when none (the "What's new" panel is omitted). */
-  releaseNotes: readonly string[];
+  minSupportedVersion: string | null;
+  /** This app's official listing, or null when absent or not the official one. */
+  storeUrl: string | null;
+  /** The backend message as sent (plain text, never rendered as HTML). */
+  message: string | null;
 };
 
-/** What an update prompt shows. Every field comes from the backend policy. */
+/** What an update prompt shows. Every field comes from the backend answer. */
 export type UpdatePrompt = {
   storeUrl: string;
   latestVersion: string | null;
+  /** The message as points (`messagePoints`); empty → no "What's new" panel. */
   releaseNotes: readonly string[];
 };
 
 export type UpdateDecision =
   | { kind: "none" }
   | ({ kind: "required" } & UpdatePrompt)
-  | ({ kind: "available" } & UpdatePrompt & { latestVersion: string });
+  | ({ kind: "available" } & UpdatePrompt);
 
 export type SystemState = "maintenance" | "updateRequired" | "updateAvailable" | "app";
 
@@ -41,16 +49,6 @@ export function parseAppVersion(value: unknown): number[] | null {
   const text = value.trim();
   if (!VERSION_PATTERN.test(text)) return null;
   return text.split(".").map(Number);
-}
-
-/** Numeric, segment by segment; missing segments count as 0 (1.2 == 1.2.0). Never lexical. */
-export function compareAppVersions(a: readonly number[], b: readonly number[]) {
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (a[index] ?? 0) - (b[index] ?? 0);
-    if (difference !== 0) return difference < 0 ? -1 : 1;
-  }
-  return 0;
 }
 
 /**
@@ -73,90 +71,87 @@ export function validStoreUrl(value: unknown, platform: AppPlatform): string | n
   return STORE_URL_PATTERNS[platform].test(url) ? url : null;
 }
 
-const MAX_RELEASE_NOTES = 6;
-const MAX_RELEASE_NOTE_LENGTH = 160;
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
 
-/**
- * Release notes from the policy: non-empty strings, trimmed, at most six of at
- * most 160 characters each. Anything else is dropped; malformed notes never
- * invalidate the version policy itself.
- */
-export function parseReleaseNotes(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((note): note is string => typeof note === "string")
-    .map((note) => note.trim())
-    .filter((note) => note.length > 0 && note.length <= MAX_RELEASE_NOTE_LENGTH)
-    .slice(0, MAX_RELEASE_NOTES);
+function versionText(value: unknown): string | null {
+  return parseAppVersion(value) ? String(value).trim() : null;
 }
 
 /**
- * The policy for one platform from a backend response, or null when it is
- * absent or malformed (fail open). Proposed shape (not an existing API):
- * `{ android: { minimum_version, latest_version?, store_url, release_notes? }, ios: { … } }`.
+ * The backend answer (`{ data: { update_required, update_available,
+ * latest_version, min_supported_version, store_url, message } }`) for this
+ * platform, or null when it is absent or malformed (fail open). Both flags
+ * must be real booleans; the store URL must be this app's official listing.
  */
-export function platformUpdatePolicy(raw: unknown, platform: AppPlatform): PlatformUpdatePolicy | null {
-  if (platform === "web" || !raw || typeof raw !== "object") return null;
-  const entry = (raw as Record<string, unknown>)[platform];
-  if (!entry || typeof entry !== "object") return null;
-  const {
-    minimum_version: minimum,
-    latest_version: latest,
-    store_url: store,
-    release_notes: notes,
-  } = entry as Record<string, unknown>;
-  const minimumParts = parseAppVersion(minimum);
-  const storeUrl = validStoreUrl(store, platform);
-  if (!minimumParts || !storeUrl) return null;
-  let latestVersion: string | null = null;
-  if (latest !== undefined && latest !== null) {
-    const latestParts = parseAppVersion(latest);
-    // A malformed or inconsistent latest version (below minimum) is not trusted.
-    if (!latestParts || compareAppVersions(latestParts, minimumParts) < 0) return null;
-    latestVersion = String(latest).trim();
-  }
+export function parseAppVersionCheck(raw: unknown, platform: AppPlatform): AppVersionCheck | null {
+  if (platform === "web") return null;
+  const data = record(record(raw)?.data);
+  if (!data || typeof data.update_required !== "boolean" || typeof data.update_available !== "boolean") return null;
   return {
-    minimumVersion: String(minimum).trim(),
-    latestVersion,
-    storeUrl,
-    releaseNotes: parseReleaseNotes(notes),
+    updateRequired: data.update_required,
+    updateAvailable: data.update_available,
+    latestVersion: versionText(data.latest_version),
+    minSupportedVersion: versionText(data.min_supported_version),
+    storeUrl: validStoreUrl(data.store_url, platform),
+    message: typeof data.message === "string" && data.message.trim() ? data.message : null,
   };
 }
 
+const MAX_MESSAGE_POINTS = 12;
+
 /**
- * installed < minimum → required (blocking); minimum ≤ installed < latest →
- * available (optional); otherwise none. Web never gets a native update state.
+ * The backend message as bullet points: each sentence ending in "." is one
+ * point. Contract assumption (documented in `docs/API_INTEGRATION.md`): a
+ * period ends a point only when it is followed by whitespace or the end of
+ * the text, so versions ("2.5.0"), domains ("lfa-ticketing.com") and
+ * decimals stay intact. Points are trimmed, keep their punctuation, and empty
+ * or punctuation-only segments (". ." / "...") are dropped. Plain text only.
  */
-export function decideUpdate({
-  platform,
-  installedVersion,
-  policy,
-}: {
-  platform: AppPlatform;
-  installedVersion: unknown;
-  policy: PlatformUpdatePolicy | null;
-}): UpdateDecision {
-  if (platform === "web" || !policy) return { kind: "none" };
-  const installed = parseAppVersion(installedVersion);
-  const minimum = parseAppVersion(policy.minimumVersion);
-  if (!installed || !minimum) return { kind: "none" };
-  const prompt = { storeUrl: policy.storeUrl, releaseNotes: policy.releaseNotes };
-  if (compareAppVersions(installed, minimum) < 0) {
-    return { kind: "required", ...prompt, latestVersion: policy.latestVersion };
+export function messagePoints(message: unknown): string[] {
+  if (typeof message !== "string") return [];
+  const segments: string[] = [];
+  let start = 0;
+  for (let index = 0; index < message.length; index += 1) {
+    const next = message[index + 1];
+    if (message[index] === "." && (next === undefined || /\s/.test(next))) {
+      segments.push(message.slice(start, index + 1));
+      start = index + 1;
+    }
   }
-  const latest = policy.latestVersion ? parseAppVersion(policy.latestVersion) : null;
-  if (policy.latestVersion && latest && compareAppVersions(installed, latest) < 0) {
-    return { kind: "available", ...prompt, latestVersion: policy.latestVersion };
-  }
+  segments.push(message.slice(start));
+  return segments
+    .map((segment) => segment.replace(/\s+/g, " ").trim())
+    .filter((segment) => /[^.\s]/.test(segment))
+    .slice(0, MAX_MESSAGE_POINTS);
+}
+
+/**
+ * The backend answer as one decision. Required wins if both flags are set.
+ * No validated official store listing → no prompt (fail open: the user would
+ * have no way to update, so they are never blocked by it). Web never gets a
+ * native update state.
+ */
+export function decideUpdate({ platform, check }: { platform: AppPlatform; check: AppVersionCheck | null }): UpdateDecision {
+  if (platform === "web" || !check || !check.storeUrl) return { kind: "none" };
+  const prompt = { storeUrl: check.storeUrl, latestVersion: check.latestVersion, releaseNotes: messagePoints(check.message) };
+  if (check.updateRequired) return { kind: "required", ...prompt };
+  if (check.updateAvailable) return { kind: "available", ...prompt };
   return { kind: "none" };
+}
+
+/** What "Not now" dismisses for this launch: the offered latest version (or the unversioned offer). */
+export function updateDismissKey(update: UpdateDecision): string | null {
+  return update.kind === "available" ? update.latestVersion ?? "" : null;
 }
 
 /**
  * One state at a time, in a fixed priority (LFA Screen v3 layering):
  * backend maintenance (temporary, service-wide), then a required update, then
- * an optional update the user has not dismissed for that latest version, then
- * the app. When maintenance clears, an unsupported version is blocked at once.
- * A dismissal never hides a required update.
+ * an optional update the user has not dismissed this launch, then the app.
+ * When maintenance clears, an unsupported version is blocked at once. A
+ * dismissal never hides a required update.
  */
 export function systemState({
   update,
@@ -165,12 +160,12 @@ export function systemState({
 }: {
   update: UpdateDecision;
   maintenance: boolean;
-  /** The latest version whose optional prompt was dismissed (this launch). */
+  /** `updateDismissKey` of the optional prompt dismissed this launch, or null. */
   dismissedLatestVersion: string | null;
 }): SystemState {
   if (maintenance) return "maintenance";
   if (update.kind === "required") return "updateRequired";
-  if (update.kind === "available" && update.latestVersion !== dismissedLatestVersion) return "updateAvailable";
+  if (update.kind === "available" && updateDismissKey(update) !== dismissedLatestVersion) return "updateAvailable";
   return "app";
 }
 

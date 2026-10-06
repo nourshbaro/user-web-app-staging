@@ -12,6 +12,9 @@ const STATIC_AUTH_RETURN_ROUTES = new Set([
   "/settings",
   "/about",
   "/edit-profile",
+  "/notifications",
+  // Deliberately absent: /change-password and /delete-account. A sign-in never
+  // returns straight into an account-security step.
 ]);
 
 export function getSafeAuthReturnRoute(value: unknown) {

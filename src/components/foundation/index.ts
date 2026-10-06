@@ -1,5 +1,5 @@
 export { AppText, type TextTone } from "./AppText";
-export { DirectionalChevron, PhysicalLayout } from "./direction";
+export { DirectionalChevron, NavigationBackGlyph, PhysicalLayout } from "./direction";
 export { usePressFeedback } from "./pressFeedback";
 export { SectionHeader } from "./SectionHeader";
 export { SkeletonBlock, SkeletonGroup, SkeletonText } from "./Skeleton";

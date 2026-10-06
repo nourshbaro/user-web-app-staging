@@ -12,6 +12,7 @@ import { useKickoffClock } from "@/hooks/useKickoffClock";
 import { useLiveRevalidation } from "@/hooks/useLiveRevalidation";
 import { useNextTicketMatch, type NextTicketMatch } from "@/hooks/useNextTicketMatch";
 import { useScheduledMatches } from "@/hooks/useScheduledMatches";
+import { useUnreadNotificationCount } from "@/hooks/useUnreadNotificationCount";
 import { useI18n } from "@/i18n/I18nProvider";
 import { radius, spacing } from "@/lib/designTokens";
 import { formatDate, formatTime } from "@/lib/format";
@@ -51,6 +52,8 @@ export function HomeFeed() {
   const live = useScheduledMatches(LIVE_FILTERS);
   const completed = useScheduledMatches(COMPLETED_FILTERS);
   const tickets = useNextTicketMatch();
+  // The bell's backend unread count (identity-scoped cache; never lowered locally).
+  const notifications = useUnreadNotificationCount();
   // A match that goes live appears on focus / return to foreground, without pull-to-refresh (no interval on Home).
   useLiveRevalidation(live.revalidate);
   // Presentation time: load time, advanced at the next kickoff and on app foreground (no refetch).
@@ -75,6 +78,7 @@ export function HomeFeed() {
     live.refresh();
     completed.refresh();
     void tickets.reload();
+    void notifications.reload();
   };
 
   return (
@@ -83,7 +87,7 @@ export function HomeFeed() {
       refreshControl={<RefreshControl refreshing={data.refreshing} onRefresh={refreshAll} />}
       contentContainerStyle={local.content}
     >
-      <BrandHeader />
+      <BrandHeader unreadCount={notifications.count} />
 
       {data.loading ? (
         <MatchListSkeleton label={t("matches.loading")} count={2} withFeatured />

@@ -22,10 +22,12 @@ import {
   getInitialNotificationData,
   subscribeToFcmTokenRefresh,
   subscribeToNotificationResponses,
+  subscribeToReceivedNotifications,
 } from "@/lib/notifications";
 
 import { SystemStateGate } from "@/components/maintenance/SystemStateGate";
 import { handleNotificationNavigation } from "@/lib/notificationNavigation";
+import { invalidateNotifications } from "@/services/cachedReads";
 import {
   registerPushDeviceIfPermitted,
   registerRefreshedPushDevice,
@@ -123,8 +125,16 @@ function AppProviders() {
 
     void handleInitialNotification();
 
-    return subscribeToNotificationResponses(handleNotificationNavigation);
+    return subscribeToNotificationResponses((data) => {
+      // Opened from a push: the inbox / unread count may have changed.
+      invalidateNotifications();
+      handleNotificationNavigation(data);
+    });
   }, []);
+
+  // A push received while the app is open: re-read the inbox and unread count
+  // from the backend (no polling; the payload itself is not trusted for state).
+  useEffect(() => subscribeToReceivedNotifications(invalidateNotifications), []);
 
   if (!isReady || !fontsSettled) {
     return null;
@@ -184,6 +194,9 @@ function AppProviders() {
                       options={{ headerShown: false }}
                     />
                     <Stack.Screen name="about" options={{ headerShown: false }} />
+                    <Stack.Screen name="notifications" options={{ headerShown: false }} />
+                    <Stack.Screen name="change-password" options={{ headerShown: false }} />
+                    <Stack.Screen name="delete-account" options={{ headerShown: false, gestureEnabled: false }} />
                     <Stack.Screen
                       name="settings"
                       options={{ headerShown: false }}

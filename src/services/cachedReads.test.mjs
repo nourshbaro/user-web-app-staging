@@ -42,7 +42,9 @@ async function load() {
     export function fireTransition(transition) { listeners.forEach((listener) => listener(transition)); }
     // ${key}
   `);
+  const inboxUrl = toModuleUrl(`export const notificationInboxService = { list: ${fake("inbox")}, unreadCount: ${fake("unreadCount")} };`);
   const source = transpile(cachedReadsSource)
+    .replace('from "@/services/notificationInbox"', `from ${JSON.stringify(inboxUrl)}`)
     .replace('from "@/lib/paymentRecoveryTickets"', `from ${JSON.stringify(recoveryUrl)}`)
     .replace('from "@/lib/queryCache"', `from ${JSON.stringify(queryCacheUrl)}`)
     .replace('from "@/lib/userScopedCache"', `from ${JSON.stringify(userScopedUrl)}`)
@@ -249,4 +251,77 @@ test("a transition does not touch the user's portal data", async () => {
   fireTransition({ entered: ["5"], left: [] });
   await reads.portalReads.matches("all");
   assert.equal(state.calls.length, 1);
+});
+
+/* Notifications inbox and unread count (private, read-only) ------------------ */
+
+test("notifications: a fresh inbox and unread count are reused; pull-to-refresh / Retry force a read", async () => {
+  const { reads, state } = await load();
+  state.answers.inbox = [{ id: "1" }];
+  state.answers.unreadCount = 2;
+  await reads.notificationReads.list();
+  await reads.notificationReads.unreadCount();
+  await reads.notificationReads.list(); // revisit while fresh
+  await reads.notificationReads.unreadCount(); // Home remount while fresh
+  assert.deepEqual(state.calls.map(([name]) => name), ["inbox", "unreadCount"]);
+  await reads.notificationReads.list(true); // pull-to-refresh / Retry
+  await reads.notificationReads.unreadCount(true);
+  assert.equal(state.calls.length, 4);
+  assert.deepEqual(reads.notificationReads.peekUnreadCount().value, 2);
+});
+
+test("notifications: logout / account switch never shows another user's inbox or count", async () => {
+  const { reads, userScoped, state } = await load();
+  state.answers.inbox = [{ id: "A" }];
+  state.answers.unreadCount = 5;
+  await reads.notificationReads.list();
+  await reads.notificationReads.unreadCount();
+  userScoped.clearUserScopedCaches();
+  assert.equal(reads.notificationReads.peekList(), null);
+  assert.equal(reads.notificationReads.peekUnreadCount(), null);
+  state.answers.unreadCount = 0;
+  assert.equal(await reads.notificationReads.unreadCount(), 0, "user B gets their own count");
+  assert.equal(state.calls.length, 3);
+});
+
+test("notifications: a count that started before an identity change is not cached for the next user", async () => {
+  const { reads, userScoped, state } = await load();
+  let resolve;
+  state.pending = new Promise((yes) => { resolve = yes; });
+  const lateA = reads.notificationReads.unreadCount();
+  userScoped.clearUserScopedCaches();
+  resolve(7);
+  await lateA;
+  assert.equal(reads.notificationReads.peekUnreadCount(), null);
+});
+
+test("notifications: a failed read is not cached (no invented 0)", async () => {
+  const { reads, state } = await load();
+  state.answers.unreadCount = new Error("offline");
+  await assert.rejects(() => reads.notificationReads.unreadCount(), /offline/);
+  assert.equal(reads.notificationReads.peekUnreadCount(), null);
+});
+
+test("notifications: a received / opened push invalidates inbox and count and tells owners; tickets are untouched", async () => {
+  const { reads, state } = await load();
+  state.answers.inbox = [];
+  state.answers.unreadCount = 0;
+  state.answers.matches = { items: [], total: 0 };
+  await reads.notificationReads.list();
+  await reads.notificationReads.unreadCount();
+  await reads.portalReads.matches("all");
+  let told = 0;
+  const stop = reads.onNotificationsInvalidated(() => { told += 1; });
+  reads.invalidateNotifications();
+  stop();
+  reads.invalidateNotifications();
+  assert.equal(told, 1, "subscribers are told; an unsubscribed owner is not");
+  assert.equal(reads.notificationReads.peekList(), null);
+  assert.equal(reads.notificationReads.peekUnreadCount(), null);
+  assert.notEqual(reads.portalReads.peekMatches("all"), null, "My Tickets keeps its cache");
+});
+
+test("notifications: nothing in the cache layer marks read or lowers the count", async () => {
+  const source = await read("./cachedReads.ts");
+  assert.doesNotMatch(source, /mark.?read|markAsRead|is_unread\s*=|isUnread\s*=|unread_count\s*-|count\s*-\s*1/i);
 });

@@ -666,6 +666,8 @@ function CheckoutScreen() {
           backLabel={i18n.t("flow.cart")}
           onBack={onHeaderBack}
           backDisabled={loading}
+          // v3 checkout: iOS shows no header title (the in-page heading is it); Android does.
+          titleOnIos={false}
         />
       </View>
       <ScrollView

@@ -1,7 +1,7 @@
 import { MaintenanceScreen } from "@/components/maintenance/MaintenanceScreen";
 import { UpdatePromptDialog } from "@/components/maintenance/UpdatePromptDialog";
 import { useAppUpdateDecision } from "@/hooks/useAppUpdateDecision";
-import { systemState } from "@/lib/appUpdatePolicy";
+import { systemState, updateDismissKey } from "@/lib/appUpdatePolicy";
 import type { MaintenanceRecheckResult } from "@/lib/maintenanceAuthority";
 import {
   getSystemStatePreview,
@@ -51,7 +51,7 @@ export function SystemStateGate({ children }: PropsWithChildren) {
       ? undefined
       : previewing
         ? () => setSystemStatePreview(null, __DEV__)
-        : () => setDismissedLatestVersion(update.kind === "available" ? update.latestVersion : null);
+        : () => setDismissedLatestVersion(updateDismissKey(update));
     // Keyed per prompt: a different prompt is a fresh dialog (state, entrance).
     prompt = <UpdatePromptDialog key={`${kind}:${details.latestVersion ?? ""}`} kind={kind} {...details} onDismiss={dismiss} />;
   }

@@ -6,6 +6,8 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const profile = await read("../app/profile.tsx");
 const tickets = await read("../app/tickets.tsx");
 const settings = await read("../app/settings.tsx");
+const changePasswordRoute = await read("../app/change-password.tsx");
+const deleteAccountRoute = await read("../app/delete-account.tsx");
 const tournament = await read("../app/tournament.tsx");
 const competitions = await read("../app/competitions.tsx");
 const competitionsService = await read("../services/competitions.ts");
@@ -19,7 +21,9 @@ test("profile is the v3 account hub over the existing account owners", () => {
   // Signed out: the shared sign-in card; the public destinations stay reachable.
   assert.match(profile, /<AuthRequired \/>/);
   for (const href of ['"/settings"', '"/legal"', '"/contact"']) assert.ok(profile.includes(`href=${href}`), href);
-  assert.match(profile, /<ChangePassword trigger="menu" \/>/);
+  // Change password is its own screen (v3 chpw), owned by ChangePassword.tsx.
+  assert.match(profile, /href="\/change-password"/);
+  assert.match(changePasswordRoute, /export default withAuthRequired\(ChangePassword\);/);
   // Logout: the existing confirmation and the owner's session cleanup.
   assert.match(profile, /await auth\.logout\(\)/);
   assert.match(profile, /alertDialog\.showAlert\(\{/);
@@ -50,7 +54,7 @@ test("tickets use the portal services and the backend QR only", () => {
   assert.match(tickets, /portalReads\.tickets\(match\.match_id\)/);
   assert.match(cachedReads, /\(\) => profileService\.matches\(filter\)/);
   assert.match(cachedReads, /\(\) => profileService\.tickets\(matchId\)/);
-  assert.match(tickets, /withBackendQrs\(result\.items, \(code\) => profileService\.ticket\(code\), current\)/);
+  assert.match(tickets, /withBackendQrs\(\s*result\.items\s*,\s*\(code\)\s*=>\s*profileService\.ticket\(code\)\s*,\s*current\s*,?\s*\)/);
   assert.doesNotMatch(tickets, /profileService\.orders\(/);
   assert.match(tickets, /horizontal\s+pagingEnabled/);
   assert.match(tickets, /const qr = ticketQrSource\(ticket\);/);
@@ -71,7 +75,7 @@ test("ticket requests invalidate stale filters, closed details, and former sessi
 
 test("the QR frame never mirrors and non-scannable states are dimmed, not hidden", () => {
   assert.match(tickets, /<PhysicalLayout style=\{local\.qrBox\}>/);
-  assert.match(tickets, /opacity: state === "valid" \|\| state === "other" \? 1 : 0\.3/);
+  assert.match(tickets, /opacity:\s*state\s*===\s*"valid"\s*\|\|\s*state\s*===\s*"other"\s*\?\s*1\s*:\s*0\.3\b/);
 });
 
 test("legacy /tournament redirects to the single public Competitions screen fed by the confirmed APIs", () => {
@@ -100,7 +104,13 @@ test("settings exposes only real capabilities and the central deletion authority
   assert.doesNotMatch(settings, /requestPermission|requestNotificationPermission|AppSwitch|Switch\b/);
   assert.doesNotMatch(settings, /Email Notifications|storage\.set/);
   assert.match(settings, /theme\.setMode\(mode\)/);
-  assert.match(settings, /<AccountDeletionModal/);
+  // Deletion: an explicit, non-dismissible confirmation (v3 settings_delete), then
+  // the current-password step (v3 delete_verify), the only place the request is sent.
+  assert.match(settings, /variant: "destructive",/);
+  assert.match(settings, /dismissible: false,/);
+  assert.match(settings, /if \(accepted\) router\.push\("\/delete-account"\);/);
+  assert.doesNotMatch(settings, /deleteAccount\(/);
+  assert.match(deleteAccountRoute, /export default withAuthRequired\(DeleteAccount\);/);
   // Language is shown, not switchable (English is the only complete catalog).
   assert.doesNotMatch(settings, /setLocale|changeLanguage/);
 });

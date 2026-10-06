@@ -44,6 +44,10 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
 - Logout clears in-memory state before storage, then calls `/auth/logout` with
   the captured token; failures are ignored locally.
 - Password change and account deletion clear the session.
+- Account deletion takes two explicit steps: a non-dismissible destructive
+  confirmation in Settings, then `/delete-account`, the only place the
+  request is sent (current password required by the backend; disabled
+  without it; single-flight; the screen cannot be left mid-request).
 - `clearUserScopedCaches()` runs whenever the identity key changes.
 - `CartProvider` is keyed by identity; `withAuthRequired` keys screens by
   `userCacheKey` — no state survives an account switch.
@@ -54,6 +58,8 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   wrapped in `withAuthRequired`.
 - Post-login `returnTo` is limited to an allowlist of static routes plus
   `/match/<id>` (`src/lib/authReturnRoute.ts`). No arbitrary redirects.
+  `/notifications` is allowlisted; `/change-password` and `/delete-account`
+  are deliberately not (a sign-in never lands in an account-security step).
 - Result routes (`/checkout/success|failed`, `/checkout/blue/success|failed`)
   are display-only: params are sanitized (`src/lib/checkoutResultParams.ts`:
   provider allowlist, 120-char cap, reason-code allowlist) and they never clear
@@ -208,6 +214,15 @@ frontend requirement.
   `apiRequest` read the live token, so a logout during registration cannot
   send a stale bearer token.
 - Device tokens are not persisted by the app.
+- A received or opened push only invalidates the notification inbox and
+  unread count; the payload is never trusted for state. The inbox and count
+  are private reads in the identity-scoped portal cache (memory only, dropped
+  on any identity change, late responses for a previous identity discarded)
+  and the API is read-only (nothing is marked read in the app).
+- The app-version check (`/app-versions/check`) is public: it sends no
+  session token, a 401 never touches the session, and it fails open. Its
+  store link is opened only after the official-listing allowlist
+  (`validStoreUrl`) accepts it, re-checked at the moment of opening.
 - Expo Go is not an authoritative push environment: there,
   `src/lib/notifications.ts` never loads `expo-notifications` or reaches
   Firebase, and push degrades to "unavailable". Development and release builds

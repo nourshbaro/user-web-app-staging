@@ -46,12 +46,21 @@ update → optional update → normal app.
 - `SystemStateGate` replaces `MaintenanceGuard`.
   - v3 `MaintenanceScreen` replaces `UnderConstruction503`.
   - v3 `UpdatePromptDialog` serves both update states.
-- Update policy (`src/lib/appUpdatePolicy.ts`):
-  - optional `latest_version`;
-  - policy-only `release_notes` (the panel is omitted without them);
-  - version-free copy when no latest version exists;
-  - a whole-string store-URL allowlist. React Native's `URL` is a
-    lenient shim, so parsing with it is not trustworthy on device.
+- Update policy (`src/lib/appUpdatePolicy.ts`), now backend-authoritative
+  (`GET /app-versions/check`, integrated 2026-10-05):
+  - the backend flags decide (required wins); no client version comparison;
+  - asked once per launch with the real platform and installed version, no
+    session token; every failure fails open;
+  - the backend `message` is the "What's new" panel, one bullet per
+    sentence (`messagePoints`); no message → no panel;
+  - version-free copy when no valid latest version exists;
+  - a whole-string store-URL allowlist; an update without a valid official
+    listing is not shown. React Native's `URL` is a lenient shim, so
+    parsing with it is not trustworthy on device.
+  - During 2026-10-06 verification, staging returned a required update for
+    app version `1.1.4`, with minimum supported version `1.4.0`. This is a
+    dated backend-policy observation, not a client-hardcoded minimum.
+    Earlier Android dialog checks used a temporary local sample answer.
 - WhatsApp link: the official contact in `src/lib/contact.ts`
   (+961 70 447 888, the same number v3 uses).
 
@@ -65,12 +74,23 @@ update → optional update → normal app.
 
 **Development preview (`__DEV__` only):**
 `lfa-app:///?systemStatePreview=maintenance|updateAvailable|updateRequired|normal`.
-Production bundles cannot activate it.
+It changes only the rendered preview in development; it does not change
+the backend answer or production policy authority. Production bundles
+cannot activate it.
 
-**Missing backend authority:**
-- No version-policy endpoint and no store URLs
-  (`docs/API_INTEGRATION.md` §15).
-- In production both update states are inactive (fail open).
+**Backend update authority (integrated):**
+- `GET /app-versions/check?platform=<ios|android>&version=<installed>` uses
+  the running application's platform and Expo-config version, once per launch.
+- The check is anonymous; a 401/403 cannot invalidate authentication.
+  Backend `update_required` / `update_available` flags decide the result.
+- Required updates are blocking; optional updates are dismissible. The
+  client validates the official store listing, including when opening it.
+  Network failures, malformed answers, unusable installed versions or no
+  usable store listing fail open; web has no native update prompt.
+- Activation no longer waits for a backend contract. Each environment's
+  backend policy determines whether an update is offered or required
+  (`docs/API_INTEGRATION.md` §14); the staging observation above does not
+  establish the production environment's current policy.
 
 **Launcher icon (Design C):**
 - `app.json` uses `assets/images/app-icon-ios.png` (1024),
@@ -78,7 +98,8 @@ Production bundles cannot activate it.
   `app-icon-android-foreground.png` (adaptive, background `#E9E9EE`).
 - The old `lfa-app-icon*.png` files remain, unreferenced (legacy).
 
-**Android runtime (emulator, signed-in dev build, staging, new JS over Metro):**
+**Android runtime (2026-10-02 checkpoint; emulator, signed-in dev build,
+staging, new JS over Metro):**
 - Verified:
   - normal startup with no prompt;
   - maintenance, and Try again (busy state, real probe, recovered to
@@ -109,12 +130,13 @@ Windows path limit (CMake object paths reach 250 characters under
 | `npx expo config` | resolves the Design C icons and the adaptive icon |
 | `expo export` web / android / ios | all pass |
 
-**Not verified:**
+**Not verified at the 2026-10-02 checkpoint:**
 - the launcher icon on device;
 - iOS / iPad runtime;
 - the device reduce-motion setting (covered by source and tests);
 - a real backend 503;
-- a real store URL / release notes (no backend).
+- a real backend-supplied store URL / release notes (the version endpoint
+  had not yet been integrated at that checkpoint).
 
 ## Post-redesign corrections (product-owner review)
 
@@ -158,9 +180,9 @@ No iOS simulator exists on Windows: iOS is source / test / export verified.
   matches, ticket stubs, the 600 pt ticket, the cart card).
 
 **Blocked by backend:**
-- Required / available app update: the UI and policy are implemented,
-  but no version endpoint or store URLs exist
-  (`docs/API_INTEGRATION.md` §15). They stay inactive in production.
+- Notification read state: the inbox and unread-count APIs are read-only (no
+  mark-read mutation), so opening a notification never changes it and v3's
+  "Mark all as read" is not offered.
 - Live minutes on competition match cards: the competition-matches endpoint
   has no clock fields.
 - A direct ticket link for multi-match orders: the submit response carries
@@ -340,11 +362,16 @@ tests pass unchanged.
 - **Profile:** `/auth/me` facts; name, email and phone are read-only; the
   avatar sheet is the only mutation (`useProfilePhoto`; a result is
   published only while the session that started it is current); the menu holds
-  Change password, Settings, Legal and Contact; logout is unchanged.
+  Change password (the `/change-password` screen, v3 `chpw`), Settings, Legal
+  and Contact; logout is unchanged.
   `/edit-profile` → `/profile`.
 - **Settings:** live push permission plus "Open phone settings" (iOS /
   Android builds only; web shows "Not available" with no action); appearance;
-  language shown (English only, no Arabic option); account deletion.
+  language shown (English only, no Arabic option); account deletion in two
+  steps (v3 `settings_delete` confirmation → `/delete-account`,
+  `delete_verify`, current password; the backend contract is unchanged).
+- **Notifications:** Home bell with the backend unread count; `/notifications`
+  inbox (v3 `notifs`, read-only); match notifications open Match Details.
 - **Auth:** v3 presentation over the unchanged login / register / OTP /
   forgot-password logic; `AuthRequired` returns through
   `getSafeAuthReturnRoute`. No startup auth.
@@ -356,7 +383,13 @@ tests pass unchanged.
   - no ticket search;
   - the Payment info / PDF entry points are not shown (they were already
     unreachable, and the modules are kept);
-  - Change password stays a sheet, with no "Forgot current password" link;
+  - Change password / Delete account have no "Forgot password" link (the
+    recovery flow is signed-out only), and the change-password hint says the
+    user signs in again (production clears the session; v3 says "stay signed in");
+  - Delete account copy does not claim tickets and orders are removed (the
+    backend semantics are not established here);
+  - notification rows add a small fixture line (crests + teams) for match
+    notifications;
   - OTP is one field, not six boxes;
   - auth copy is still inline English;
   - Competitions adds a matches section (not in v3);

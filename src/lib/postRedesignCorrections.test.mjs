@@ -132,8 +132,8 @@ test("payment completion hands over the purchased match as display data only", a
 
 test("the whole ticket surface flips it; nested buttons keep their own action; state stays backend-driven", async () => {
   const screen = await read("../app/tickets.tsx");
-  assert.match(screen, /<Pressable accessible=\{false\} onPress=\{\(\) => setFlipped\(true\)\} style=\{local\.faceSurface\}>/);
-  assert.match(screen, /<Pressable accessible=\{false\} onPress=\{\(\) => setFlipped\(false\)\} style=\{local\.faceSurface\}>/);
+  assert.match(screen, /<Pressable\s+accessible=\{false\}\s+onPress=\{\(\)\s*=>\s*setFlipped\(true\)\}\s+style=\{local\.faceSurface\}\s*>/);
+  assert.match(screen, /<Pressable\s+accessible=\{false\}\s+onPress=\{\(\)\s*=>\s*setFlipped\(false\)\}\s+style=\{local\.faceSurface\}\s*>/);
   // Explicit faces, not a toggle: a web click reaching button and surface lands on the same face.
   assert.doesNotMatch(screen, /setFlipped\(\(value\) => !value\)|setFlipped\(!flipped\)/);
   // Reduced motion: no turn, no stamp / QR entrance.

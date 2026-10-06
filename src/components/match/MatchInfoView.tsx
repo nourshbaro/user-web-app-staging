@@ -1,4 +1,4 @@
-import { AppText, DirectionalChevron, SegmentedControl, StatusBadge } from "@/components/foundation";
+import { AppText, NavigationBackGlyph, SegmentedControl, StatusBadge } from "@/components/foundation";
 import { PitchArt } from "@/components/match/PitchArt";
 import { TeamCrest } from "@/components/match/TeamCrest";
 import { matchLabels } from "@/components/match/matchLabels";
@@ -110,7 +110,7 @@ export function MatchInfoView({
               style={({ pressed }) => [local.back, pressed && { opacity: 0.7 }]}
             >
               <View style={local.backCircle}>
-                <DirectionalChevron kind="back" size={18} color={theme.colors.onHero} />
+                <NavigationBackGlyph size={22} color={theme.colors.onHero} />
               </View>
             </Pressable>
             <AppText variant="overline" tone="onHeroMuted" align="center" numberOfLines={2} style={local.context}>

@@ -1,227 +1,138 @@
-import { BottomSheetModal, type BottomSheetModalHandle } from "@/components/BottomSheetModal";
-import { Button, useTheme } from "@/components/ui";
+import { AccountFormShell } from "@/components/account/AccountFormShell";
+import { PasswordField } from "@/components/account/PasswordField";
+import { AppText } from "@/components/foundation";
+import { Button } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useI18n } from "@/i18n/I18nProvider";
 import { ApiError } from "@/services/api";
-import { DirectionalChevron } from "@/components/foundation";
-import { SymbolView } from "expo-symbols";
-import { forwardRef, useCallback, useRef, useState } from "react";
-import type { RefObject } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { router } from "expo-router";
+import { useRef, useState } from "react";
+import { TextInput } from "react-native";
 
 /**
- * Change password (the one owner of this flow): validates locally, then
- * `AuthContext.changePassword`. `trigger="menu"` renders the v3 Profile menu
- * row; the default is the standalone row.
+ * Change password (LFA Screen v3 `chpw`, a pushed screen). The one owner of
+ * this flow: validates locally, then `AuthContext.changePassword` — the same
+ * endpoint, payload and session behaviour as before (on success the session
+ * is cleared and the user signs in again; `AuthContext` owns that). The v3
+ * "Forgot your current password?" link is not offered: the recovery flow
+ * lives in the signed-out `/auth` screen, which has no entry for a signed-in
+ * user.
  */
-export function ChangePassword({ trigger = "row" }: { trigger?: "row" | "menu" } = {}) {
+export function ChangePassword() {
   const auth = useAuth();
   const toast = useToast();
-  const theme = useTheme();
-  const [visible, setVisible] = useState(false);
+  const i18n = useI18n();
   const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [revealed, setRevealed] = useState({ current: false, password: false, confirmation: false });
+  // Synchronous: a second press (or Return) before the re-render never submits twice.
   const submitting = useRef(false);
-  const currentPasswordRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
   const confirmationRef = useRef<TextInput>(null);
-  const sheetRef = useRef<BottomSheetModalHandle>(null);
-  const currentPasswordWrapRef = useRef<View>(null);
-  const passwordWrapRef = useRef<View>(null);
-  const confirmationWrapRef = useRef<View>(null);
 
-  const close = (force = false) => {
-    if (submitting.current && !force) return;
-    setVisible(false);
-    setCurrentPassword("");
-    setPassword("");
-    setConfirmation("");
-    setError("");
-    setRevealed({ current: false, password: false, confirmation: false });
+  const back = () => {
+    if (submitting.current) return;
+    if (router.canGoBack()) router.back();
+    else router.replace("/profile");
   };
 
   const submit = async () => {
     if (submitting.current) return;
-    if (!currentPassword) return setError("Enter your current password.");
-    if (!password) return setError("Enter a new password.");
-    if (!confirmation) return setError("Re-enter your new password.");
-    if (confirmation !== password) return setError("Passwords do not match. Re-enter your new password.");
+    if (!currentPassword) return setError(i18n.t("changePassword.error.current"));
+    if (!password) return setError(i18n.t("changePassword.error.new"));
+    if (!confirmation) return setError(i18n.t("changePassword.error.confirm"));
+    if (confirmation !== password) return setError(i18n.t("changePassword.error.mismatch"));
 
     submitting.current = true;
     setBusy(true);
     setError("");
     try {
       const successMessage = await auth.changePassword(currentPassword, password, confirmation);
-      close(true);
       toast.showToast({
         variant: "success",
-        title: "Password changed",
-        message: successMessage || "Your password was updated successfully.",
+        title: i18n.t("changePassword.success.title"),
+        message: successMessage || i18n.t("changePassword.success.message"),
       });
     } catch (caught) {
-      setError(caught instanceof ApiError ? backendErrorMessage(caught) : "Could not change your password. Please try again.");
+      setError(caught instanceof ApiError ? backendErrorMessage(caught, i18n.t("changePassword.error.generic")) : i18n.t("changePassword.error.generic"));
     } finally {
       submitting.current = false;
       setBusy(false);
     }
   };
 
-  // The modal's child content can mount before the native modal has
-  // actually finished presenting, so `autoFocus` on the first field is
-  // unreliable — focus once `onShow` fires instead (see BottomSheetModal's
-  // `onPresented`), on the next frame so the sheet's own slide-in has a
-  // layout pass to settle first.
-  const focusInitialField = useCallback(() => {
-    requestAnimationFrame(() => currentPasswordRef.current?.focus());
-  }, []);
-
-  // TextInput.focus() fires the same native `onFocus` event a user tap
-  // would, so wiring these on each field's `onFocus` covers the initial
-  // autofocus above, the Return-key focus chain below, and a direct tap —
-  // with one mechanism instead of three.
-  const revealCurrentPassword = useCallback(() => sheetRef.current?.scrollFieldIntoView(currentPasswordWrapRef), []);
-  const revealPassword = useCallback(() => sheetRef.current?.scrollFieldIntoView(passwordWrapRef), []);
-  const revealConfirmation = useCallback(() => sheetRef.current?.scrollFieldIntoView(confirmationWrapRef), []);
+  const field = (label: string) => ({
+    revealLabel: i18n.t("changePassword.show", { field: label }),
+    concealLabel: i18n.t("changePassword.hide", { field: label }),
+  });
 
   return (
-    <>
-      {trigger === "menu" ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Change Password"
-          onPress={() => setVisible(true)}
-          style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: theme.colors.surfaceSecondary }]}
-        >
-          <View style={[styles.menuIcon, { backgroundColor: theme.colors.bgAlt }]}>
-            <SymbolView name={{ ios: "lock", android: "lock", web: "lock" }} size={17} tintColor={theme.colors.textStrong} fallback={<View />} />
-          </View>
-          <Text style={[styles.menuText, { color: theme.colors.textStrong }]}>Change password</Text>
-          <DirectionalChevron kind="forward" size={16} color={theme.colors.textMuted} />
-        </Pressable>
-      ) : (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Change Password"
-        onPress={() => setVisible(true)}
-        style={({ pressed }) => [styles.action, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, pressed && styles.pressed]}
-      >
-        <View style={[styles.actionIcon, { backgroundColor: theme.colors.panelSoft }]}>
-          <SymbolView name={{ ios: "key", android: "key", web: "key" }} size={20} tintColor={theme.colors.primary} fallback={<View />} />
-        </View>
-        <Text style={[styles.actionText, { color: theme.colors.ink }]}>Change Password</Text>
-        <DirectionalChevron kind="forward" size={22} color={theme.colors.muted} />
-      </Pressable>
-      )}
-
-      <BottomSheetModal
-        ref={sheetRef}
-        visible={visible}
-        onClose={() => close()}
-        title="Change Password"
-        closeLabel="Close change password"
-        dismissible={!busy}
-        wide
-        scrollable
-        keyboardAware
-        contentContainerStyle={styles.modalContent}
-        onPresented={focusInitialField}
-      >
-        <PasswordInput
-          ref={currentPasswordRef}
-          containerRef={currentPasswordWrapRef}
-          label="Current Password"
-          value={currentPassword}
-          visible={revealed.current}
-          editable={!busy}
-          returnKeyType="next"
-          onSubmitEditing={() => passwordRef.current?.focus()}
-          onFocus={revealCurrentPassword}
-          onToggle={() => setRevealed((value) => ({ ...value, current: !value.current }))}
-          onChangeText={(value) => { setCurrentPassword(value); setError(""); }}
+    <AccountFormShell
+      title={i18n.t("changePassword.title")}
+      backLabel={i18n.t("profile.title")}
+      onBack={back}
+      backDisabled={busy}
+      footer={
+        <Button
+          title={busy ? i18n.t("changePassword.submitting") : i18n.t("changePassword.submit")}
+          disabled={busy}
+          loading={busy}
+          onPress={() => void submit()}
         />
-        <PasswordInput
-          ref={passwordRef}
-          containerRef={passwordWrapRef}
-          label="New Password"
-          value={password}
-          visible={revealed.password}
-          editable={!busy}
-          returnKeyType="next"
-          onSubmitEditing={() => confirmationRef.current?.focus()}
-          onFocus={revealPassword}
-          onToggle={() => setRevealed((value) => ({ ...value, password: !value.password }))}
-          onChangeText={(value) => { setPassword(value); setError(""); }}
-        />
-        <PasswordInput
-          ref={confirmationRef}
-          containerRef={confirmationWrapRef}
-          label="Confirm New Password"
-          value={confirmation}
-          visible={revealed.confirmation}
-          editable={!busy}
-          returnKeyType="done"
-          onSubmitEditing={() => void submit()}
-          onFocus={revealConfirmation}
-          onToggle={() => setRevealed((value) => ({ ...value, confirmation: !value.confirmation }))}
-          onChangeText={(value) => { setConfirmation(value); setError(""); }}
-        />
-        {error ? <Text accessibilityLiveRegion="polite" style={{ color: theme.colors.danger }}>{error}</Text> : null}
-        <Button title={busy ? "Updating..." : "Update Password"} disabled={busy} onPress={() => void submit()} />
-      </BottomSheetModal>
-    </>
+      }
+    >
+      <PasswordField
+        label={i18n.t("changePassword.current")}
+        value={currentPassword}
+        editable={!busy}
+        contentType="password"
+        returnKeyType="next"
+        onSubmitEditing={() => passwordRef.current?.focus()}
+        onChangeText={(value) => { setCurrentPassword(value); setError(""); }}
+        {...field(i18n.t("changePassword.current"))}
+      />
+      <PasswordField
+        ref={passwordRef}
+        label={i18n.t("changePassword.new")}
+        value={password}
+        editable={!busy}
+        contentType="newPassword"
+        placeholder={i18n.t("changePassword.newPlaceholder")}
+        returnKeyType="next"
+        onSubmitEditing={() => confirmationRef.current?.focus()}
+        onChangeText={(value) => { setPassword(value); setError(""); }}
+        {...field(i18n.t("changePassword.new"))}
+      />
+      <PasswordField
+        ref={confirmationRef}
+        label={i18n.t("changePassword.confirm")}
+        value={confirmation}
+        editable={!busy}
+        contentType="newPassword"
+        returnKeyType="done"
+        onSubmitEditing={() => void submit()}
+        onChangeText={(value) => { setConfirmation(value); setError(""); }}
+        {...field(i18n.t("changePassword.confirm"))}
+      />
+      <AppText variant="meta" tone="muted" style={local.hint}>{i18n.t("changePassword.hint")}</AppText>
+      {error ? (
+        <AppText variant="meta" tone="danger" accessibilityRole="alert" accessibilityLiveRegion="polite" style={local.hint}>
+          {error}
+        </AppText>
+      ) : null}
+    </AccountFormShell>
   );
 }
 
-type PasswordInputProps = {
-  label: string;
-  value: string;
-  visible: boolean;
-  editable: boolean;
-  onToggle: () => void;
-  onChangeText: (value: string) => void;
-  /** Ref to the outer label+input wrapper — used for BottomSheetModal's `scrollFieldIntoView`, which needs the whole field group's position, not just the input's, so the label stays visible too. */
-  containerRef?: RefObject<View | null>;
-} & Pick<React.ComponentProps<typeof TextInput>, "returnKeyType" | "onSubmitEditing" | "onFocus">;
+const local = {
+  // v3: 13/1.4 muted, padding 0 4.
+  hint: { fontSize: 13, lineHeight: 18, paddingHorizontal: 4 },
+};
 
-const PasswordInput = forwardRef<TextInput, PasswordInputProps>(function PasswordInput(
-  { label, value, visible, editable, onToggle, onChangeText, containerRef, ...inputProps },
-  ref,
-) {
-  const theme = useTheme();
-  return (
-    <View ref={containerRef} style={styles.inputWrap}>
-      <Text style={theme.styles.label}>{label}</Text>
-      <View style={[styles.passwordField, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-        <TextInput ref={ref} {...inputProps} accessibilityLabel={label} value={value} onChangeText={onChangeText} secureTextEntry={!visible} autoCapitalize="none" autoCorrect={false} editable={editable} textContentType={label === "Current Password" ? "password" : "newPassword"} placeholderTextColor={theme.colors.muted} style={[styles.passwordInput, { color: theme.colors.ink }]} />
-        <Pressable accessibilityRole="button" accessibilityLabel={`${visible ? "Hide" : "Show"} ${label}`} disabled={!editable} onPress={onToggle} hitSlop={8} style={styles.visibilityButton}>
-          <SymbolView name={{ ios: visible ? "eye.slash" : "eye", android: visible ? "visibility_off" : "visibility", web: visible ? "visibility_off" : "visibility" }} size={20} tintColor={theme.colors.muted} fallback={<View />} />
-        </Pressable>
-      </View>
-    </View>
-  );
-});
-
-const styles = StyleSheet.create({
-  action: { borderRadius: 18, borderWidth: 1, overflow: "hidden", minHeight: 68, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 12 },
-  actionIcon: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  actionText: { flex: 1, fontSize: 16, fontWeight: "800" },
-  modalContent: { gap: 14, paddingTop: 16, paddingBottom: 8 },
-  inputWrap: { gap: 6 },
-  passwordField: { minHeight: 46, borderRadius: 14, borderWidth: 1, flexDirection: "row", alignItems: "center" },
-  passwordInput: { flex: 1, minHeight: 46, paddingStart: 12, fontSize: 15 },
-  visibilityButton: { width: 46, minHeight: 46, alignItems: "center", justifyContent: "center" },
-  pressed: { opacity: 0.7 },
-  // v3 Profile menu row: 30pt tile, 16pt label, chevron.
-  menuRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 12 },
-  menuIcon: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center" },
-  menuText: { flex: 1, fontSize: 16 },
-});
-
-function backendErrorMessage(error: ApiError) {
+function backendErrorMessage(error: ApiError, fallback: string) {
   const message = error.body?.message;
   if (typeof message === "string" && message.trim()) return message;
   const validationErrors = error.body?.errors;
@@ -237,5 +148,5 @@ function backendErrorMessage(error: ApiError) {
   const backendError = error.body?.error;
   if (typeof backendError === "string" && backendError.trim()) return backendError;
   // Never the transport text ("Request failed with 500").
-  return "Could not change your password. Please try again.";
+  return fallback;
 }

@@ -1,8 +1,9 @@
 import { useI18n } from "@/i18n/I18nProvider";
-import { directionalChevron, PHYSICAL_LAYOUT_STYLE } from "@/i18n/direction";
+import { directionalChevron, navigationBackGlyph, PHYSICAL_LAYOUT_STYLE } from "@/i18n/direction";
+import { headerPlatform } from "@/lib/flowHeaderPresentation";
 import { SymbolView } from "expo-symbols";
 import type { PropsWithChildren } from "react";
-import { Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { Platform, Text, View, type StyleProp, type ViewStyle } from "react-native";
 
 /**
  * Container for real-world geometry that must never mirror in RTL:
@@ -33,6 +34,28 @@ export function DirectionalChevron({
       fallback={
         <Text accessible={false} style={{ color, fontSize: size }}>
           {pointsRight ? "›" : "‹"}
+        </Text>
+      }
+    />
+  );
+}
+
+/**
+ * The platform navigation back glyph (LFA Screen v3 `I.back`): a chevron on
+ * iOS and web, the Material arrow on Android; mirrored in RTL. Decorative —
+ * the pressable around it carries the accessible label.
+ */
+export function NavigationBackGlyph({ size = 24, color }: { size?: number; color: string }) {
+  const { isRTL } = useI18n();
+  return (
+    <SymbolView
+      accessible={false}
+      name={navigationBackGlyph(headerPlatform(Platform.OS), isRTL) as never}
+      size={size}
+      tintColor={color}
+      fallback={
+        <Text accessible={false} style={{ color, fontSize: size }}>
+          {isRTL ? "›" : "‹"}
         </Text>
       }
     />

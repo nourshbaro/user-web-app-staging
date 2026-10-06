@@ -257,6 +257,8 @@ match ids) in the submit / BLUE return response.
 | `GET /portal/orders/{orderNumber}` | Payment details; `ORD-` prefix stripped by the caller |
 | `GET /portal/orders/{orderId}/pdf` | Binary; `Accept: application/pdf,…` |
 | `GET /portal/orders` | Defined, **not called** by any screen |
+| `GET /portal/notifications` | `notificationInboxService.list` (`src/services/notificationInbox.ts`); see §14 |
+| `GET /portal/notifications/unread-count` | `notificationInboxService.unreadCount`; the Home bell number |
 
 Screens read `/portal/matches` and `/portal/tickets?match_id=` through
 `portalReads` (`src/services/cachedReads.ts`): a short-lived, memory-only,
@@ -267,6 +269,7 @@ per-ticket QR fallback, orders and PDF are not cached.
 | Method & path | Owner | Notes |
 | ------------- | ----- | ----- |
 | `POST /devices` | `registerAnonymousDevice` / `registerAuthenticatedDevice` | `{ token, platform: "android" \| "ios" }` |
+| `GET /app-versions/check?platform=&version=` | `loadAppVersionCheck` | Public, no token, once per launch; see §14 |
 | `GET /ads?placement=app_banner` | `adsService` | Items filtered field-by-field; invalid items dropped; read cache (§13) |
 | `GET /legal/privacy-policy`, `GET /legal/terms-of-use` | `legalService` | String or object with content key; HTML stripped to text |
 
@@ -432,8 +435,9 @@ pull-to-refresh and explicit Retry are always forced; focus / foreground
 re-reads respect freshness. Invalidation: a successful checkout and
 unknown-payment recovery (`/tickets?refresh=payment`) drop portal reads; an
 accepted live-state change drops the other match lists, the affected match
-details and competition matches / standings, and mounted owners re-read; an
-identity change drops portal reads.
+details and competition matches / standings, and mounted owners re-read; a
+push received or opened drops the notification inbox and unread count; an
+identity change drops portal and notification reads.
 
 Current policy (tuning, not a contract — change it in the owning module):
 
@@ -445,11 +449,13 @@ Current policy (tuning, not a contract — change it in the owning module):
 | Match filter options | 30 min | 2 h | `MATCH_POLICIES` |
 | Competition list / standings / matches | 30 min / 5 min / 2 min | 2 h / 30 min / 15 min | `COMPETITION_POLICIES` (`cachedReads.ts`) |
 | Portal matches / tickets (per user) | 30 s / 60 s | 10 min | `PORTAL_POLICIES` (`cachedReads.ts`) |
+| Notification inbox / unread count (per user) | 30 s / 30 s | 10 min / 5 min | `NOTIFICATION_POLICIES` (`cachedReads.ts`) |
 | Ads banner | 10 min | 1 h | `APP_BANNER_POLICY` (`ads.ts`) |
 
 Not cached: `/cart*`, `/checkout/mobile/submit`, the CyberSource capture
 context, BLUE, `/auth/*` (including `/auth/me`), `/devices`, legal documents,
-`/portal/tickets/{code}`, `/portal/orders*`.
+`/portal/tickets/{code}`, `/portal/orders*`. `/app-versions/check` is not in the
+read cache either: it is asked once per launch (memoized in `appUpdate.ts`).
 
 ---
 
@@ -470,23 +476,54 @@ context, BLUE, `/auth/*` (including `/auth/me`), `/devices`, legal documents,
   unconfirmed. Whether the backend accepts a card submit while a BLUE order
   is pending, and what happens if that BLUE order is approved after a card
   success, is backend-owned and unverified from the client.
-- **App version authority (none exists).** No endpoint returns a minimum
-  supported or latest app version, and no store URLs are configured
-  (searched this app, the admin dashboard and the sibling apps; probed
-  version / config paths on staging → 404).
-  - **What is built:** the v3 required / available update UI and the client
-    policy (`src/lib/appUpdatePolicy.ts`, `docs/ARCHITECTURE.md` §13).
-  - **What is not built:** `loadAppUpdatePolicy` (`src/services/appUpdate.ts`)
-    returns `null`, so in production neither state can appear (fail open).
-  - **Needed contract:** an unauthenticated endpoint the app reads at
-    startup, shaped
-    `{ android: { minimum_version, latest_version?, store_url, release_notes? }, ios: { … } }`.
-    - `store_url` must be this app's official listing:
-      `https://play.google.com/store/apps/details?id=com.lfaticketing.app`,
-      or `https://apps.apple.com/[cc/]app/[name/]id<digits>`.
-    - `release_notes` is an array of short strings.
-  - **To activate it:** fetch the endpoint through `apiRequest` inside
-    `loadAppUpdatePolicy` and pass the payload to `platformUpdatePolicy`.
+- **App version check (integrated; verified on staging 2026-10-05).**
+  `GET /app-versions/check?platform=android|ios&version=<installed>` →
+  `{ data: { update_required, update_available, latest_version,
+  min_supported_version, store_url, message } }`.
+  - **Staging observation (2026-10-06 verification):** app version `1.1.4`
+    received a required update with minimum supported version `1.4.0`.
+    This is the backend policy observed on that date, not a permanent
+    requirement or a version hardcoded by the client.
+  - **Client:** `loadAppVersionCheck` (`src/services/appUpdate.ts`), once
+    per launch, using `Platform.OS` and `Constants.expoConfig.version` from
+    the running app (the binary's Expo config in a store build, the dev
+    server manifest in a development client). The request uses
+    `overrideAuthorizationToken: null` and `skipUnauthenticatedNotify: true`:
+    no session token is sent and a 401/403 cannot invalidate authentication.
+    `parseAppVersionCheck` / `decideUpdate`
+    (`src/lib/appUpdatePolicy.ts`, `docs/ARCHITECTURE.md` §13). The backend
+    flags decide; the app does not compare versions itself. Required wins if
+    both flags are true. System-state priority is maintenance, required
+    update, optional update, then normal app. Required updates block without
+    dismissal; optional updates can be dismissed with "Not now" or Back.
+  - **Validation (fail open):** both flags must be booleans; version fields
+    must be dotted numbers (otherwise ignored); `store_url` must be this
+    app's official listing —
+    `https://play.google.com/store/apps/details?id=com.lfaticketing.app`
+    exactly, or `https://apps.apple.com/[cc/]app/[name/]id<digits>`. An
+    update without such a listing is not shown (the user could not update).
+    Network failures, malformed answers and unusable installed versions
+    fail open; web does not request a native version check. Store URLs are
+    validated again by the client when the user opens the store.
+  - **`message` contract assumption:** plain text; each sentence ending in
+    "." is one bullet. A period ends a point only when followed by whitespace
+    or the end of the text, so versions (`2.5.0`), domains and decimals stay
+    whole; an abbreviation followed by a space (`e.g. x`) would split. Empty
+    and punctuation-only segments are dropped; at most 12 points. Never
+    rendered as HTML.
+- **Notifications inbox (integrated; read-only).**
+  `GET /portal/notifications` → `{ data: [{ id, title, body, data,
+  target_type, match, sent_at, is_unread }] }` and
+  `GET /portal/notifications/unread-count` → `{ unread_count }` (both
+  authenticated; 200 on staging for a signed-in account, 2026-10-05).
+  - `match` (nullable): `id`, `match_date`, `kickoff_at`, `status`,
+    scores, clock, `home_team` / `away_team` {`id`, `name`, `short_name`,
+    `logo`}; every field may be null. `data` is not used.
+  - Only `target_type === "match"` with a numeric `match.id` opens Match
+    Details. Unread treatment is `is_unread === true` only.
+  - **Backend gap: no mark-read mutation.** Opening a notification does not
+    change `is_unread`, and the count never drops in the app; v3's "Mark
+    all as read" is not offered until such an API exists.
 - Ticket `qr_image` representation. Only raster base64 data URIs are
   established (this repo's fixtures, and the LFA web client's allowlist for
   the same API). Whether production ever sends an http(s) URL, a storage path

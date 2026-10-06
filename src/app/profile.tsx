@@ -1,5 +1,4 @@
 import { AuthRequired } from "@/components/AuthRequired";
-import { ChangePassword } from "@/components/ChangePassword";
 import { ProfilePhotoSheet } from "@/components/ProfilePhotoSheet";
 import { TabHeader } from "@/components/TabHeader";
 import { AppText, DirectionalChevron } from "@/components/foundation";
@@ -156,7 +155,7 @@ function ProfileScreen() {
           <AppText variant="caption" tone="muted" style={local.note}>{i18n.t("profile.readOnly")}</AppText>
 
           <Card>
-            <ChangePassword trigger="menu" />
+            <MenuRow icon={{ ios: "lock", android: "lock", web: "lock" }} label={i18n.t("changePassword.title")} href="/change-password" first />
             <MenuRow icon={{ ios: "gearshape", android: "settings", web: "settings" }} label={i18n.t("profile.menu.settings")} href="/settings" />
             <MenuRow icon={{ ios: "doc.text", android: "description", web: "description" }} label={i18n.t("profile.menu.legal")} href="/legal" />
             <MenuRow icon={{ ios: "message", android: "chat", web: "chat" }} label={i18n.t("profile.menu.contact")} href="/contact" />

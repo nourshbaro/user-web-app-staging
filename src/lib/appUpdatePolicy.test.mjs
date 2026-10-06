@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import {
-  compareAppVersions,
   decideUpdate,
+  messagePoints,
   parseAppVersion,
-  parseReleaseNotes,
-  platformUpdatePolicy,
+  parseAppVersionCheck,
   systemState,
+  updateDismissKey,
   updatePromptCopy,
   validStoreUrl,
 } from "./appUpdatePolicy.ts";
@@ -19,17 +19,11 @@ import {
 
 const PLAY = "https://play.google.com/store/apps/details?id=com.lfaticketing.app";
 const APP_STORE = "https://apps.apple.com/lb/app/lfa-tickets/id1234567890";
-const policy = (minimumVersion, latestVersion, storeUrl = PLAY, releaseNotes = []) => ({ minimumVersion, latestVersion, storeUrl, releaseNotes });
-const decide = (installedVersion, p, platform = "android") => decideUpdate({ platform, installedVersion, policy: p }).kind;
+/** A backend `/app-versions/check` body. */
+const answer = (data) => ({ data: { update_required: false, update_available: false, latest_version: null, min_supported_version: null, store_url: null, message: null, ...data } });
+const decide = (raw, platform = "android") => decideUpdate({ platform, check: parseAppVersionCheck(raw, platform) });
 
-/* Version comparison --------------------------------------------------------- */
-
-test("versions compare numerically, never lexically", () => {
-  assert.equal(compareAppVersions(parseAppVersion("1.10.0"), parseAppVersion("1.9.0")), 1);
-  assert.equal(compareAppVersions(parseAppVersion("1.9.0"), parseAppVersion("1.10.0")), -1);
-  assert.equal(compareAppVersions(parseAppVersion("2.0"), parseAppVersion("2.0.0")), 0);
-  assert.equal(compareAppVersions(parseAppVersion("1.1.4"), parseAppVersion("1.1.10")), -1);
-});
+/* Versions --------------------------------------------------------------------- */
 
 test("only dotted numeric versions parse", () => {
   assert.deepEqual(parseAppVersion(" 1.1.4 "), [1, 1, 4]);
@@ -38,79 +32,118 @@ test("only dotted numeric versions parse", () => {
   }
 });
 
-/* Update decision -------------------------------------------------------------- */
+/* Backend answer → decision (the backend is the authority) ---------------------- */
 
-test("installed below minimum → required; at minimum → not required", () => {
-  assert.equal(decide("1.1.3", policy("1.1.4", "1.2.0")), "required");
-  assert.equal(decide("1.1.4", policy("1.1.4", "1.2.0")), "available");
+test("the staging 'nothing to do' answer is no update", () => {
+  assert.deepEqual(decide(answer({})), { kind: "none" });
+  assert.deepEqual(parseAppVersionCheck(answer({}), "android"), {
+    updateRequired: false, updateAvailable: false, latestVersion: null, minSupportedVersion: null, storeUrl: null, message: null,
+  });
 });
 
-test("between minimum and latest → available; at or above latest → none", () => {
-  assert.equal(decide("1.1.9", policy("1.1.4", "1.10.0")), "available", "1.1.9 < 1.10.0 numerically");
-  assert.equal(decide("1.10.0", policy("1.1.4", "1.10.0")), "none");
-  assert.equal(decide("2.0.0", policy("1.1.4", "1.10.0")), "none");
+test("update_required → a blocking required update with the backend's store listing, version and message", () => {
+  const decision = decide(answer({ update_required: true, latest_version: "2.0.0", min_supported_version: "1.5.0", store_url: PLAY, message: "Security fixes. New checkout." }));
+  assert.deepEqual(decision, { kind: "required", storeUrl: PLAY, latestVersion: "2.0.0", releaseNotes: ["Security fixes.", "New checkout."] });
 });
 
-test("without a latest version a required update still applies, an optional one never does", () => {
-  assert.equal(decide("1.0.0", policy("1.1.4", null)), "required");
-  assert.equal(decide("1.1.4", policy("1.1.4", null)), "none");
-  const required = decideUpdate({ platform: "android", installedVersion: "1.0.0", policy: policy("1.1.4", null, PLAY, ["Faster checkout"]) });
-  assert.deepEqual(required, { kind: "required", storeUrl: PLAY, latestVersion: null, releaseNotes: ["Faster checkout"] });
+test("update_available → an optional update", () => {
+  assert.equal(decide(answer({ update_available: true, latest_version: "1.2.0", store_url: PLAY })).kind, "available");
 });
 
-test("a malformed installed version, or no policy, never blocks anyone", () => {
-  assert.equal(decide("not-a-version", policy("9.0.0", "9.0.0")), "none");
-  assert.equal(decide(null, policy("9.0.0", "9.0.0")), "none");
-  assert.equal(decide("1.0.0", null), "none");
+test("required wins if the backend ever sets both flags", () => {
+  assert.equal(decide(answer({ update_required: true, update_available: true, store_url: PLAY })).kind, "required");
+});
+
+test("no version comparison of its own: the backend flags decide, whatever the versions say", () => {
+  // The backend says nothing is needed even though min_supported is above any installed version: trusted.
+  assert.equal(decide(answer({ min_supported_version: "99.0.0", latest_version: "99.0.0", store_url: PLAY })).kind, "none");
+});
+
+test("fail open: a malformed answer never blocks or prompts", () => {
+  const malformed = [
+    null, undefined, "ok", [], {}, { data: null }, { data: [] },
+    answer({ update_required: "true", store_url: PLAY }),
+    answer({ update_available: 1, store_url: PLAY }),
+    { data: { store_url: PLAY } },
+  ];
+  for (const raw of malformed) {
+    assert.equal(parseAppVersionCheck(raw, "android"), null, JSON.stringify(raw));
+    assert.deepEqual(decide(raw), { kind: "none" }, JSON.stringify(raw));
+  }
+});
+
+test("fail open: a required or available update without the official store listing is not shown", () => {
+  for (const store of [null, "", "https://evil.example/app", APP_STORE, `${PLAY}&hl=en`, "http://play.google.com/store/apps/details?id=com.lfaticketing.app"]) {
+    assert.deepEqual(decide(answer({ update_required: true, store_url: store })), { kind: "none" }, String(store));
+    assert.deepEqual(decide(answer({ update_available: true, store_url: store })), { kind: "none" }, String(store));
+  }
+  assert.equal(decide(answer({ update_required: true, store_url: APP_STORE }), "ios").kind, "required");
 });
 
 test("web never receives a native update state", () => {
-  assert.equal(decide("0.0.1", policy("9.0.0", "9.0.0"), "web"), "none");
-  assert.equal(platformUpdatePolicy({ web: { minimum_version: "9", latest_version: "9", store_url: PLAY } }, "web"), null);
+  assert.equal(parseAppVersionCheck(answer({ update_required: true, store_url: PLAY }), "web"), null);
+  const check = { updateRequired: true, updateAvailable: false, latestVersion: null, minSupportedVersion: null, storeUrl: PLAY, message: null };
+  assert.deepEqual(decideUpdate({ platform: "web", check }), { kind: "none" });
 });
 
-/* Backend policy -------------------------------------------------------------- */
-
-const payload = {
-  android: { minimum_version: "1.1.0", latest_version: "1.2.0", store_url: PLAY },
-  ios: { minimum_version: "1.0.5", latest_version: "1.3.0", store_url: APP_STORE, release_notes: ["Ticket status on every ticket"] },
-};
-
-test("each platform reads only its own policy", () => {
-  assert.deepEqual(platformUpdatePolicy(payload, "android"), { minimumVersion: "1.1.0", latestVersion: "1.2.0", storeUrl: PLAY, releaseNotes: [] });
-  assert.deepEqual(platformUpdatePolicy(payload, "ios"), { minimumVersion: "1.0.5", latestVersion: "1.3.0", storeUrl: APP_STORE, releaseNotes: ["Ticket status on every ticket"] });
+test("unusable version fields are dropped, not trusted; the update itself still applies", () => {
+  const check = parseAppVersionCheck(answer({ update_required: true, latest_version: "soon", min_supported_version: "v2", store_url: PLAY }), "android");
+  assert.equal(check.latestVersion, null);
+  assert.equal(check.minSupportedVersion, null);
+  assert.deepEqual(decideUpdate({ platform: "android", check }), { kind: "required", storeUrl: PLAY, latestVersion: null, releaseNotes: [] });
 });
 
-test("latest version is optional, but a present one must be valid and not below minimum", () => {
-  assert.deepEqual(
-    platformUpdatePolicy({ android: { minimum_version: "1.1.0", store_url: PLAY } }, "android"),
-    { minimumVersion: "1.1.0", latestVersion: null, storeUrl: PLAY, releaseNotes: [] },
-  );
-  assert.equal(platformUpdatePolicy({ android: { ...payload.android, latest_version: "soon" } }, "android"), null);
-});
-
-test("a missing or malformed policy is ignored (fail open), never a block", () => {
-  for (const raw of [null, undefined, "x", {}, { android: null }, { android: { minimum_version: "1.0" } }]) {
-    assert.equal(platformUpdatePolicy(raw, "android"), null, JSON.stringify(raw));
+test("a non-string or blank message is no message (no 'What's new' panel)", () => {
+  for (const message of [null, 42, { a: 1 }, ["x"], "   "]) {
+    assert.deepEqual(decide(answer({ update_required: true, store_url: PLAY, message })).releaseNotes, [], JSON.stringify(message));
   }
-  // Bad versions, a store URL that is not this app's listing, or latest below minimum.
-  assert.equal(platformUpdatePolicy({ android: { ...payload.android, minimum_version: "latest" } }, "android"), null);
-  assert.equal(platformUpdatePolicy({ android: { ...payload.android, store_url: "https://evil.example/app" } }, "android"), null);
-  assert.equal(platformUpdatePolicy({ android: { ...payload.android, minimum_version: "2.0.0", latest_version: "1.0.0" } }, "android"), null);
-  // The iOS listing is never accepted for Android and vice versa.
-  assert.equal(platformUpdatePolicy({ android: { ...payload.android, store_url: APP_STORE } }, "android"), null);
-  assert.equal(platformUpdatePolicy({ ios: { ...payload.ios, store_url: PLAY } }, "ios"), null);
 });
 
-/* Release notes ------------------------------------------------------------------- */
+/* Backend message → bullet points ---------------------------------------------- */
 
-test("release notes come only from the policy: trimmed strings, bounded, malformed entries dropped", () => {
-  assert.deepEqual(parseReleaseNotes(undefined), []);
-  assert.deepEqual(parseReleaseNotes("Faster"), []);
-  assert.deepEqual(parseReleaseNotes([" Faster seat selection ", "", 7, null, "x".repeat(161), "Bug fixes"]), ["Faster seat selection", "Bug fixes"]);
-  assert.equal(parseReleaseNotes(Array.from({ length: 10 }, (_, i) => `Note ${i}`)).length, 6);
-  // Malformed notes never invalidate the version policy.
-  assert.deepEqual(platformUpdatePolicy({ android: { ...payload.android, release_notes: { a: 1 } } }, "android")?.releaseNotes, []);
+test("each sentence ending in '.' is one point, punctuation kept", () => {
+  assert.deepEqual(messagePoints("changing ui. new updates. notification implementation."), ["changing ui.", "new updates.", "notification implementation."]);
+});
+
+test("trimmed; empty, repeated and punctuation-only separators never make empty bullets", () => {
+  assert.deepEqual(messagePoints("  first.   second.  "), ["first.", "second."]);
+  assert.deepEqual(messagePoints("first.. second. . . third"), ["first..", "second.", "third"]);
+  assert.deepEqual(messagePoints(". . ."), []);
+  assert.deepEqual(messagePoints("..."), []);
+  assert.deepEqual(messagePoints(""), []);
+  assert.deepEqual(messagePoints("no period at all"), ["no period at all"]);
+});
+
+test("periods inside versions, domains and decimals do not split a point", () => {
+  assert.deepEqual(messagePoints("Update to 2.5.0 now. Visit lfa-ticketing.com for help. Fees drop 1.5%."), [
+    "Update to 2.5.0 now.",
+    "Visit lfa-ticketing.com for help.",
+    "Fees drop 1.5%.",
+  ]);
+});
+
+test("line breaks act as whitespace after a period and collapse inside a point", () => {
+  assert.deepEqual(messagePoints("Faster seats.\nNew\n  checkout.\r\nBug fixes."), ["Faster seats.", "New checkout.", "Bug fixes."]);
+});
+
+test("plain text only: markup is kept as text, never interpreted", () => {
+  assert.deepEqual(messagePoints("<b>Bold</b> claim. Next."), ["<b>Bold</b> claim.", "Next."]);
+});
+
+test("bounded to 12 points", () => {
+  assert.equal(messagePoints(Array.from({ length: 20 }, (_, i) => `Point ${i}.`).join(" ")).length, 12);
+});
+
+/* Dismissal ---------------------------------------------------------------------- */
+
+test("the optional prompt dismissal is scoped to the offered version (or the unversioned offer)", () => {
+  assert.equal(updateDismissKey({ kind: "available", storeUrl: PLAY, latestVersion: "1.2.0", releaseNotes: [] }), "1.2.0");
+  assert.equal(updateDismissKey({ kind: "available", storeUrl: PLAY, latestVersion: null, releaseNotes: [] }), "");
+  assert.equal(updateDismissKey({ kind: "required", storeUrl: PLAY, latestVersion: "1.2.0", releaseNotes: [] }), null);
+  assert.equal(updateDismissKey({ kind: "none" }), null);
+  const unversioned = { kind: "available", storeUrl: PLAY, latestVersion: null, releaseNotes: [] };
+  assert.equal(systemState({ update: unversioned, maintenance: false, dismissedLatestVersion: null }), "updateAvailable");
+  assert.equal(systemState({ update: unversioned, maintenance: false, dismissedLatestVersion: "" }), "app");
 });
 
 /* Prompt copy --------------------------------------------------------------------- */

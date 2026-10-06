@@ -842,6 +842,8 @@ export default function MatchDetail() {
             subtitle={i18n.t("seats.picker.subtitle", { home: labels.home, away: labels.away })}
             backLabel={i18n.t("flow.match")}
             onBack={() => setSeatPickerOpen(false)}
+            // v3 seats: Android shows a plain 20pt title over the fixture.
+            androidTitle="plain"
           />
         </View>
         <ScrollView

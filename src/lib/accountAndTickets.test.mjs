@@ -143,7 +143,7 @@ test("QR recovery stops for a superseded view and a failed detail request surfac
 
 test("the ticket screen recovers QRs through the shared rule and never generates one", async () => {
   const screen = await read("../app/tickets.tsx");
-  assert.match(screen, /withBackendQrs\(result\.items, \(code\) => profileService\.ticket\(code\), current\)/);
+  assert.match(screen, /withBackendQrs\(\s*result\.items\s*,\s*\(code\)\s*=>\s*profileService\.ticket\(code\)\s*,\s*current\s*,?\s*\)/);
   assert.doesNotMatch(screen, /\.\.\.\(await profileService\.ticket/, "the detail response is not spread over the listed ticket");
   assert.doesNotMatch(screen, /from "[^"]*qr[^"]*"|new QRCode|generateQr|toDataURL|qr_image: ticket\.ticket_code/i);
 });

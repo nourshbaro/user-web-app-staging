@@ -166,8 +166,10 @@ unbranded copy, "View my ticket", no Login / Register OTP, skeleton geometry.
 Android emulator is the primary runtime target from here on; web is
 secondary. The v3 system states are implemented: maintenance with real
 "Try again" recovery, and the required / available update UI and policy.
-Activating updates in production is blocked on a backend version contract
-(`docs/API_INTEGRATION.md` §15).
+The real `GET /app-versions/check` contract is integrated; update prompts
+follow the backend's required / available flags for the running platform
+and installed version (`docs/API_INTEGRATION.md` §14). Activation no longer
+waits for a backend contract; each environment's backend policy controls it.
 
 ### Beyond the redesign (not started)
 

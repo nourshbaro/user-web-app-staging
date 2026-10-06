@@ -1,23 +1,24 @@
 import { decideUpdate, type UpdateDecision } from "@/lib/appUpdatePolicy";
-import { currentAppPlatform, installedAppVersion, loadAppUpdatePolicy } from "@/services/appUpdate";
+import { currentAppPlatform, loadAppVersionCheck } from "@/services/appUpdate";
 import { useEffect, useState } from "react";
 
 const NO_UPDATE: UpdateDecision = { kind: "none" };
 
 /**
- * The update decision for this launch: the backend policy (read once at
- * startup) against the installed version. Fails open: no policy, a failed
- * read or a malformed version → no update state.
+ * The update decision for this launch: the backend's answer for this platform
+ * and installed version, read once at startup (`loadAppVersionCheck`). Fails
+ * open: no answer, a failed or malformed read, or no official store listing
+ * → no update state.
  */
 export function useAppUpdateDecision(): UpdateDecision {
   const [decision, setDecision] = useState<UpdateDecision>(NO_UPDATE);
 
   useEffect(() => {
     let active = true;
-    loadAppUpdatePolicy()
-      .then((policy) => {
+    loadAppVersionCheck()
+      .then((check) => {
         if (!active) return;
-        setDecision(decideUpdate({ platform: currentAppPlatform(), installedVersion: installedAppVersion(), policy }));
+        setDecision(decideUpdate({ platform: currentAppPlatform(), check }));
       })
       .catch(() => {});
     return () => {
