@@ -69,7 +69,7 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
       }
       client = createdClient;
 
-      const createdCheckout = await createdClient.createCheckout({ autoProcessing: false });
+      const createdCheckout = await createdClient.createCheckout({ autoProcessing: true });
       if (!active) {
         createdCheckout.destroy();
         return;
