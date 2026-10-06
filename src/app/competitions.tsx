@@ -192,6 +192,11 @@ export default function CompetitionsScreen() {
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
+                showsVerticalScrollIndicator={false}
+                // vertical={false}
+                directionalLockEnabled
+                alwaysBounceVertical={false}
+                bounces={false}
                 contentContainerStyle={local.cardsRow}
                 accessibilityRole="radiogroup"
                 accessibilityLabel={i18n.t("competitions.pick.a11y")}
@@ -421,7 +426,7 @@ const local = {
   content: { gap: spacing.lg, paddingBottom: spacing.xxxl, paddingTop: spacing.sm },
   // The horizontal ScrollView clips its content: the vertical padding is the
   // card shadow's room (`shadowCard`: 6pt offset, 20pt blur), offset by margins.
-  cardsRow: { flexDirection: "row" as const, gap: 10, paddingVertical: 14, paddingHorizontal: spacing.xs, marginVertical: -10, marginHorizontal: -spacing.xs },
+  cardsRow: { flexDirection: "row" as const, gap: 10, paddingVertical: 14, paddingHorizontal: spacing.xs, marginVertical: 0, marginHorizontal: spacing.xs },
   knockout: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.sm, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
   knockoutText: { flex: 1 },
   // v3: 124pt card, padding 12, radius 16.
