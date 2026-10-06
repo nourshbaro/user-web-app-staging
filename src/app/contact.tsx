@@ -43,7 +43,7 @@ export default function ContactScreen() {
 
   return (
     <SubpageShell title={i18n.t("contact.title")} backLabel={i18n.t("profile.title")} fallback="/profile">
-      <AppText variant="body" tone="muted" style={local.intro}>{i18n.t("contact.intro")}</AppText>
+      {/* <AppText variant="body" tone="muted" style={local.intro}>{i18n.t("contact.intro")}</AppText> */}
       <View style={[local.card, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}>
         {OFFICIAL_CONTACTS.map((contact, index) => {
           const brand = "brand" in contact ? contact.brand : null;
