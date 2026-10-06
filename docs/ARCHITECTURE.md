@@ -922,9 +922,22 @@ entry is always CyberSource's own form.
   `DELETE /auth/account { password }`, then session cleanup). Nothing is sent
   without a password, a second press never sends twice, and the screen cannot
   be left while the request is in flight.
-- **Auth** (`/auth`): v3 presentation over the production flows: login
-  (+ phone completion), register, forgot password → email → OTP → new
-  password. Login and Register have **no OTP step of their own**
+- **Auth** (`/auth`): v3 presentation over the production flows. Sign in
+  with email **or** phone (v3 toggle; `LoginIdentifier`), with phone
+  completion after an email sign-in that answers `phone_required`; register
+  with an optional email; password recovery owned by
+  `src/lib/passwordRecovery.ts` (`recoveryReducer` + attempt counter, held by
+  the screen):
+  - email → code → new password → Sign in;
+  - phone without an email (`reason: "email_required"`) → add email
+    (`/auth/forgot-password/add-email`) → code → new password → Sign in;
+  - phone whose account has an email: the backend's generic message, no
+    advance (verify / reset accept only `email`; pending backend contract,
+    `docs/API_INTEGRATION.md` §5.3).
+  Code steps use `OtpCodeInput` (`src/components/account/`): six cells over
+  one numeric value and one native input (paste, OS one-time-code
+  autofill), never mirrored; resend is a real request with no countdown.
+  Copy is in the `auth.*` catalog keys. Login and Register have **no OTP step of their own**
   (`credentialOutcome`, `src/lib/authCredentialOutcome.ts`): a token → signed
   in; an account id without a token → the backend's verification code
   (`verify-otp`); neither → sign in. The former client-side email

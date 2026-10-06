@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-10-02 · System states (maintenance / update) + Design C launcher icon (implementation checkpoint, uncommitted on `15eb650`)
+**As of:** 2026-10-06 · Authentication & Recovery batch (Codex: PASS WITH FINDINGS, finding fixed; uncommitted on `7952b77`)
 
 ---
 
@@ -32,7 +32,105 @@
 - ✅ Post-redesign corrections committed (`15eb650`).
 - ✅ **System states + Design C icon: implemented, pending review.**
   Uncommitted on `15eb650`.
-- ▶ **Next:** Codex review; the backend dependencies below.
+- ✅ **Authentication & Recovery: implemented, Codex-reviewed (PASS WITH
+  FINDINGS; the MEDIUM finding fixed).** Uncommitted on `7952b77`.
+- ▶ **Next:** commit approval; the backend dependencies below.
+
+## Authentication & Recovery (2026-10-06)
+
+Design: LFA Screen v3 `login`, `register`, `forgot`, `forgot_email`,
+`forgot_otp`, `forgot_new` (read live). Contracts: `docs/API_INTEGRATION.md`
+§5.1–§5.2; security: `docs/SECURITY.md` §2.2a, §3.18–§3.19.
+
+**Implemented:**
+- Sign in with **email or phone** (v3 Email | Phone number toggle); the phone
+  is the shared international-phone value sent as digits only
+  (`96171123456`).
+- Registration with an **optional email** (omitted when empty, validated
+  when given); a valid phone required.
+- **Nullable user email** (`email: null` for phone-only accounts) accepted by
+  `/auth/me` validation, the persisted-user decoder and checkout's billing
+  read.
+- Password recovery entry by **email or phone**; a phone account without an
+  email follows `email_required` → **add email** (`/auth/forgot-password/add-email`)
+  → code → new password → Sign in.
+- One recovery owner (`src/lib/passwordRecovery.ts`) with **stale-attempt
+  protection** (identifier / method changes, Back, cancel, completion).
+- **Synchronous submission guard** shared by recovery submit and "Resend
+  code" (the Codex MEDIUM finding: a resend could overlap a verify; fixed,
+  with regression coverage).
+- Auth copy moved to the i18n catalog (`auth.*` keys).
+
+**Recovery requirement correction (2026-10-06, after Codex):**
+- The required product flow (phone with an email → OTP without typing the
+  email; unavailable email → backend message → "Try phone number") is
+  **not supported by the staging contract** (re-probed:
+  verify / reset still require `email`; unknown emails still get the generic
+  answer). It is recorded as a pending backend dependency with an exact
+  change request in `docs/API_INTEGRATION.md` §5.3; no workaround was built.
+- Removed the superseded fallback that told a phone user to switch to Email
+  and type the account's address: the phone-with-email answer now shows the
+  backend's own message and does not advance.
+- v3 six-cell OTP (`src/components/account/OtpCodeInput.tsx`) on both code
+  steps: one numeric six-digit value, one native input (paste, iOS
+  `oneTimeCode` / Android `sms-otp` autofill), active-cell ring and caret
+  (static under reduced motion), never mirrored; existing Verify and real
+  resend, no countdown.
+
+**Validation (final working tree):**
+
+| Check | Result |
+| --- | --- |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | **1034/1034 passing** |
+| `npx tsc --noEmit` | clean |
+| `npx expo lint` | 0 errors, 1 existing warning (`services/auth.ts` `fields`) |
+| `git diff --check` | clean |
+| `npx expo export --platform ios` | PASS (after the correction) |
+
+**Android runtime of the correction (emulator, staging, signed-in user's
+session untouched; non-existent emails and the probe account's phone only):**
+six cells with the active ring and caret; non-digits dropped; six-digit
+limit; Verify enabled only when complete and reaching the backend
+("Invalid or expired code." inline, step kept); real Resend ("Code sent");
+a throttled request shows the backend's "Too many requests." inline;
+phone-with-email shows the backend's generic message and stays (no email
+prompt). Paste and OS autofill were not exercised (no SMS / clipboard
+source on the emulator).
+
+**Android runtime (emulator, dev build, staging; before the Codex fix):**
+the toggle; an invalid phone (inline error, Sign in disabled); Forgot
+password keeping the method and number; phone recovery's generic answer
+(stays; the guidance shown then was later removed, see above); email
+recovery to the code step; a wrong code
+(backend error inline, step kept); Back code → method step → Sign in; the
+register layout; a real **phone sign-in** and log-out.
+
+**Not runtime-verified:** the add-email screen; completing a reset; a
+registration submit; dark mode, narrow and tablet widths; iOS runtime
+(needs a real iPhone: keyboard avoidance, one-time-code autofill).
+
+**Documented discrepancies (production wins):** Remember me and the sign-in
+Back header are kept; "Resend code" without v3's countdown (no
+backend-provided resend interval); v3's "We'll text you a code" register note dropped (staging
+issues a session with no code); no "try your phone" state (not in v3, and no
+backend signal).
+
+**Backend dependencies (not frontend TODOs):**
+1. **HIGH — `add-email` ownership:** the endpoint is unauthenticated and
+   persisted an email on an email-less account before any ownership proof
+   (`docs/SECURITY.md` §3.18).
+2. **Phone recovery for an account that has an email cannot continue:** the
+   answer is generic, and verify / reset accept only `email`. Required:
+   a recovery-token contract (`docs/API_INTEGRATION.md` §5.3).
+3. **No unknown-email → phone branching:** the generic email answer hides
+   whether an email exists. Required: a distinct `email_not_found` answer
+   with a user-facing message, accepting the enumeration trade-off
+   (§5.3), or the product keeps the generic answer.
+4. **Phone-only users and checkout:** checkout requires a billing email that
+   a phone-only account lacks and cannot add through supported profile
+   editing.
+5. **Register `password_confirmation`** is not enforced server-side on
+   staging; needs correction or clarification (`docs/SECURITY.md` §3.19).
 
 ## System states and launcher icon (2026-10-02)
 
@@ -374,7 +472,8 @@ tests pass unchanged.
   inbox (v3 `notifs`, read-only); match notifications open Match Details.
 - **Auth:** v3 presentation over the unchanged login / register / OTP /
   forgot-password logic; `AuthRequired` returns through
-  `getSafeAuthReturnRoute`. No startup auth.
+  `getSafeAuthReturnRoute`. No startup auth. *(Superseded 2026-10-06 by the
+  Authentication & Recovery batch above.)*
 - **Legal / Contact:** public `/legal`, `/legal/privacy`, `/legal/terms`
   (backend text via `legalService`), and `/contact` (`OFFICIAL_CONTACTS`).
   `/about` → `/legal`. Legal was previously auth-gated through About.
@@ -390,8 +489,8 @@ tests pass unchanged.
     backend semantics are not established here);
   - notification rows add a small fixture line (crests + teams) for match
     notifications;
-  - OTP is one field, not six boxes;
-  - auth copy is still inline English;
+  - OTP is one field, not six boxes (resolved 2026-10-06: six cells);
+  - auth copy is still inline English (resolved 2026-10-06: `auth.*` i18n keys);
   - Competitions adds a matches section (not in v3);
   - v3's mock legal copy is not used.
 - **Backend findings (staging):**

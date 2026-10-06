@@ -56,7 +56,8 @@ test("checkout maps billing fields from the current authenticated user", async (
   const source = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
 
   assert.match(source, /const name = auth\.user\?\.name\.trim\(\) \?\? ""/);
-  assert.match(source, /const email = auth\.user\?\.email\.trim\(\) \?\? ""/);
+  // Null-safe: a phone-only account has `email: null` (email is optional at registration).
+  assert.match(source, /const email = auth\.user\?\.email\?\.trim\(\) \?\? ""/);
   assert.match(source, /auth\.user\?\.phone \?\? ""/);
   assert.match(source, /createCheckoutBilling\(name, email, canonicalPhone\)/);
   assert.doesNotMatch(source, /billingForm|billingInfo|profileService/);

@@ -28,6 +28,10 @@ interface InternationalPhoneInputProps {
     value: PhoneValue;
     error?: string;
     disabled?: boolean;
+    /** Visible field label (also the number field's accessible name); defaults to "Phone". */
+    label?: string;
+    /** Example national number shown while the field is empty. */
+    placeholder?: string;
     onChange: (value: PhoneValue) => void;
 }
 
@@ -35,6 +39,8 @@ export function InternationalPhoneInput({
     value,
     error,
     disabled = false,
+    label = "Phone",
+    placeholder = "National number",
     onChange,
 }: InternationalPhoneInputProps) {
     const theme = useTheme();
@@ -70,7 +76,7 @@ export function InternationalPhoneInput({
     return (
         <View style={styles.container}>
             <Text style={[styles.label, { color: theme.colors.ink }]}>
-                Phone
+                {label}
             </Text>
 
             <View style={styles.phoneRow}>
@@ -139,7 +145,7 @@ export function InternationalPhoneInput({
                     </Text>
 
                     <TextInput
-                        accessibilityLabel="Phone number"
+                        accessibilityLabel={label === "Phone" ? "Phone number" : label}
                         accessibilityHint={`Enter the national phone number for ${phoneCountryName}, or paste a complete international phone number.`}
                         accessibilityState={{ disabled }}
                         value={value.phoneNationalValue}
@@ -147,7 +153,7 @@ export function InternationalPhoneInput({
                         keyboardType="phone-pad"
                         textContentType="telephoneNumber"
                         autoComplete="tel-national"
-                        placeholder="National number"
+                        placeholder={placeholder}
                         placeholderTextColor={theme.colors.muted}
                         onChangeText={(input) => {
                             onChange(updateNationalPhone(input, value.phoneCountry));

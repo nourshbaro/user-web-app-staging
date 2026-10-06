@@ -156,7 +156,7 @@ test("normal login saves its session and returns an authenticated result", async
     export const unwrapData = (value) => value?.data ?? value;
   `);
 
-  const result = await authService.login("fan@example.com", "secret", true);
+  const result = await authService.login({ email: "fan@example.com" }, "secret", true);
 
   assert.equal(result.status, "authenticated");
   assert.deepEqual(apiModule.tokens, ["session-token"]);
@@ -185,7 +185,7 @@ test("phone-required login response becomes a continuation without saving a sess
     export const unwrapData = (value) => value?.data ?? value;
   `);
 
-  const result = await authService.login("fan@example.com", "secret", false);
+  const result = await authService.login({ email: "fan@example.com" }, "secret", false);
 
   assert.deepEqual(result, {
     status: "phone_required",
@@ -219,7 +219,7 @@ test("phone-required API error also becomes the same continuation", async () => 
     export const unwrapData = (value) => value?.data ?? value;
   `);
 
-  const result = await authService.login("fan@example.com", "secret", false);
+  const result = await authService.login({ email: "fan@example.com" }, "secret", false);
 
   assert.equal(result.status, "phone_required");
   assert.deepEqual(apiModule.calls.map(({ path }) => path), ["/auth/login"]);
@@ -247,7 +247,7 @@ test("invalid credentials remain an error and never call complete-phone", async 
   `);
 
   await assert.rejects(
-    authService.login("fan@example.com", "wrong", false),
+    authService.login({ email: "fan@example.com" }, "wrong", false),
     /Invalid credentials/,
   );
   assert.deepEqual(apiModule.calls.map(({ path }) => path), ["/auth/login"]);

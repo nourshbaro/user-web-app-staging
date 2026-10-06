@@ -32,6 +32,10 @@ const USER_KEY = "lfa_portal_user";
 export type OtpTarget =
   | string
   | { userId?: string | null; email?: string | null };
+/** Sign-in identifier: the backend takes `email` or `phone` (digits only), never both. */
+export type LoginIdentifier = { email: string } | { phone: string };
+/** Recovery identifier, same shape as sign-in. */
+export type RecoveryIdentifier = LoginIdentifier;
 export type LoginResult =
   | { status: "authenticated"; payload: unknown }
   | { status: "phone_required"; message: string };
@@ -106,7 +110,8 @@ function isUser(value: unknown): value is User {
     typeof value.id === "number" &&
     Number.isFinite(value.id) &&
     typeof value.name === "string" &&
-    typeof value.email === "string" &&
+    // Phone-only accounts (email optional at registration) have `email: null`.
+    (value.email === null || typeof value.email === "string") &&
     (value.phone === null || typeof value.phone === "string") &&
     (value.avatar === null || typeof value.avatar === "string") &&
     (value.email_verified_at === null ||
@@ -129,7 +134,7 @@ function hasValidOptionalUserFields(value: Record<string, unknown>) {
     return false;
   }
 
-  if ("email" in value && typeof value.email !== "string") {
+  if ("email" in value && value.email !== null && typeof value.email !== "string") {
     return false;
   }
 
@@ -206,6 +211,10 @@ function phoneRequiredResult(payload: unknown): LoginResult | null {
   };
 }
 
+function identifierBody(identifier: LoginIdentifier) {
+  return "phone" in identifier ? { phone: identifier.phone } : { email: identifier.email };
+}
+
 function otpTargetBody(target: OtpTarget) {
   if (typeof target === "string") return { user_id: target };
   return {
@@ -240,7 +249,7 @@ export const authService = {
   },
 
   async login(
-    email: string,
+    identifier: LoginIdentifier,
     password: string,
     remember: boolean,
   ): Promise<LoginResult> {
@@ -248,7 +257,7 @@ export const authService = {
     try {
       payload = await apiRequest("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password, remember }),
+        body: JSON.stringify({ ...identifierBody(identifier), password, remember }),
         skipUnauthenticatedNotify: true,
       });
     } catch (error) {
@@ -273,10 +282,24 @@ export const authService = {
     return payload;
   },
 
-  async forgotPassword(email: string) {
-    return apiRequest("/auth/forgot-password", {
+  /**
+   * Starts recovery for an email or a phone. The answer is read with
+   * `forgotPasswordOutcome` (`src/lib/passwordRecovery.ts`): its only branch
+   * signal is `reason: "email_required"` (a phone account with no email).
+   */
+  async forgotPassword(identifier: RecoveryIdentifier) {
+    return apiRequest<unknown>("/auth/forgot-password", {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify(identifierBody(identifier)),
+      skipUnauthenticatedNotify: true,
+    });
+  },
+
+  /** Saves an email on a phone account that has none and sends the reset code to it. */
+  async addRecoveryEmail(phone: string, email: string) {
+    return apiRequest("/auth/forgot-password/add-email", {
+      method: "POST",
+      body: JSON.stringify({ email, phone }),
       skipUnauthenticatedNotify: true,
     });
   },
@@ -334,14 +357,16 @@ export const authService = {
 
   async register(
     name: string,
-    email: string,
+    email: string | null,
     password: string,
     passwordConfirmation: string,
     phone: string,
   ) {
+    // Email is optional (the backend requires only name, phone and
+    // password); none given → the field is omitted, never sent blank.
     const body: RegisterRequest = {
       name,
-      email,
+      ...(email ? { email } : {}),
       password,
       password_confirmation: passwordConfirmation,
       phone,

@@ -104,21 +104,156 @@ response shape at runtime and throws on mismatch.
 ### Auth — `src/services/auth.ts` (`authService`)
 | Method & path | Body (client) | Notes |
 | ------------- | ------------- | ----- |
-| `POST /auth/login` | `email, password, remember` | May return `reason: "phone_required"` (2xx or error body) |
-| `POST /auth/complete-phone` | `email, password, phone` | Saves session |
-| `POST /auth/register` | `name, email, password, password_confirmation, phone` | Saves session |
+| `POST /auth/login` | `email` **or** `phone`, then `password, remember` | Exactly one identifier (`LoginIdentifier`); see §5.1. May return `reason: "phone_required"` (2xx or error body) |
+| `POST /auth/complete-phone` | `email, password, phone` | Saves session. Reached only after an **email** sign-in answered `phone_required` |
+| `POST /auth/register` | `name, phone, password, password_confirmation`, and `email` only when given | Saves session. Email optional (§5.1) |
 | `POST /auth/verify-otp` | `user_id` and/or `email`, `code` | Saves session. Used after Login / Register **only** when the backend returns an account id without a session token (`credentialOutcome`) |
-| `POST /auth/resend-otp` | `user_id` and/or `email` | |
+| `POST /auth/resend-otp` | `user_id` and/or `email` | Staging requires `email` (2026-10-06); the screen offers resend only when the pending target has one |
 | `POST /auth/check-email-verification` → `/auth/check-email` → `/auth/email-verification-status` | `email` | Tries in order, skipping 404/405; returns `null` if none exist |
-| `POST /auth/forgot-password` | `email` | |
-| `POST /auth/forgot-password/verify-otp` | `email, code` | |
+| `POST /auth/forgot-password` | `email` **or** `phone` | Returns the raw answer; read by `forgotPasswordOutcome` (§5.2) |
+| `POST /auth/forgot-password/add-email` | `email, phone` | `addRecoveryEmail`. Only after `email_required` for the current phone attempt (§5.2). Security concern: `docs/SECURITY.md` §3.18 |
+| `POST /auth/forgot-password/verify-otp` | `email, code` | Email is the only recovery identity accepted (§5.2) |
 | `POST /auth/reset-password` | `email, code, password, password_confirmation` | Code and tests agree; the sibling `user-web` client sends the same field (backend source not inspected) |
-| `GET /auth/me` | — | Validated (`isUser`) |
+| `GET /auth/me` | — | Validated (`isUser`); `email` may be `null` |
 | `POST /auth/change-password` | `current_password, password, password_confirmation` | Session cleared afterwards |
 | `POST /auth/profile-picture` | multipart `avatar` | Returns `{ avatar }` |
 | `DELETE /auth/profile-picture` | — | |
 | `DELETE /auth/account` | `password` | Session cleared afterwards |
 | `POST /auth/logout` | — | Fire-and-forget with the captured token |
+
+### 5.1 Auth identifiers, registration and the user record
+
+Observed on staging (validation errors and responses, 2026-10-06; backend
+source not inspected):
+
+- **Login** validates `email` *required without* `phone` and vice versa, plus
+  `password`. The client sends one identifier, never both
+  (`identifierBody`). Wrong credentials answer 422 "Invalid credentials."
+  for either identifier.
+- **Phone representation:** the shared international-phone utilities
+  (`src/lib/phoneNumber.ts`) validate the number for its country (Israel is
+  excluded); `toBackendPhoneDigits` turns the E.164 value (`+96171123456`)
+  into digits only, no `+` (`96171123456`). Login, register, complete-phone,
+  recovery and add-email all send this form. (Staging also accepted a
+  `+`-prefixed login phone; the client does not rely on it.)
+- **Register** requires only `name`, `phone` and `password`. Email is
+  optional: the client omits the field when empty and checks its format when
+  given. The client still checks `password_confirmation` before submitting,
+  but staging accepted a direct registration whose confirmation did not
+  match — the backend does not enforce it (`docs/SECURITY.md` §3.19).
+  The client requires a valid phone.
+- **Nullable email:** an account created without an email returns
+  `user.email: null` (register, login and `/auth/me`). `isUser` (`/auth/me`),
+  the persisted-user decoder and `User.email` (`string | null`) accept it;
+  checkout reads it null-safely. A phone-only account currently cannot pass
+  checkout's existing "name and email" billing requirement, and the profile
+  is read-only in the app (§14).
+
+### 5.2 Password recovery
+
+One owner: `src/lib/passwordRecovery.ts` (`recoveryReducer`, held by
+`src/app/auth.tsx`). Steps: identify (Email | Phone) → add email (phone path
+only) → code → new password → Sign in.
+
+- **`POST /auth/forgot-password`** takes `{ "email": … }` or `{ "phone": … }`.
+  Known and unknown emails (and unknown phones) receive the same generic 2xx:
+  `"If that account is registered, a reset code has been sent."` A **phone
+  account without an email** answers 2xx with
+  `{ "reason": "email_required", "message": … }`. `forgotPasswordOutcome`
+  branches on that `reason` only, never on message text.
+- **`POST /auth/forgot-password/add-email`**
+  `{ "email": "<entered email>", "phone": "<digits-only phone>" }`. The client
+  calls it only after the **current** phone attempt answered
+  `email_required`, and sends the phone bound to that answer (never the live
+  phone field). A 2xx (generic message) means the email was saved and the
+  code sent to it; only then does the flow move to the code step for that
+  address. An error (e.g. 422 "Account not found.", invalid email) keeps the
+  step and the entered values, with the backend message inline.
+- **Verification identity:** `forgot-password/verify-otp` and
+  `reset-password` accept **`email`** as the recovery identity (`{ phone,
+  code }` → 422 "The email field is required."). The client keys both on the
+  address the backend sent this attempt's code to.
+- **Not continuable — phone account that already has an email:** its answer
+  is the generic message, with neither the email nor a recovery token, so the
+  client cannot call verify / reset. This branch is **not implemented**: the
+  flow stays on the phone step and shows the backend's own message (it does
+  not ask the user to type the account's email — that earlier fallback was
+  removed on 2026-10-06 by product decision). Backend dependency (§5.3).
+- **No "unknown email → try phone" branch:** the generic answer is identical
+  for known and unknown emails, so the client cannot (and must not) decide
+  that an email is unavailable. The email path always continues to the code
+  step (an unknown address therefore still reads "Code sent"); the user can
+  go Back and choose Phone. Backend dependency (§5.3).
+- **Code entry:** six visual cells over one numeric six-digit value
+  (`src/components/account/OtpCodeInput.tsx`, one native input: numeric
+  keyboard, paste, iOS `oneTimeCode` / Android `sms-otp` autofill). Resend
+  re-sends `forgot-password` for the same address; there is no client
+  countdown.
+- **Attempts:** every request carries the attempt it was sent in; editing the
+  identifier, switching method, Back, cancel and completion start a new
+  attempt, so a late success or error for an earlier identifier is dropped.
+  Submit and "Resend code" share the synchronous auth submission guard.
+- **Rate limiting (observed on staging, not a contract):** about 3 recovery
+  requests per window of roughly 6 minutes, then 429 "Too many requests."
+  with `Retry-After`. The client shows the error and does not retry.
+  (Re-observed 2026-10-06: the throttle applies per identifier — a different
+  address was accepted while the first was throttled.)
+
+### 5.3 Required recovery flow — PENDING BACKEND (not implemented)
+
+Product requirement (2026-10-06). **None of the branches below that differ
+from §5.2 work today**; they are listed so the backend can supply the
+contract. The client must not emulate them.
+
+```
+PHONE  has email    → OTP → new password → Sign in        (blocked: no phone/token verify)
+PHONE  no email     → add email → OTP → new password       (implemented, §5.2; §3.18 risk)
+EMAIL  exists       → OTP → new password → Sign in        (implemented)
+EMAIL  unavailable  → backend message → "Try phone number" → phone flow   (blocked: no signal)
+```
+
+Re-probed 2026-10-06 (non-existent identifiers only): `verify-otp`
+`{ phone, code }` → 422 "The email field is required."; `reset-password`
+requires `email`; an unknown email still gets the generic 2xx.
+
+**Backend change request:**
+1. **`POST /auth/forgot-password` outcomes.** Keep one generic success for
+   anything that sent a code, but return a machine-readable `reason`:
+   `code_sent` (a code was sent — to the account's email or phone; the
+   response never includes the address), `email_required` (phone account
+   with no email; unchanged), and, if product accepts the enumeration
+   trade-off below, `email_not_found` for an email request with no
+   recoverable account.
+2. **Recovery token.** Every `code_sent` / add-email success returns an
+   opaque, single-use, short-lived `recovery_token` bound server-side to the
+   account and the identifier used. The client stores it only in screen
+   memory.
+3. **`POST /auth/forgot-password/verify-otp`** accepts
+   `{ recovery_token, code }` (instead of requiring `email`), and returns a
+   new token that authorizes only the reset.
+4. **`POST /auth/reset-password`** accepts
+   `{ recovery_token, password, password_confirmation }` and enforces the
+   confirmation server-side (`docs/SECURITY.md` §3.19).
+5. **Unavailable email.** 404 or 422 with `reason: "email_not_found"` and a
+   user-facing `message`, which the client will display verbatim; the exact
+   wording is the backend's to define (suggested: "We couldn't find an
+   account with that email. Try your phone number instead."). The client
+   will then offer "Try phone number". Note: any distinct answer reveals
+   whether an email is registered (account enumeration); it should be
+   rate-limited per IP and identifier, or product may keep the generic
+   answer and accept that this branch cannot exist.
+6. **Why a token, not email/phone between stages:** it never exposes the
+   account's email to a phone-initiated flow, keeps verify / reset bound to
+   the attempt that requested the code (so a code cannot be replayed against
+   another identifier), and lets the backend expire or revoke an attempt.
+7. **Add-email ownership** (`docs/SECURITY.md` §3.18): attaching an email
+   must require proof of phone ownership first (e.g. a code to the phone
+   that yields the `recovery_token`), and the email should become recovery
+   authority only after it is verified.
+
+When this ships, the client change is confined to `authService` (token in
+the request bodies), `forgotPasswordOutcome` (the new reasons) and the
+recovery reducer (holding the token instead of the email).
 
 ### Matches — `src/services/matches.ts` (`matchesService`)
 | Method & path | Notes |
@@ -418,7 +553,8 @@ navigator is replaced by the v3 maintenance screen (`docs/ARCHITECTURE.md` §13)
 | Checkout submission authority | `src/lib/checkoutSubmissionAuthority.ts` | BLUE submit result vs unmount/session change |
 | Single-flight | `createSingleFlight` (`src/lib/cartSessionRecovery.ts`) | Concurrent `addItem` |
 | Cart publication result | `src/lib/cartPublication.ts` (returned by `CartContext`) | Treating a resolved cart mutation as confirmed success |
-| Auth submission guard | `src/lib/authSubmissionGuard.ts` | Double-submitted auth forms |
+| Auth submission guard | `src/lib/authSubmissionGuard.ts` | Double-submitted auth forms; recovery submit vs "Resend code" |
+| Password-recovery attempts | `createRecoveryAttempts` / `recoveryReducer` (`src/lib/passwordRecovery.ts`) | Late recovery answers (success or error) for an earlier identifier, method or step |
 | Identity-keyed remounts | `CartProvider key`, `withAuthRequired key` | All screen and cart state on account switch |
 
 New API-backed features must use the existing mechanism for their domain rather
@@ -468,6 +604,19 @@ read cache either: it is asked once per launch (memoized in `appUpdate.ts`).
 - Server-side idempotency of `/checkout/mobile/submit` for a repeated session.
 - Backend behavior on BLUE callback, and how web BLUE results are finalized.
 - The meaning of the `password` header and of `remember` on login.
+- **Password recovery by phone for an account that has an email** (§5.2,
+  change request §5.3): needs a recovery-token (or phone) contract for
+  verify / reset. Until then the branch cannot continue in the app.
+- **Unknown email → phone guidance** (§5.2, §5.3): the generic answer
+  deliberately hides whether an email exists; a distinct backend answer
+  (with its enumeration trade-off) is required, not client inference.
+- **Ownership before `add-email` persists** (§5.2, `docs/SECURITY.md` §3.18).
+- **Server-side `password_confirmation` on register** is not enforced on
+  staging (`docs/SECURITY.md` §3.19).
+- **Phone-only accounts and checkout:** checkout requires a billing email,
+  which a phone-only account lacks and cannot add in the app. Whether
+  `/checkout/mobile/submit` accepts a billing email that is absent, or
+  how the profile gains one, is a backend/product decision.
 - **BLUE order left open when paying by card.** "Continue with BLUE" makes the
   backend create a BLUE order (staging: the BLUE page shows its order id).
   The app lets the user pay by card afterwards (a separate submit for the

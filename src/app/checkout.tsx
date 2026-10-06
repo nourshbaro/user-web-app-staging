@@ -143,7 +143,7 @@ function CheckoutScreen() {
   const submitInFlightRef = useRef(false);
   const blueHandoffStartedRef = useRef(false);
   const name = auth.user?.name.trim() ?? "";
-  const email = auth.user?.email.trim() ?? "";
+  const email = auth.user?.email?.trim() ?? "";
   const canonicalPhone = initializePhoneValue(
     auth.user?.phone ?? "",
   ).canonicalPhone;

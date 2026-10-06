@@ -256,7 +256,8 @@ export type UpdateCartRequest = {
 export type User = {
   id: number;
   name: string;
-  email: string;
+  /** Null on a phone-only account (email is optional at registration). */
+  email: string | null;
   phone: string | null;
   avatar: string | null;
   email_verified_at: string | null;
@@ -267,7 +268,8 @@ export type User = {
 
 export type RegisterRequest = {
   name: string;
-  email: string;
+  /** Optional; omitted when the user gives none. */
+  email?: string;
   password: string;
   password_confirmation: string;
   /** Normalized international number as digits only, no leading "+". */

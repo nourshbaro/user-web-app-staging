@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   Image,
   KeyboardAvoidingView,
@@ -17,34 +17,36 @@ import Animated, {
 } from "react-native-reanimated";
 import { Button, useResponsive, useTheme } from "@/components/ui";
 import { FlowHeader } from "@/components/FlowHeader";
-import { AppText } from "@/components/foundation";
+import { AppText, SegmentedControl } from "@/components/foundation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { InternationalPhoneInput } from "@/components/InternationalPhoneInput";
+import { OtpCodeInput } from "@/components/account/OtpCodeInput";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useI18n } from "@/i18n/I18nProvider";
 import { ApiError } from "@/services/api";
-import { authService, type OtpTarget } from "@/services/auth";
+import { authService, type LoginIdentifier, type OtpTarget } from "@/services/auth";
 import { createAuthSubmissionGuard } from "@/lib/authSubmissionGuard";
 import {
   createEmptyPhoneValue,
+  formatBackendPhoneForDisplay,
   toBackendPhoneDigits,
   type PhoneValue,
 } from "@/lib/phoneNumber";
+import {
+  createRecoveryAttempts,
+  forgotPasswordOutcome,
+  initialRecoveryState,
+  isValidRecoveryEmail,
+  recoveryReducer,
+  type RecoveryMethod,
+} from "@/lib/passwordRecovery";
 import { backendProvidedError, userFacingError } from "@/lib/userFacingError";
 import { credentialOutcome, credentialUserId } from "@/lib/authCredentialOutcome";
 import { getSafeAuthReturnRoute } from "@/lib/authReturnRoute";
 
-type Mode =
-  | "login"
-  | "register"
-  | "otp"
-  | "complete-phone"
-  | "forgot-email"
-  | "forgot-otp"
-  | "reset-password";
-
-const isValidEmail = (value: string) =>
-  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+type Mode = "login" | "register" | "otp" | "complete-phone" | "recovery";
+type IdentifierMethod = RecoveryMethod;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === "object" && value !== null;
@@ -60,11 +62,16 @@ const getMessage = (payload: unknown, fallback: string) => {
   return readString(payload.message) ?? readString(payload.error) ?? fallback;
 };
 
+const phoneError = (value: PhoneValue, message: string) =>
+  value.validation === "invalid" || value.validation === "excluded-country" ? message : undefined;
+
 export default function AuthScreen() {
   const auth = useAuth();
   const responsive = useResponsive();
   const theme = useTheme();
   const toast = useToast();
+  const i18n = useI18n();
+  const t = i18n.t;
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
@@ -72,6 +79,11 @@ export default function AuthScreen() {
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [remember, setRemember] = useState(false);
+  // v3 sign in: email or phone number (the backend takes either field).
+  const [loginMethod, setLoginMethod] = useState<IdentifierMethod>("email");
+  const [loginPhone, setLoginPhone] = useState<PhoneValue>(() =>
+    createEmptyPhoneValue(),
+  );
   const [registrationPhone, setRegistrationPhone] = useState<PhoneValue>(() =>
     createEmptyPhoneValue(),
   );
@@ -79,7 +91,15 @@ export default function AuthScreen() {
     createEmptyPhoneValue(),
   );
   const [otp, setOtp] = useState("");
+  // Password recovery: the step, method, bound phone and the address the code
+  // went to are owned by `recoveryReducer`; these are only the field drafts.
+  const recoveryAttempts = useRef(createRecoveryAttempts());
+  const [recovery, dispatchRecovery] = useReducer(recoveryReducer, undefined, () => initialRecoveryState());
   const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryPhone, setRecoveryPhone] = useState<PhoneValue>(() =>
+    createEmptyPhoneValue(),
+  );
+  const [addedEmail, setAddedEmail] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
   const [recoveryPassword, setRecoveryPassword] = useState("");
   const [recoveryPasswordConfirmation, setRecoveryPasswordConfirmation] =
@@ -111,25 +131,42 @@ export default function AuthScreen() {
     };
   }, []);
 
+  const notify = (
+    variant: "info" | "success" | "warning" | "error",
+    title: string,
+    nextMessage: string,
+  ) => {
+    setMessage(nextMessage);
+    toast.showToast({ variant, title, message: nextMessage });
+  };
+
   const showOtp = (
     payload: unknown,
     fallback: string,
-    fallbackEmail = email.trim(),
+    fallbackEmail: string | null,
   ) => {
     const userId = getUserId(payload);
     const nextMessage = getMessage(payload, fallback);
     setPendingOtpTarget({ userId, email: fallbackEmail || null });
     setMode("otp");
-    setMessage(nextMessage);
-    toast.showToast({
-      variant: "info",
-      title: "OTP required",
-      message: nextMessage,
-    });
+    notify("info", t("auth.toast.codeRequired"), nextMessage);
+  };
+
+  /** A recovery answer still belongs to the flow only for the attempt that sent it. */
+  const isRecoveryCurrent = (attempt: number) =>
+    mountedRef.current && recoveryAttempts.current.isCurrent(attempt);
+
+  const enterRecoveryCode = (attempt: number, codeEmail: string) => {
+    setRecoveryCode("");
+    dispatchRecovery({ type: "codeSent", attempt, email: codeEmail });
+    // The step's own detail names the address; the toast only confirms it.
+    setMessage(null);
+    toast.showToast({ variant: "success", title: t("auth.toast.codeSent"), message: t("auth.code.detail", { email: codeEmail }) });
   };
 
   const submit = async () => {
     if (!submissionGuard.current.tryAcquire()) return;
+    const recoveryAttempt = recoveryAttempts.current.current();
     setLoading(true);
     setMessage(null);
     try {
@@ -137,13 +174,28 @@ export default function AuthScreen() {
         // No OTP step of its own: a code is asked for only when the backend
         // withholds the session (`credentialOutcome`), never pre-emptively.
         const trimmedEmail = email.trim();
-        const result = await authService.login(
-          trimmedEmail,
-          password,
-          remember,
-        );
+        let identifier: LoginIdentifier;
+        if (loginMethod === "email") {
+          if (!isValidRecoveryEmail(trimmedEmail)) {
+            notify("warning", t("auth.toast.checkDetails"), t("auth.error.email"));
+            return;
+          }
+          identifier = { email: trimmedEmail };
+        } else {
+          if (loginPhone.validation !== "valid") {
+            notify("warning", t("auth.toast.checkDetails"), t("auth.error.phone"));
+            return;
+          }
+          identifier = { phone: toBackendPhoneDigits(loginPhone.canonicalPhone) };
+        }
+        const result = await authService.login(identifier, password, remember);
         if (!mountedRef.current) return;
         if (result.status === "phone_required") {
+          // `complete-phone` is keyed by email: it only follows an email sign-in.
+          if (!("email" in identifier)) {
+            setMessage(result.message);
+            return;
+          }
           setEmail(trimmedEmail);
           setCompletionPhone(createEmptyPhoneValue());
           setMode("complete-phone");
@@ -154,8 +206,8 @@ export default function AuthScreen() {
         if (credentialOutcome(payload) === "verify") {
           showOtp(
             payload,
-            "Please verify your email. A new code has been sent.",
-            trimmedEmail,
+            t("auth.otp.loginRequired"),
+            "email" in identifier ? trimmedEmail : null,
           );
           return;
         }
@@ -163,14 +215,7 @@ export default function AuthScreen() {
 
       if (mode === "complete-phone") {
         if (completionPhone.validation !== "valid") {
-          const nextMessage =
-            "Enter a valid phone number for the selected phone country.";
-          setMessage(nextMessage);
-          toast.showToast({
-            variant: "warning",
-            title: "Phone number required",
-            message: nextMessage,
-          });
+          notify("warning", t("auth.toast.checkDetails"), t("auth.error.phone"));
           return;
         }
         await authService.completePhone(
@@ -184,33 +229,23 @@ export default function AuthScreen() {
       }
 
       if (mode === "register") {
-        if (password !== passwordConfirmation) {
-          const nextMessage = "Password confirmation does not match.";
-          setMessage(nextMessage);
-          toast.showToast({
-            variant: "error",
-            title: "Check password",
-            message: nextMessage,
-          });
+        // Email is optional; when given it must be a valid address.
+        const registrationEmail = email.trim();
+        if (registrationEmail && !isValidRecoveryEmail(registrationEmail)) {
+          notify("error", t("auth.toast.checkDetails"), t("auth.error.email"));
           return;
         }
-        if (
-          registrationPhone.validation === "invalid" ||
-          registrationPhone.validation === "excluded-country"
-        ) {
-          const nextMessage =
-            "Enter a valid phone number for the selected phone country.";
-          setMessage(nextMessage);
-          toast.showToast({
-            variant: "error",
-            title: "Check phone",
-            message: nextMessage,
-          });
+        if (password !== passwordConfirmation) {
+          notify("error", t("auth.toast.checkDetails"), t("auth.error.passwordMismatch"));
+          return;
+        }
+        if (registrationPhone.validation !== "valid") {
+          notify("error", t("auth.toast.checkDetails"), t("auth.error.phone"));
           return;
         }
         const payload = await authService.register(
           name.trim(),
-          email.trim(),
+          registrationEmail || null,
           password,
           passwordConfirmation,
           toBackendPhoneDigits(registrationPhone.canonicalPhone),
@@ -219,19 +254,23 @@ export default function AuthScreen() {
         const outcome = credentialOutcome(payload);
         if (outcome === "verify") {
           // The backend withheld the session: its verification code is required.
-          showOtp(
-            payload,
-            "Account created. Enter the 6-digit OTP sent to your email.",
-          );
+          showOtp(payload, t("auth.otp.registerRequired"), registrationEmail || null);
           return;
         }
         if (outcome === "signIn") {
-          // Created without a session: sign in normally (no OTP step).
+          // Created without a session: sign in normally (no OTP step), with
+          // the identifier the account was created with.
           setPassword("");
           setPasswordConfirmation("");
+          if (registrationEmail) {
+            setLoginMethod("email");
+          } else {
+            setLoginMethod("phone");
+            setLoginPhone(registrationPhone);
+          }
           setMode("login");
-          setMessage("Account created. Sign in to continue.");
-          toast.showToast({ variant: "success", title: "Account created", message: "Sign in to continue." });
+          setMessage(t("auth.accountCreated"));
+          toast.showToast({ variant: "success", title: t("auth.toast.accountCreated"), message: t("auth.toast.signInToContinue") });
           return;
         }
         // `session`: the service already saved the token; finish below.
@@ -239,98 +278,108 @@ export default function AuthScreen() {
 
       if (mode === "otp") {
         if (!pendingOtpTarget || otp.length !== 6) {
-          const nextMessage = "Enter the 6-digit OTP sent to your email.";
-          setMessage(nextMessage);
-          toast.showToast({
-            variant: "warning",
-            title: "OTP incomplete",
-            message: nextMessage,
-          });
+          notify("warning", t("auth.toast.checkDetails"), t("auth.otp.required"));
           return;
         }
         await authService.verifyOtp(pendingOtpTarget, otp);
         if (!mountedRef.current) return;
       }
 
-      if (mode === "forgot-email") {
-        const trimmedEmail = recoveryEmail.trim();
-        if (!trimmedEmail || !isValidEmail(trimmedEmail)) {
-          const nextMessage = "Enter a valid email address.";
-          setMessage(nextMessage);
-          toast.showToast({
-            variant: "warning",
-            title: "Check email",
-            message: nextMessage,
-          });
+      if (mode === "recovery") {
+        if (recovery.step === "identify" && recovery.method === "email") {
+          const trimmedEmail = recoveryEmail.trim();
+          if (!isValidRecoveryEmail(trimmedEmail)) {
+            notify("warning", t("auth.toast.checkDetails"), t("auth.error.email"));
+            return;
+          }
+          // The backend answers the same whether or not the address has an
+          // account, so the flow always continues to the code.
+          await authService.forgotPassword({ email: trimmedEmail });
+          if (!isRecoveryCurrent(recoveryAttempt)) return;
+          setRecoveryEmail(trimmedEmail);
+          enterRecoveryCode(recoveryAttempt, trimmedEmail);
           return;
         }
-        await authService.forgotPassword(trimmedEmail);
-        if (!mountedRef.current) return;
-        setRecoveryEmail(trimmedEmail);
-        setRecoveryCode("");
-        setMode("forgot-otp");
-        const nextMessage = "Enter the 6-digit OTP sent to your email.";
-        setMessage(nextMessage);
-        toast.showToast({
-          variant: "success",
-          title: "OTP sent",
-          message: nextMessage,
-        });
-        return;
-      }
 
-      if (mode === "forgot-otp") {
-        if (recoveryCode.length !== 6) {
-          const nextMessage = "Enter the 6-digit OTP sent to your email.";
-          setMessage(nextMessage);
-          toast.showToast({
-            variant: "warning",
-            title: "OTP incomplete",
-            message: nextMessage,
-          });
+        if (recovery.step === "identify") {
+          if (recoveryPhone.validation !== "valid") {
+            notify("warning", t("auth.toast.checkDetails"), t("auth.error.phone"));
+            return;
+          }
+          const phone = toBackendPhoneDigits(recoveryPhone.canonicalPhone);
+          const answer = await authService.forgotPassword({ phone });
+          if (!isRecoveryCurrent(recoveryAttempt)) return;
+          if (forgotPasswordOutcome(answer) === "emailRequired") {
+            setAddedEmail("");
+            dispatchRecovery({ type: "emailRequired", attempt: recoveryAttempt, phone });
+            return;
+          }
+          // Backend dependency (docs/API_INTEGRATION.md §5.2): a phone account
+          // that has an email gets the generic answer, and verify / reset
+          // accept only `email` — there is no phone or recovery-token
+          // contract to continue with. The flow neither advances nor asks
+          // for the account's email; it shows the backend's own message.
+          setMessage(getMessage(answer, t("auth.error.generic")));
           return;
         }
-        await authService.verifyForgotPasswordOtp(recoveryEmail, recoveryCode);
-        if (!mountedRef.current) return;
-        setMode("reset-password");
-        setMessage(null);
-        return;
-      }
 
-      if (mode === "reset-password") {
+        if (recovery.step === "addEmail") {
+          const trimmedEmail = addedEmail.trim();
+          if (!isValidRecoveryEmail(trimmedEmail)) {
+            notify("warning", t("auth.toast.checkDetails"), t("auth.error.email"));
+            return;
+          }
+          // The phone the backend asked an email for in this attempt — never
+          // the live phone field.
+          const boundPhone = recovery.phone;
+          if (!boundPhone) return;
+          await authService.addRecoveryEmail(boundPhone, trimmedEmail);
+          if (!isRecoveryCurrent(recoveryAttempt)) return;
+          setAddedEmail(trimmedEmail);
+          enterRecoveryCode(recoveryAttempt, trimmedEmail);
+          return;
+        }
+
+        const codeEmail = recovery.email;
+        if (!codeEmail) return;
+
+        if (recovery.step === "code") {
+          if (recoveryCode.length !== 6) {
+            notify("warning", t("auth.toast.checkDetails"), t("auth.otp.required"));
+            return;
+          }
+          await authService.verifyForgotPasswordOtp(codeEmail, recoveryCode);
+          if (!isRecoveryCurrent(recoveryAttempt)) return;
+          dispatchRecovery({ type: "codeVerified", attempt: recoveryAttempt });
+          return;
+        }
+
         if (!recoveryPassword || !recoveryPasswordConfirmation) {
-          const nextMessage = "Enter and confirm your new password.";
-          setMessage(nextMessage);
-          toast.showToast({
-            variant: "warning",
-            title: "Password required",
-            message: nextMessage,
-          });
+          notify("warning", t("auth.toast.checkDetails"), t("auth.error.passwordRequired"));
           return;
         }
         if (recoveryPassword !== recoveryPasswordConfirmation) {
-          const nextMessage = "Password confirmation does not match.";
-          setMessage(nextMessage);
-          toast.showToast({
-            variant: "error",
-            title: "Check password",
-            message: nextMessage,
-          });
+          notify("error", t("auth.toast.checkDetails"), t("auth.error.passwordMismatch"));
           return;
         }
         await authService.resetPassword(
-          recoveryEmail,
+          codeEmail,
           recoveryCode,
           recoveryPassword,
           recoveryPasswordConfirmation,
         );
-        if (!mountedRef.current) return;
-        setEmail(recoveryEmail);
+        if (!isRecoveryCurrent(recoveryAttempt)) return;
+        // Back to Sign in with the identifier the recovery used.
+        const method = recovery.method;
+        if (method === "phone") setLoginPhone(recoveryPhone);
+        else setEmail(codeEmail);
+        setLoginMethod(method);
+        setPassword("");
         resetRecovery();
         toast.showToast({
           variant: "success",
-          title: "Password reset",
-          message: "Your password was reset. You can now log in.",
+          title: t("auth.toast.passwordReset"),
+          message: t("auth.toast.passwordResetMessage"),
         });
         return;
       }
@@ -339,77 +388,73 @@ export default function AuthScreen() {
       if (!mountedRef.current) return;
       toast.showToast({
         variant: "success",
-        title: "Signed in",
-        message: "Welcome back.",
+        title: t("auth.toast.signedIn"),
+        message: t("auth.toast.welcome"),
       });
       if (returnTo) router.dismissTo(returnTo as never);
       else router.replace("/");
     } catch (err) {
       if (!mountedRef.current) return;
+      // A failure for an earlier recovery identifier is as stale as a success.
+      if (mode === "recovery" && !recoveryAttempts.current.isCurrent(recoveryAttempt)) return;
       if (err instanceof ApiError && mode === "login" && getUserId(err.body)) {
         showOtp(
           err.body,
-          "Please verify your email. A new code has been sent.",
-          email.trim(),
+          t("auth.otp.loginRequired"),
+          loginMethod === "email" ? email.trim() : null,
         );
         return;
       }
-      const isRecovery =
-        mode === "forgot-email" ||
-        mode === "forgot-otp" ||
-        mode === "reset-password";
-      const nextMessage = isRecovery
-        ? backendProvidedError(
-            err,
-            "Unable to continue. Check your details and try again.",
-          )
+      // Recovery failures keep the entered values and stay on the step.
+      const nextMessage = mode === "recovery"
+        ? backendProvidedError(err, t("auth.error.generic"))
         : userFacingError(
             err,
-            mode === "complete-phone"
-              ? "Could not add your phone number. Please try again."
-              : "Unable to continue. Check your details and try again.",
+            mode === "complete-phone" ? t("auth.error.completePhone") : t("auth.error.generic"),
           );
-      setMessage(nextMessage);
-      toast.showToast({
-        variant: "error",
-        title: "Unable to continue",
-        message: nextMessage,
-      });
+      notify("error", t("auth.toast.unable"), nextMessage);
     } finally {
       submissionGuard.current.release();
       if (mountedRef.current) setLoading(false);
     }
   };
 
+  const otpTargetEmail =
+    pendingOtpTarget && typeof pendingOtpTarget === "object" ? pendingOtpTarget.email : null;
+
   const resendOtp = async () => {
-    if (!pendingOtpTarget) return;
+    // The backend's resend is keyed by email; a phone sign-in has none to send.
+    if (!pendingOtpTarget || !otpTargetEmail) return;
     setResending(true);
     setMessage(null);
     try {
       const payload = await authService.resendOtp(pendingOtpTarget);
-      const nextMessage = getMessage(
-        payload,
-        "A new OTP was sent to your email.",
-      );
-      setMessage(nextMessage);
-      toast.showToast({
-        variant: "success",
-        title: "OTP sent",
-        message: nextMessage,
-      });
+      notify("success", t("auth.toast.codeSent"), getMessage(payload, t("auth.otp.resent")));
     } catch (err) {
-      const nextMessage = userFacingError(
-        err,
-        "Unable to resend the code. Please try again.",
-      );
-      setMessage(nextMessage);
-      toast.showToast({
-        variant: "error",
-        title: "Could not resend OTP",
-        message: nextMessage,
-      });
+      notify("error", t("auth.toast.resendFailed"), userFacingError(err, t("auth.error.resend")));
     } finally {
       setResending(false);
+    }
+  };
+
+  /** Recovery resend: asks again for the same address, within the same attempt. */
+  const resendRecoveryCode = async () => {
+    const codeEmail = recovery.email;
+    if (!codeEmail || resending || loading) return;
+    if (!submissionGuard.current.tryAcquire()) return;
+    const attempt = recoveryAttempts.current.current();
+    setResending(true);
+    setMessage(null);
+    try {
+      await authService.forgotPassword({ email: codeEmail });
+      if (!isRecoveryCurrent(attempt)) return;
+      toast.showToast({ variant: "success", title: t("auth.toast.codeSent"), message: t("auth.code.detail", { email: codeEmail }) });
+    } catch (err) {
+      if (!isRecoveryCurrent(attempt)) return;
+      notify("error", t("auth.toast.resendFailed"), backendProvidedError(err, t("auth.error.resend")));
+    } finally {
+      submissionGuard.current.release();
+      if (mountedRef.current) setResending(false);
     }
   };
 
@@ -420,6 +465,12 @@ export default function AuthScreen() {
     setPendingOtpTarget(null);
   };
 
+  const changeLoginMethod = (method: IdentifierMethod) => {
+    if (loading) return;
+    setLoginMethod(method);
+    setMessage(null);
+  };
+
   const cancelPhoneCompletion = () => {
     setPassword("");
     setCompletionPhone(createEmptyPhoneValue());
@@ -427,36 +478,67 @@ export default function AuthScreen() {
     setMode("login");
   };
 
-  const resetRecovery = () => {
-    setMode("login");
-    setRecoveryEmail("");
+  const clearRecoveryDrafts = () => {
+    setAddedEmail("");
     setRecoveryCode("");
     setRecoveryPassword("");
     setRecoveryPasswordConfirmation("");
     setShowRecoveryPassword(false);
     setShowRecoveryPasswordConfirmation(false);
+  };
+
+  /** Leaves recovery: a new attempt, so nothing in flight can act on it. */
+  const resetRecovery = () => {
+    dispatchRecovery({ type: "reset", attempt: recoveryAttempts.current.next() });
+    setRecoveryEmail("");
+    setRecoveryPhone(createEmptyPhoneValue());
+    clearRecoveryDrafts();
+    setMode("login");
     setMessage(null);
   };
 
+  /** Starts recovery with the sign-in method and identifier already entered. */
   const startRecovery = () => {
+    dispatchRecovery({ type: "start", attempt: recoveryAttempts.current.next(), method: loginMethod });
     setRecoveryEmail(email.trim());
-    setRecoveryCode("");
-    setRecoveryPassword("");
-    setRecoveryPasswordConfirmation("");
+    setRecoveryPhone(loginPhone);
+    clearRecoveryDrafts();
     setMessage(null);
-    setMode("forgot-email");
+    setMode("recovery");
+  };
+
+  const changeRecoveryMethod = (method: RecoveryMethod) => {
+    if (loading || method === recovery.method) return;
+    dispatchRecovery({ type: "method", attempt: recoveryAttempts.current.next(), method });
+    clearRecoveryDrafts();
+    setMessage(null);
+  };
+
+  const editRecoveryEmail = (value: string) => {
+    setRecoveryEmail(value);
+    dispatchRecovery({ type: "identifierEdited", attempt: recoveryAttempts.current.next() });
+    setMessage(null);
+  };
+
+  const editRecoveryPhone = (value: PhoneValue) => {
+    setRecoveryPhone(value);
+    dispatchRecovery({ type: "identifierEdited", attempt: recoveryAttempts.current.next() });
+    setMessage(null);
   };
 
   const goBack = () => {
     if (mode === "complete-phone") return cancelPhoneCompletion();
-    if (mode === "forgot-email") return resetRecovery();
-    if (mode === "forgot-otp") {
-      setMode("forgot-email");
-      setMessage(null);
-      return;
-    }
-    if (mode === "reset-password") {
-      setMode("forgot-otp");
+    if (mode === "recovery") {
+      if (recovery.step === "identify") return resetRecovery();
+      // v3: new password → code; code / add email → the method step (a new
+      // attempt: the code already sent no longer belongs to the flow).
+      if (recovery.step === "newPassword") {
+        setRecoveryPassword("");
+        setRecoveryPasswordConfirmation("");
+      } else {
+        clearRecoveryDrafts();
+      }
+      dispatchRecovery({ type: "back", attempt: recoveryAttempts.current.next() });
       setMessage(null);
       return;
     }
@@ -470,76 +552,71 @@ export default function AuthScreen() {
     else router.replace("/");
   };
 
-  // v3 copy per production mode. Every mode is backed by an existing
-  // authService call; nothing here changes what is sent.
+  const identifierOptions = [
+    { key: "email" as const, label: t("auth.identifier.email") },
+    { key: "phone" as const, label: t("auth.identifier.phone") },
+  ];
+
+  // v3 copy per state. Every state is backed by an existing or verified
+  // backend call; nothing here changes what is sent.
+  const step = mode === "recovery" ? recovery.step : null;
   const title =
-    mode === "login"
-      ? "Sign in"
-      : mode === "register"
-        ? "Create account"
-        : mode === "complete-phone"
-          ? "Add your phone"
-          : mode === "otp" || mode === "forgot-otp"
-            ? "Check your email"
-            : mode === "forgot-email"
-              ? "Forgot password"
-              : "New password";
+    mode === "login" ? t("auth.login.title")
+      : mode === "register" ? t("auth.register.title")
+        : mode === "complete-phone" ? t("auth.completePhone.title")
+          : mode === "otp" ? t("auth.otp.title")
+            : step === "identify" ? t("auth.forgot.title")
+              : step === "addEmail" ? t("auth.addEmail.title")
+                : step === "code" ? t("auth.code.title")
+                  : t("auth.newPassword.title");
   const detail =
-    mode === "login"
-      ? "Use your LFA Tickets account to buy and view tickets."
-      : mode === "register"
-        ? null
-        : mode === "complete-phone"
-          ? "Please add your phone number to continue."
-          : mode === "otp"
-            ? "Enter the 6-digit code we sent to the email on your account."
-            : mode === "forgot-email"
-              ? "Enter the email you signed up with and we'll send you a 6-digit code to reset your password."
-              : mode === "forgot-otp"
-                ? `Enter the 6-digit code we sent to ${recoveryEmail}.`
-                : "Enter and confirm the new password for your account.";
+    mode === "login" ? t("auth.login.detail")
+      : mode === "register" ? null
+        : mode === "complete-phone" ? t("auth.completePhone.detail")
+          : mode === "otp" ? t("auth.otp.detail")
+            : step === "identify" ? t("auth.forgot.detail")
+              : step === "addEmail" ? t("auth.addEmail.detail", { phone: recovery.phone ? formatBackendPhoneForDisplay(recovery.phone) : "" })
+                : step === "code" ? t("auth.code.detail", { email: recovery.email ?? "" })
+                  : t("auth.newPassword.detail");
   const primaryLabel = loading
-    ? "Please wait..."
-    : mode === "login"
-      ? "Sign in"
-      : mode === "register"
-        ? "Create account"
-        : mode === "complete-phone"
-          ? "Continue"
-          : mode === "otp"
-            ? "Verify"
-            : mode === "forgot-email"
-              ? "Send code"
-              : mode === "forgot-otp"
-                ? "Verify code"
-                : "Reset password";
+    ? t("auth.action.wait")
+    : mode === "login" ? t("auth.action.signIn")
+      : mode === "register" ? t("auth.action.createAccount")
+        : mode === "complete-phone" ? t("auth.action.continue")
+          : mode === "otp" || step === "code" ? t("auth.action.verify")
+            : step === "newPassword" ? t("auth.action.resetPassword")
+              : t("auth.action.sendCode");
   const primaryDisabled =
-    loading ||
-    (mode === "login" && (!email || !password)) ||
-    (mode === "register" && (!name || !email || !password || !passwordConfirmation)) ||
+    loading || (mode === "recovery" && resending) ||
+    (mode === "login" &&
+      (!password || (loginMethod === "email" ? !email.trim() : loginPhone.validation !== "valid"))) ||
+    (mode === "register" &&
+      (!name.trim() || !password || !passwordConfirmation || registrationPhone.validation !== "valid")) ||
     (mode === "complete-phone" && completionPhone.validation !== "valid") ||
     (mode === "otp" && (!pendingOtpTarget || otp.length !== 6)) ||
-    (mode === "forgot-email" && !recoveryEmail) ||
-    (mode === "forgot-otp" && recoveryCode.length !== 6) ||
-    (mode === "reset-password" && (!recoveryPassword || !recoveryPasswordConfirmation));
+    (step === "identify" &&
+      (recovery.method === "email" ? !recoveryEmail.trim() : recoveryPhone.validation !== "valid")) ||
+    (step === "addEmail" && !addedEmail.trim()) ||
+    (step === "code" && recoveryCode.length !== 6) ||
+    (step === "newPassword" && (!recoveryPassword || !recoveryPasswordConfirmation));
   const showsLogo = mode === "login";
-  const showsMailIcon = mode === "otp" || mode === "forgot-otp";
+  const showsMailIcon = mode === "otp" || step === "addEmail" || step === "code";
+  const backLabel =
+    mode === "register" || step === "identify" ? t("auth.back.signIn") : t("auth.back.generic");
 
   return (
     <View style={[local.screen, { backgroundColor: theme.colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <KeyboardAvoidingView style={local.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={[local.shell, { width: responsive.contentWidth }]}>
-          <FlowHeader
-            title=""
-            backLabel={mode === "login" ? "Back" : mode === "register" || mode === "forgot-email" ? "Sign in" : "Back"}
-            onBack={goBack}
-          />
+          <FlowHeader title="" backLabel={backLabel} onBack={goBack} />
           <ScrollView
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={local.scrollContent}
           >
             <Animated.View
+              // Keyed by state so each v3 screen enters on its own.
+              key={step ?? mode}
               entering={reduceMotion ? undefined : FadeInDown.duration(280)}
               style={local.panel}
             >
@@ -548,7 +625,7 @@ export default function AuthScreen() {
                   source={require("../../assets/images/lfa-logo.png")}
                   style={local.logo}
                   resizeMode="contain"
-                  accessibilityLabel="Lebanese Football Association"
+                  accessibilityLabel={t("auth.logo")}
                 />
               ) : null}
               {showsMailIcon ? (
@@ -570,120 +647,184 @@ export default function AuthScreen() {
               ) : null}
 
               <View style={local.fields}>
-                {mode === "register" ? (
-                  <Field
-                    label="Full name"
-                    placeholder="Full Name"
-                    value={name}
-                    onChangeText={setName}
-                    autoCapitalize="words"
-                    textContentType="name"
-                    editable={!loading}
+                {mode === "login" || step === "identify" ? (
+                  <SegmentedControl
+                    role="radio"
+                    accessibilityLabel={mode === "login" ? t("auth.identifier.label") : t("auth.identifier.recoveryLabel")}
+                    options={identifierOptions}
+                    value={mode === "login" ? loginMethod : recovery.method}
+                    onChange={mode === "login" ? changeLoginMethod : changeRecoveryMethod}
                   />
                 ) : null}
 
-                {mode === "login" || mode === "register" ? (
+                {mode === "login" ? (
+                  <>
+                    {loginMethod === "email" ? (
+                      <Field
+                        label={t("auth.field.email")}
+                        placeholder={t("auth.field.emailPlaceholder")}
+                        value={email}
+                        onChangeText={setEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        textContentType="emailAddress"
+                        autoComplete="email"
+                        editable={!loading}
+                      />
+                    ) : (
+                      <InternationalPhoneInput
+                        label={t("auth.field.mobile")}
+                        value={loginPhone}
+                        disabled={loading}
+                        error={phoneError(loginPhone, t("auth.error.phone"))}
+                        onChange={setLoginPhone}
+                      />
+                    )}
+                    <PasswordField
+                      label={t("auth.field.password")}
+                      value={password}
+                      onChangeText={setPassword}
+                      visible={showPassword}
+                      onToggle={() => setShowPassword((value) => !value)}
+                      editable={!loading}
+                    />
+                  </>
+                ) : mode === "register" ? (
                   <>
                     <Field
-                      label="Email (optional)"
-                      placeholder="name@example.com"
+                      label={t("auth.field.fullName")}
+                      placeholder={t("auth.field.fullNamePlaceholder")}
+                      value={name}
+                      onChangeText={setName}
+                      autoCapitalize="words"
+                      textContentType="name"
+                      editable={!loading}
+                    />
+                    <Field
+                      label={t("auth.field.emailOptional")}
+                      placeholder={t("auth.field.emailPlaceholder")}
                       value={email}
                       onChangeText={setEmail}
                       keyboardType="email-address"
                       autoCapitalize="none"
                       autoCorrect={false}
                       textContentType="emailAddress"
+                      autoComplete="email"
                       editable={!loading}
                     />
-                    {mode === "register" ? (
-                      <InternationalPhoneInput
-                        value={registrationPhone}
-                        disabled={loading}
-                        error={
-                          registrationPhone.validation === "invalid" ||
-                          registrationPhone.validation === "excluded-country"
-                            ? "Enter a valid phone number for the selected phone country."
-                            : undefined
-                        }
-                        onChange={setRegistrationPhone}
-                      />
-                    ) : null}
+                    <InternationalPhoneInput
+                      label={t("auth.field.mobile")}
+                      value={registrationPhone}
+                      disabled={loading}
+                      error={phoneError(registrationPhone, t("auth.error.phone"))}
+                      onChange={setRegistrationPhone}
+                    />
                     <PasswordField
-                      label="Password"
-                      placeholder={mode === "register" ? "At least 8 characters" : undefined}
+                      label={t("auth.field.password")}
+                      placeholder={t("auth.field.passwordPlaceholder")}
                       value={password}
                       onChangeText={setPassword}
                       visible={showPassword}
                       onToggle={() => setShowPassword((value) => !value)}
                       editable={!loading}
-                      newPassword={mode === "register"}
+                      newPassword
                     />
-                    {mode === "register" ? (
-                      <PasswordField
-                        label="Confirm password"
-                        value={passwordConfirmation}
-                        onChangeText={setPasswordConfirmation}
-                        visible={showPasswordConfirmation}
-                        onToggle={() => setShowPasswordConfirmation((value) => !value)}
-                        editable={!loading}
-                        newPassword
-                      />
-                    ) : null}
+                    <PasswordField
+                      label={t("auth.field.confirmPassword")}
+                      value={passwordConfirmation}
+                      onChangeText={setPasswordConfirmation}
+                      visible={showPasswordConfirmation}
+                      onToggle={() => setShowPasswordConfirmation((value) => !value)}
+                      editable={!loading}
+                      newPassword
+                    />
                   </>
                 ) : mode === "complete-phone" ? (
                   <InternationalPhoneInput
                     value={completionPhone}
                     disabled={loading}
-                    error={
-                      completionPhone.validation === "invalid" ||
-                      completionPhone.validation === "excluded-country"
-                        ? "Enter a valid phone number for the selected phone country."
-                        : undefined
-                    }
+                    error={phoneError(completionPhone, t("auth.error.phone"))}
                     onChange={setCompletionPhone}
                   />
                 ) : mode === "otp" ? (
-                  <Field
-                    label="6-digit code"
+                  <OtpCodeInput
+                    label={t("auth.field.code")}
                     value={otp}
                     onChangeText={(value) => setOtp(value.replace(/\D/g, "").slice(0, 6))}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    textContentType="oneTimeCode"
-                    autoComplete="one-time-code"
-                    code
+                    editable={!loading}
+                    autoFocus
                   />
-                ) : mode === "forgot-email" ? (
+                ) : step === "identify" ? (
+                  recovery.method === "email" ? (
+                    <Field
+                      label={t("auth.field.email")}
+                      placeholder={t("auth.field.emailPlaceholder")}
+                      value={recoveryEmail}
+                      onChangeText={editRecoveryEmail}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      textContentType="emailAddress"
+                      autoComplete="email"
+                      editable={!loading}
+                    />
+                  ) : (
+                    <InternationalPhoneInput
+                      label={t("auth.field.mobile")}
+                      value={recoveryPhone}
+                      disabled={loading}
+                      error={phoneError(recoveryPhone, t("auth.error.phone"))}
+                      onChange={editRecoveryPhone}
+                    />
+                  )
+                ) : step === "addEmail" ? (
                   <Field
-                    label="Email"
-                    placeholder="name@example.com"
-                    value={recoveryEmail}
-                    onChangeText={setRecoveryEmail}
+                    label={t("auth.field.email")}
+                    placeholder={t("auth.field.emailPlaceholder")}
+                    value={addedEmail}
+                    onChangeText={setAddedEmail}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
                     textContentType="emailAddress"
+                    autoComplete="email"
                     editable={!loading}
                   />
-                ) : mode === "forgot-otp" ? (
-                  <Field
-                    label="6-digit code"
-                    value={recoveryCode}
-                    onChangeText={(value) =>
-                      setRecoveryCode(value.replace(/\D/g, "").slice(0, 6))
-                    }
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    editable={!loading}
-                    textContentType="oneTimeCode"
-                    autoComplete="one-time-code"
-                    code
-                  />
+                ) : step === "code" ? (
+                  <>
+                    <OtpCodeInput
+                      label={t("auth.field.code")}
+                      value={recoveryCode}
+                      onChangeText={(value) =>
+                        setRecoveryCode(value.replace(/\D/g, "").slice(0, 6))
+                      }
+                      editable={!loading}
+                      autoFocus
+                    />
+                    <View style={local.resendRow}>
+                      <AppText variant="meta" tone="muted">{t("auth.code.resendPrompt")}</AppText>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t("auth.action.resend")}
+                        aria-disabled={resending || loading}
+                        aria-busy={resending}
+                        disabled={resending || loading}
+                        onPress={resendRecoveryCode}
+                        hitSlop={8}
+                        style={local.inlineLink}
+                      >
+                        <AppText variant="meta" style={{ color: theme.colors.brandInk, opacity: resending || loading ? 0.5 : 1 }}>
+                          {resending ? t("auth.action.resending") : t("auth.action.resend")}
+                        </AppText>
+                      </Pressable>
+                    </View>
+                  </>
                 ) : (
                   <>
                     <PasswordField
-                      label="New password"
-                      placeholder="At least 8 characters"
+                      label={t("auth.field.newPassword")}
+                      placeholder={t("auth.field.passwordPlaceholder")}
                       value={recoveryPassword}
                       onChangeText={setRecoveryPassword}
                       visible={showRecoveryPassword}
@@ -692,7 +833,7 @@ export default function AuthScreen() {
                       newPassword
                     />
                     <PasswordField
-                      label="Confirm new password"
+                      label={t("auth.field.confirmNewPassword")}
                       value={recoveryPasswordConfirmation}
                       onChangeText={setRecoveryPasswordConfirmation}
                       visible={showRecoveryPasswordConfirmation}
@@ -707,7 +848,7 @@ export default function AuthScreen() {
                   <View style={local.loginRow}>
                     <Pressable
                       accessibilityRole="checkbox"
-                      accessibilityLabel="Remember me"
+                      accessibilityLabel={t("auth.remember")}
                       accessibilityState={{ checked: remember, disabled: loading }}
                       aria-checked={remember}
                       aria-disabled={loading}
@@ -728,23 +869,20 @@ export default function AuthScreen() {
                           <SymbolView name={{ ios: "checkmark", android: "check", web: "check" }} size={14} tintColor="#FFFFFF" fallback={<Text style={local.checkmark}>✓</Text>} />
                         ) : null}
                       </View>
-                      <AppText variant="meta">Remember me</AppText>
+                      <AppText variant="meta">{t("auth.remember")}</AppText>
                     </Pressable>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Forgot password"
+                      accessibilityLabel={t("auth.forgotLink")}
+                      aria-disabled={loading}
                       onPress={startRecovery}
                       disabled={loading}
                       hitSlop={8}
                       style={local.linkButton}
                     >
-                      <AppText variant="meta" style={{ color: theme.colors.brandInk }}>Forgot password?</AppText>
+                      <AppText variant="meta" style={{ color: theme.colors.brandInk }}>{t("auth.forgotLink")}</AppText>
                     </Pressable>
                   </View>
-                ) : null}
-
-                {mode === "register" ? (
-                  <AppText variant="meta" tone="muted" style={local.note}>{"We'll email you a code to verify your address."}</AppText>
                 ) : null}
 
                 {message ? (
@@ -757,17 +895,15 @@ export default function AuthScreen() {
           <View style={local.actions}>
             <Button title={primaryLabel} disabled={primaryDisabled} loading={loading} onPress={submit} />
             {mode === "login" ? (
-              <Button title="Create account" variant="tonal" onPress={() => switchMode("register")} />
+              <Button title={t("auth.action.createAccount")} variant="tonal" onPress={() => switchMode("register")} />
             ) : mode === "register" || mode === "otp" ? (
-              <Button title={mode === "otp" ? "Back to sign in" : "I already have an account"} variant="ghost" onPress={() => switchMode("login")} />
+              <Button title={mode === "otp" ? t("auth.action.backToSignIn") : t("auth.action.haveAccount")} variant="ghost" onPress={() => switchMode("login")} />
             ) : mode === "complete-phone" ? (
-              <Button title="Back to sign in" variant="ghost" onPress={cancelPhoneCompletion} disabled={loading} />
-            ) : (
-              <Button title="Cancel password reset" variant="ghost" onPress={resetRecovery} />
-            )}
-            {mode === "otp" ? (
+              <Button title={t("auth.action.backToSignIn")} variant="ghost" onPress={cancelPhoneCompletion} disabled={loading} />
+            ) : null}
+            {mode === "otp" && otpTargetEmail ? (
               <Button
-                title={resending ? "Sending..." : "Resend code"}
+                title={resending ? t("auth.action.resending") : t("auth.action.resend")}
                 variant="ghost"
                 tone="muted"
                 disabled={resending || !pendingOtpTarget}
@@ -783,8 +919,6 @@ export default function AuthScreen() {
 
 type FieldProps = {
   label: string;
-  /** A one-time code: large, spaced digits (v3 code boxes as one field). */
-  code?: boolean;
 } & Pick<
   React.ComponentProps<typeof TextInput>,
   | "value"
@@ -800,7 +934,7 @@ type FieldProps = {
 >;
 
 /** v3 field: muted label, 52pt input, radius 12, hairline ring (2pt brand ring while focused). */
-function Field({ label, code = false, ...inputProps }: FieldProps) {
+function Field({ label, ...inputProps }: FieldProps) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   return (
@@ -814,7 +948,6 @@ function Field({ label, code = false, ...inputProps }: FieldProps) {
         placeholderTextColor={theme.colors.textMuted}
         style={[
           local.input,
-          code && local.codeInput,
           {
             color: theme.colors.textStrong,
             backgroundColor: theme.colors.surface,
@@ -847,6 +980,7 @@ function PasswordField({
   newPassword?: boolean;
 }) {
   const theme = useTheme();
+  const i18n = useI18n();
   const [focused, setFocused] = useState(false);
   return (
     <View style={local.inputWrap}>
@@ -878,7 +1012,7 @@ function PasswordField({
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={visible ? `Hide ${label}` : `Show ${label}`}
+          accessibilityLabel={i18n.t(visible ? "auth.field.hide" : "auth.field.show", { label })}
           onPress={onToggle}
           hitSlop={8}
           style={local.visibilityButton}
@@ -912,7 +1046,6 @@ const local = {
   inputWrap: { gap: 6 },
   label: { paddingStart: 4, fontWeight: "500" as const },
   input: { minHeight: 52, borderRadius: 12, paddingHorizontal: 14, fontSize: 17 },
-  codeInput: { textAlign: "center" as const, fontSize: 24, fontWeight: "600" as const, letterSpacing: 10 },
   passwordField: { minHeight: 52, borderRadius: 12, flexDirection: "row" as const, alignItems: "center" as const },
   passwordInput: { flex: 1, minHeight: 50, paddingHorizontal: 14, fontSize: 17 },
   visibilityButton: { width: 48, height: 48, alignItems: "center" as const, justifyContent: "center" as const },
@@ -921,6 +1054,9 @@ const local = {
   checkbox: { width: 22, height: 22, borderWidth: 2, borderRadius: 6, alignItems: "center" as const, justifyContent: "center" as const },
   checkmark: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" as const },
   linkButton: { minHeight: 44, justifyContent: "center" as const, paddingStart: 12 },
+  // v3 "Didn't get it? …" line under the code.
+  resendRow: { flexDirection: "row" as const, alignItems: "center" as const, flexWrap: "wrap" as const, gap: 4, paddingHorizontal: 4 },
+  inlineLink: { minHeight: 44, justifyContent: "center" as const },
   note: { paddingHorizontal: 4, fontWeight: "400" as const },
   // v3 bottom actions: 52pt primary, secondary below (the keyboard lifts them).
   actions: { width: "100%" as const, maxWidth: 520, alignSelf: "center" as const, gap: 10, paddingTop: 12, paddingBottom: 10 },

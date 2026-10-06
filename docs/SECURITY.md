@@ -51,7 +51,27 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
 - `clearUserScopedCaches()` runs whenever the identity key changes.
 - `CartProvider` is keyed by identity; `withAuthRequired` keys screens by
   `userCacheKey` — no state survives an account switch.
-- Auth forms are single-submission (`src/lib/authSubmissionGuard.ts`).
+- Auth forms are single-submission (`src/lib/authSubmissionGuard.ts`); the
+  password-recovery "Resend code" shares the same synchronous guard as the
+  recovery submit, so a resend and a verify can never be in flight together.
+- A persisted or `/auth/me` user with `email: null` (a phone-only account) is
+  valid; any other non-string email is still rejected.
+
+### 2.2a Password recovery (frontend guarantees)
+- One owner (`src/lib/passwordRecovery.ts`); passwords and codes live only in
+  screen memory (no storage, no logging, no route params).
+- The client never infers whether an account or email exists: it branches
+  only on the backend's `reason: "email_required"`, never on message text.
+  The generic forgot-password answer for known and unknown emails is
+  preserved as-is (it deliberately hides account existence).
+- Each request belongs to one attempt; changing the identifier or method,
+  Back, cancel and completion start a new one, and late answers (success or
+  error) for an earlier attempt are dropped.
+- `add-email` is sent only for the phone the backend answered
+  `email_required` for in the current attempt, and the flow moves to the
+  code only after a 2xx. **This sequencing is UX, not a security boundary**
+  (§3.18).
+- Recovery never signs the user in; it returns to Sign in.
 
 ### 2.3 Auth return routes and deep links
 - Scheme `lfa-app`. Expo Router maps deep links to routes; customer routes are
@@ -197,7 +217,7 @@ frontend requirement.
   visible to the app).
 - Login / Register never impose a client-side OTP; the backend decides by
   withholding the session (`credentialOutcome`). A backend-required code is
-  still collected; password recovery keeps its OTP steps.
+  still collected; password recovery keeps its OTP steps (§2.2a).
 - The BLUE handoff record carries an optional display-only
   `purchasedMatchId` (success → "View my ticket"); it never takes part in URL
   validation, terminal handling, payment locks or cart clearing.
@@ -349,6 +369,31 @@ differently.
 `paymentFailureKind` classifies 503 as maintenance, not unknown, so it does
 not lock the session. This assumes the gateway rejects before processing.
 Unverified; changing it is a product/backend decision.
+
+### 3.18 `forgot-password/add-email` attaches an email without ownership proof — HIGH (backend)
+Observed on staging (2026-10-06): `POST /auth/forgot-password/add-email`
+`{ email, phone }` needs no authentication, and for an account without an
+email it **persisted the supplied email** (it then appeared on the account's
+profile, unverified) and sent the reset code there — before any OTP or other
+proof that the caller owns the phone. An attacker who knows the phone number
+of an email-less account can therefore attach an address they control and
+reset that account's password: a potential account-takeover path.
+- This is a **backend** security concern. The client exposing the step only
+  after `email_required` (§2.2a) is not a security boundary: anyone can call
+  the endpoint directly.
+- The backend must establish ownership (e.g. a code to the phone, or a
+  verified pending email) before permanently attaching a recovery email or
+  letting it become recovery authority.
+- Not established: whether the endpoint can overwrite an existing email (not
+  probed), and any backend remediation. No fix is documented here because
+  none has been verified.
+
+### 3.19 Registration does not enforce password confirmation server-side — LOW/MEDIUM (backend)
+Observed on staging (2026-10-06): a direct `POST /auth/register` whose
+`password_confirmation` did not match `password` was accepted (201, account
+created). The client's confirmation check is UX only and must not be treated
+as enforcement. The backend should enforce (or explicitly drop) the
+`confirmed` rule.
 
 ---
 

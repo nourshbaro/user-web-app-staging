@@ -217,6 +217,12 @@ export function toBackendPhoneDigits(
     return canonicalPhone ? canonicalPhone.replace(/^\+/, "") : "";
 }
 
+/** Digits-only backend phone ("96171123456") → international display ("+961 71 123 456"). */
+export function formatBackendPhoneForDisplay(digits: string): string {
+    const phone = parsePhoneNumberFromString(`+${digits}`);
+    return phone?.isValid() ? phone.formatInternational() : `+${digits}`;
+}
+
 export function initializePhoneValue(
     savedPhone: string | null | undefined,
     fallbackPhoneCountry: PhoneCountryCode = DEFAULT_PHONE_COUNTRY,

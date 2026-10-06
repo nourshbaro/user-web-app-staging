@@ -5,17 +5,21 @@ import test from "node:test";
 const serviceSource = await readFile(new URL("./auth.ts", import.meta.url), "utf8");
 const screenSource = await readFile(new URL("../app/auth.tsx", import.meta.url), "utf8");
 
-test("login sends the backend-owned remember boolean without changing session handling", () => {
+test("login sends the email-or-phone identifier and the backend-owned remember boolean", () => {
   assert.match(
     serviceSource,
-    /async login\(\s*email: string,\s*password: string,\s*remember: boolean,?\s*\)/,
+    /async login\(\s*identifier: LoginIdentifier,\s*password: string,\s*remember: boolean,?\s*\)/,
   );
-  assert.match(serviceSource, /JSON\.stringify\(\{ email, password, remember \}\)/);
+  assert.match(serviceSource, /export type LoginIdentifier = \{ email: string \} \| \{ phone: string \};/);
+  assert.match(serviceSource, /JSON\.stringify\(\{ \.\.\.identifierBody\(identifier\), password, remember \}\)/);
   assert.match(serviceSource, /await this\.saveSession\(payload\)/);
   assert.match(
     screenSource,
-    /authService\.login\(\s*trimmedEmail,\s*password,\s*remember,?\s*\)/,
+    /authService\.login\(identifier, password, remember\)/,
   );
+  // The phone identifier is the shared international-phone digits, never a second parser.
+  assert.match(screenSource, /identifier = \{ phone: toBackendPhoneDigits\(loginPhone\.canonicalPhone\) \}/);
+  assert.match(screenSource, /identifier = \{ email: trimmedEmail \}/);
   assert.match(screenSource, /useState\(false\)/);
   assert.match(screenSource, /accessibilityRole="checkbox"/);
 });
@@ -25,8 +29,15 @@ test("forgot-password service methods use the exact paths and payload field name
     serviceSource.indexOf("  async resetPassword("),
     serviceSource.indexOf("  async checkEmailVerification("),
   );
-  assert.match(serviceSource, /apiRequest\("\/auth\/forgot-password"/);
-  assert.match(serviceSource, /JSON\.stringify\(\{ email \}\)/);
+  const addEmailMethod = serviceSource.slice(
+    serviceSource.indexOf("  async addRecoveryEmail("),
+    serviceSource.indexOf("  async verifyForgotPasswordOtp("),
+  );
+  assert.match(serviceSource, /apiRequest<unknown>\("\/auth\/forgot-password"/);
+  assert.match(serviceSource, /body: JSON\.stringify\(identifierBody\(identifier\)\)/);
+  assert.match(addEmailMethod, /apiRequest\("\/auth\/forgot-password\/add-email"/);
+  assert.match(addEmailMethod, /JSON\.stringify\(\{ email, phone \}\)/);
+  assert.match(addEmailMethod, /skipUnauthenticatedNotify: true/);
   assert.match(serviceSource, /apiRequest\("\/auth\/forgot-password\/verify-otp"/);
   assert.match(serviceSource, /JSON\.stringify\(\{ email, code \}\)/);
   assert.match(serviceSource, /apiRequest\("\/auth\/reset-password"/);
@@ -36,13 +47,16 @@ test("forgot-password service methods use the exact paths and payload field name
 
 test("recovery OTP remains a six-character string and registration reuses shared phone UI", () => {
   assert.match(screenSource, /setRecoveryCode\(value\.replace\(\/\\D\/g, ""\)\.slice\(0, 6\)\)/);
+  // Verify and reset are keyed by the address the backend sent this attempt's
+  // code to (`recovery.email`), never a live field.
+  assert.match(screenSource, /const codeEmail = recovery\.email;/);
   assert.match(
     screenSource,
-    /verifyForgotPasswordOtp\(\s*recoveryEmail,\s*recoveryCode,?\s*\)/,
+    /verifyForgotPasswordOtp\(codeEmail, recoveryCode\)/,
   );
   assert.match(
     screenSource,
-    /resetPassword\(\s*recoveryEmail,\s*recoveryCode,\s*recoveryPassword,\s*recoveryPasswordConfirmation,?\s*\)/,
+    /resetPassword\(\s*codeEmail,\s*recoveryCode,\s*recoveryPassword,\s*recoveryPasswordConfirmation,?\s*\)/,
   );
   assert.match(screenSource, /<InternationalPhoneInput/);
   assert.match(screenSource, /value=\{registrationPhone\}/);
@@ -69,6 +83,19 @@ test("phone completion keeps credentials in screen memory and clears them on suc
   assert.doesNotMatch(screenSource, /params[^\n]*password|password[^\n]*params/);
   assert.doesNotMatch(screenSource, /storage\.(set|remove)|SecureStore|AsyncStorage/);
   assert.doesNotMatch(screenSource, /console\.(log|error)[^\n]*password/);
+});
+
+test("registration sends email only when one is given, and requires a valid phone", () => {
+  const registerMethod = serviceSource.slice(
+    serviceSource.indexOf("  async register("),
+    serviceSource.indexOf("  async me("),
+  );
+  assert.match(registerMethod, /email: string \| null,/);
+  assert.match(registerMethod, /\.\.\.\(email \? \{ email \} : \{\}\),/);
+  const register = screenSource.slice(screenSource.indexOf(`if (mode === "register") {`), screenSource.indexOf(`if (mode === "otp") {`));
+  assert.match(register, /if \(registrationEmail && !isValidRecoveryEmail\(registrationEmail\)\)/);
+  assert.match(register, /registrationEmail \|\| null,/);
+  assert.match(register, /if \(registrationPhone\.validation !== "valid"\)/);
 });
 
 test("registration payload sends the digits-only phone contract now that it is authoritative", () => {
