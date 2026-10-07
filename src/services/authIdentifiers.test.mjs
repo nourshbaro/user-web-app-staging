@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
 import { toBackendPhoneDigits, updateNationalPhone } from "../lib/phoneNumber.ts";
+import { registrationName } from "../lib/registrationName.ts";
 
 function moduleUrl(source) {
   return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
@@ -84,6 +85,38 @@ test("an invalid phone never yields an identifier", () => {
   assert.equal(toBackendPhoneDigits(invalid.canonicalPhone), "");
   // An excluded country is never accepted either.
   assert.equal(updateNationalPhone("+972501234567", "LB").validation, "excluded-country");
+});
+
+test("First + Last name reach the backend as exactly one trimmed `name` (no name-part fields)", async () => {
+  const { authService, calls } = await loadAuthService({ respond: () => SESSION });
+  const result = registrationName("  Nour ", " Shbaro  ");
+  assert.equal(result.ok, true);
+  const phone = toBackendPhoneDigits(updateNationalPhone("71 123 456", "LB").canonicalPhone);
+  await authService.register(result.name, null, "Abcdef12!", "Abcdef12!", phone);
+  // The existing payload shape, unchanged: optional email omitted when empty,
+  // digits-only phone, confirmation still sent.
+  assert.deepEqual(calls[0].body, {
+    name: "Nour Shbaro",
+    password: "Abcdef12!",
+    password_confirmation: "Abcdef12!",
+    phone: "96171123456",
+  });
+  for (const field of ["first_name", "last_name", "firstName", "lastName", "email"]) {
+    assert.equal(field in calls[0].body, false, `${field} is not sent`);
+  }
+});
+
+test("a supplied email is still sent alongside the combined name", async () => {
+  const { authService, calls } = await loadAuthService({ respond: () => SESSION });
+  const result = registrationName("نور", "شبارو");
+  await authService.register(result.name, "fan@example.com", "Abcdef12!", "Abcdef12!", "96171123456");
+  assert.deepEqual(calls[0].body, {
+    name: "نور شبارو",
+    email: "fan@example.com",
+    password: "Abcdef12!",
+    password_confirmation: "Abcdef12!",
+    phone: "96171123456",
+  });
 });
 
 test("registration with an email sends it", async () => {

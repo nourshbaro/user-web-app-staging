@@ -42,6 +42,7 @@ import {
   recoveryTarget,
   type RecoveryMethod,
 } from "@/lib/passwordRecovery";
+import { registrationName } from "@/lib/registrationName";
 import { backendProvidedError, userFacingError } from "@/lib/userFacingError";
 import { credentialOutcome, credentialUserId } from "@/lib/authCredentialOutcome";
 import { getSafeAuthReturnRoute } from "@/lib/authReturnRoute";
@@ -75,7 +76,9 @@ export default function AuthScreen() {
   const t = i18n.t;
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>("login");
-  const [name, setName] = useState("");
+  // Registration name parts; combined only at submit (`registrationName`).
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
@@ -230,6 +233,17 @@ export default function AuthScreen() {
       }
 
       if (mode === "register") {
+        // First and last name are required; the backend gets one `name`,
+        // built here from the current field values.
+        const nameResult = registrationName(firstName, lastName);
+        if (!nameResult.ok) {
+          notify(
+            "error",
+            t("auth.toast.checkDetails"),
+            nameResult.missing === "firstName" ? t("auth.error.firstName") : t("auth.error.lastName"),
+          );
+          return;
+        }
         // Email is optional; when given it must be a valid address.
         const registrationEmail = email.trim();
         if (registrationEmail && !isValidRecoveryEmail(registrationEmail)) {
@@ -245,7 +259,7 @@ export default function AuthScreen() {
           return;
         }
         const payload = await authService.register(
-          name.trim(),
+          nameResult.name,
           registrationEmail || null,
           password,
           passwordConfirmation,
@@ -603,7 +617,7 @@ export default function AuthScreen() {
     (mode === "login" &&
       (!password || (loginMethod === "email" ? !email.trim() : loginPhone.validation !== "valid"))) ||
     (mode === "register" &&
-      (!name.trim() || !password || !passwordConfirmation || registrationPhone.validation !== "valid")) ||
+      (!firstName.trim() || !lastName.trim() || !password || !passwordConfirmation || registrationPhone.validation !== "valid")) ||
     (mode === "complete-phone" && completionPhone.validation !== "valid") ||
     (mode === "otp" && (!pendingOtpTarget || otp.length !== 6)) ||
     (step === "identify" &&
@@ -705,12 +719,21 @@ export default function AuthScreen() {
                 ) : mode === "register" ? (
                   <>
                     <Field
-                      label={t("auth.field.fullName")}
-                      placeholder={t("auth.field.fullNamePlaceholder")}
-                      value={name}
-                      onChangeText={setName}
+                      label={t("auth.field.firstName")}
+                      value={firstName}
+                      onChangeText={setFirstName}
                       autoCapitalize="words"
-                      textContentType="name"
+                      textContentType="givenName"
+                      autoComplete="given-name"
+                      editable={!loading}
+                    />
+                    <Field
+                      label={t("auth.field.lastName")}
+                      value={lastName}
+                      onChangeText={setLastName}
+                      autoCapitalize="words"
+                      textContentType="familyName"
+                      autoComplete="family-name"
                       editable={!loading}
                     />
                     <Field
