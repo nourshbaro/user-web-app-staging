@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-10-06 · Authentication & Recovery batch (Codex: PASS WITH FINDINGS, finding fixed; uncommitted on `7952b77`)
+**As of:** 2026-10-07 · Phone recovery branching correction (Codex: PASS; uncommitted on `39ea18d`)
 
 ---
 
@@ -32,9 +32,50 @@
 - ✅ Post-redesign corrections committed (`15eb650`).
 - ✅ **System states + Design C icon: implemented, pending review.**
   Uncommitted on `15eb650`.
-- ✅ **Authentication & Recovery: implemented, Codex-reviewed (PASS WITH
-  FINDINGS; the MEDIUM finding fixed).** Uncommitted on `7952b77`.
+- ✅ Authentication & Recovery: implemented, Codex-reviewed (PASS WITH
+  FINDINGS; the MEDIUM finding fixed); committed (`3836c81`).
+- ✅ **Phone recovery branching correction: implemented, Codex PASS.**
+  Uncommitted on `39ea18d`.
 - ▶ **Next:** commit approval; the backend dependencies below.
+
+## Phone recovery branching correction (2026-10-07)
+
+Authoritative rule for `POST /auth/forgot-password` started with a phone,
+branching only on the structured `reason` (never message text):
+
+- `reason: "email_required"` → **add email** → OTP → new password → Sign in
+  (add-email sends the reducer-bound phone; the code step is then keyed by the
+  added email).
+- any other successful answer → **OTP immediately**, bound to the phone that
+  started the attempt (`phoneCodeSent`). The flow no longer stays on the
+  phone step.
+
+Verify, reset and resend send the attempt's one recovery identity
+(`recoveryTarget`: the address the code was sent to, otherwise the bound
+phone; none before a code exists). Stale-attempt protection, the shared
+synchronous Verify / Resend guard, the six-cell OTP over one six-digit value
+and memory-only codes / passwords are unchanged.
+
+**Current staging limitation (verified 2026-10-07, non-existent identifiers
+only):** `forgot-password/verify-otp` `{ phone, code }` → 422 "The email field
+is required."; `reset-password` with `phone` → 422 "The email field is
+required." **Phone → OTP is implemented; Phone → OTP → New Password → Sign in
+is not yet end-to-end functional**: Verify on a phone-bound code shows that
+422 inline and keeps the step. No email is invented. Backend dependency
+(`docs/API_INTEGRATION.md` §5.2–§5.3).
+
+**Validation:**
+
+| Check | Result |
+| --- | --- |
+| Tests (`AGENTS.md` §13 command, incl. untracked) | **1040/1040 passing** |
+| `npx tsc --noEmit` | clean |
+| `npx expo lint` | 0 errors, 1 existing warning (`services/auth.ts` `fields`) |
+| `git diff --check` | clean |
+
+**Not runtime-verified:** the phone → OTP step and the add-email screen in the
+app (no staging test account); completing any phone reset (blocked by the
+backend).
 
 ## Authentication & Recovery (2026-10-06)
 
@@ -69,8 +110,8 @@ Design: LFA Screen v3 `login`, `register`, `forgot`, `forgot_email`,
   answer). It is recorded as a pending backend dependency with an exact
   change request in `docs/API_INTEGRATION.md` §5.3; no workaround was built.
 - Removed the superseded fallback that told a phone user to switch to Email
-  and type the account's address: the phone-with-email answer now shows the
-  backend's own message and does not advance.
+  and type the account's address. (The phone generic answer now opens the
+  OTP step — see the 2026-10-07 correction above.)
 - v3 six-cell OTP (`src/components/account/OtpCodeInput.tsx`) on both code
   steps: one numeric six-digit value, one native input (paste, iOS
   `oneTimeCode` / Android `sms-otp` autofill), active-cell ring and caret
@@ -93,14 +134,14 @@ six cells with the active ring and caret; non-digits dropped; six-digit
 limit; Verify enabled only when complete and reaching the backend
 ("Invalid or expired code." inline, step kept); real Resend ("Code sent");
 a throttled request shows the backend's "Too many requests." inline;
-phone-with-email shows the backend's generic message and stays (no email
-prompt). Paste and OS autofill were not exercised (no SMS / clipboard
+no email prompt on the phone path (the 2026-10-06 build then stayed on the
+phone step; superseded by the 2026-10-07 correction). Paste and OS autofill were not exercised (no SMS / clipboard
 source on the emulator).
 
 **Android runtime (emulator, dev build, staging; before the Codex fix):**
 the toggle; an invalid phone (inline error, Sign in disabled); Forgot
 password keeping the method and number; phone recovery's generic answer
-(stays; the guidance shown then was later removed, see above); email
+(that build stayed on the phone step; superseded on 2026-10-07); email
 recovery to the code step; a wrong code
 (backend error inline, step kept); Back code → method step → Sign in; the
 register layout; a real **phone sign-in** and log-out.
@@ -119,9 +160,11 @@ backend signal).
 1. **HIGH — `add-email` ownership:** the endpoint is unauthenticated and
    persisted an email on an email-less account before any ownership proof
    (`docs/SECURITY.md` §3.18).
-2. **Phone recovery for an account that has an email cannot continue:** the
-   answer is generic, and verify / reset accept only `email`. Required:
-   a recovery-token contract (`docs/API_INTEGRATION.md` §5.3).
+2. **Phone recovery after the generic answer cannot complete:** the client
+   reaches the OTP step bound to the phone, but staging verify / reset reject
+   `phone` (422 "The email field is required.", verified 2026-10-07).
+   Required: verify / reset accepting the phone, or the recommended
+   recovery-token contract (`docs/API_INTEGRATION.md` §5.3, not implemented).
 3. **No unknown-email → phone branching:** the generic email answer hides
    whether an email exists. Required: a distinct `email_not_found` answer
    with a user-facing message, accepting the enumeration trade-off

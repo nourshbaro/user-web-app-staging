@@ -304,16 +304,21 @@ export const authService = {
     });
   },
 
-  async verifyForgotPasswordOtp(email: string, code: string) {
+  /**
+   * Verify and reset are keyed by the attempt's recovery identity
+   * (`recoveryTarget`), one field, like `forgotPassword`. Staging accepts
+   * only `email` today; a phone-keyed attempt gets its 422 back unchanged.
+   */
+  async verifyForgotPasswordOtp(target: RecoveryIdentifier, code: string) {
     return apiRequest("/auth/forgot-password/verify-otp", {
       method: "POST",
-      body: JSON.stringify({ email, code }),
+      body: JSON.stringify({ ...identifierBody(target), code }),
       skipUnauthenticatedNotify: true,
     });
   },
 
   async resetPassword(
-    email: string,
+    target: RecoveryIdentifier,
     code: string,
     password: string,
     passwordConfirmation: string,
@@ -321,7 +326,7 @@ export const authService = {
     return apiRequest("/auth/reset-password", {
       method: "POST",
       body: JSON.stringify({
-        email,
+        ...identifierBody(target),
         code,
         password,
         "password_confirmation": passwordConfirmation,

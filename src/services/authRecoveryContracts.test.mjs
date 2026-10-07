@@ -39,7 +39,9 @@ test("forgot-password service methods use the exact paths and payload field name
   assert.match(addEmailMethod, /JSON\.stringify\(\{ email, phone \}\)/);
   assert.match(addEmailMethod, /skipUnauthenticatedNotify: true/);
   assert.match(serviceSource, /apiRequest\("\/auth\/forgot-password\/verify-otp"/);
-  assert.match(serviceSource, /JSON\.stringify\(\{ email, code \}\)/);
+  // Verify and reset send one recovery-identity field, like forgot-password.
+  assert.match(serviceSource, /JSON\.stringify\(\{ \.\.\.identifierBody\(target\), code \}\)/);
+  assert.match(resetMethod, /\.\.\.identifierBody\(target\),\s*code,/);
   assert.match(serviceSource, /apiRequest\("\/auth\/reset-password"/);
   assert.match(resetMethod, /"password_confirmation": passwordConfirmation/);
   assert.doesNotMatch(resetMethod, /password-confirmation/);
@@ -47,16 +49,17 @@ test("forgot-password service methods use the exact paths and payload field name
 
 test("recovery OTP remains a six-character string and registration reuses shared phone UI", () => {
   assert.match(screenSource, /setRecoveryCode\(value\.replace\(\/\\D\/g, ""\)\.slice\(0, 6\)\)/);
-  // Verify and reset are keyed by the address the backend sent this attempt's
-  // code to (`recovery.email`), never a live field.
-  assert.match(screenSource, /const codeEmail = recovery\.email;/);
+  // Verify and reset are keyed by this attempt's recovery identity
+  // (`recoveryTarget`: the address the code was sent to, else the bound
+  // phone), never a live field.
+  assert.match(screenSource, /const codeTarget = recoveryTarget\(recovery\);/);
   assert.match(
     screenSource,
-    /verifyForgotPasswordOtp\(codeEmail, recoveryCode\)/,
+    /verifyForgotPasswordOtp\(codeTarget, recoveryCode\)/,
   );
   assert.match(
     screenSource,
-    /resetPassword\(\s*codeEmail,\s*recoveryCode,\s*recoveryPassword,\s*recoveryPasswordConfirmation,?\s*\)/,
+    /resetPassword\(\s*codeTarget,\s*recoveryCode,\s*recoveryPassword,\s*recoveryPasswordConfirmation,?\s*\)/,
   );
   assert.match(screenSource, /<InternationalPhoneInput/);
   assert.match(screenSource, /value=\{registrationPhone\}/);

@@ -71,6 +71,11 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   `email_required` for in the current attempt, and the flow moves to the
   code only after a 2xx. **This sequencing is UX, not a security boundary**
   (§3.18).
+- A phone recovery attempt that receives the generic successful
+  forgot-password response advances to the code step bound to that
+  attempt's phone. Verify, Reset and Resend use only the recovery identity
+  bound to that attempt (`recoveryTarget`); they never use a live form field
+  or infer the account's email.
 - Recovery never signs the user in; it returns to Sign in.
 
 ### 2.3 Auth return routes and deep links

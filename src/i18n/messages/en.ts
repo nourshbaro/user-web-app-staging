@@ -558,6 +558,7 @@ export const en = {
   "auth.addEmail.detail": "There's no email on the account for {phone}. Enter one and we'll send your reset code there. It will be saved to your account.",
   "auth.code.title": "Enter the code",
   "auth.code.detail": "Enter the 6-digit code we sent to {email}.",
+  "auth.code.detailPhone": "Enter the 6-digit reset code for the account on {phone}.",
   "auth.code.resendPrompt": "Didn't get it?",
   "auth.newPassword.title": "New password",
   "auth.newPassword.detail": "Choose a new password for your account.",

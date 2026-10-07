@@ -146,14 +146,25 @@ test("add-email failure propagates (the screen keeps the step and the values)", 
   await assert.rejects(authService.addRecoveryEmail("96171123456", "test2@example.com"), /Account not found/);
 });
 
-test("recovery OTP and reset stay keyed by email (backend authority)", async () => {
+test("recovery OTP and reset send exactly the attempt's one recovery identity", async () => {
   const { authService, calls } = await loadAuthService({ respond: () => ({}) });
-  await authService.verifyForgotPasswordOtp("fan@example.com", "123456");
-  await authService.resetPassword("fan@example.com", "123456", "Newpass1!", "Newpass1!");
+  await authService.verifyForgotPasswordOtp({ email: "fan@example.com" }, "123456");
+  await authService.resetPassword({ email: "fan@example.com" }, "123456", "Newpass1!", "Newpass1!");
+  await authService.verifyForgotPasswordOtp({ phone: "96171123456" }, "123456");
+  await authService.resetPassword({ phone: "96171123456" }, "123456", "Newpass1!", "Newpass1!");
   assert.deepEqual(calls.map(({ path, body }) => [path, body]), [
     ["/auth/forgot-password/verify-otp", { email: "fan@example.com", code: "123456" }],
     ["/auth/reset-password", { email: "fan@example.com", code: "123456", password: "Newpass1!", password_confirmation: "Newpass1!" }],
+    ["/auth/forgot-password/verify-otp", { phone: "96171123456", code: "123456" }],
+    ["/auth/reset-password", { phone: "96171123456", code: "123456", password: "Newpass1!", password_confirmation: "Newpass1!" }],
   ]);
+});
+
+test("a phone-keyed verify the backend rejects propagates its own message (staging 2026-10-07)", async () => {
+  const { authService } = await loadAuthService({
+    respond: () => { throw Object.assign(new Error("The email field is required."), { status: 422 }); },
+  });
+  await assert.rejects(authService.verifyForgotPasswordOtp({ phone: "96171123456" }, "123456"), /The email field is required\./);
 });
 
 test("a phone-only account (email: null) is a valid /auth/me user and a valid persisted user", async () => {

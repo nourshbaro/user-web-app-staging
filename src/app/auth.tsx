@@ -39,6 +39,7 @@ import {
   initialRecoveryState,
   isValidRecoveryEmail,
   recoveryReducer,
+  recoveryTarget,
   type RecoveryMethod,
 } from "@/lib/passwordRecovery";
 import { backendProvidedError, userFacingError } from "@/lib/userFacingError";
@@ -314,12 +315,13 @@ export default function AuthScreen() {
             dispatchRecovery({ type: "emailRequired", attempt: recoveryAttempt, phone });
             return;
           }
-          // Backend dependency (docs/API_INTEGRATION.md §5.2): a phone account
-          // that has an email gets the generic answer, and verify / reset
-          // accept only `email` — there is no phone or recovery-token
-          // contract to continue with. The flow neither advances nor asks
-          // for the account's email; it shows the backend's own message.
-          setMessage(getMessage(answer, t("auth.error.generic")));
+          // Any other success: the code step for this phone's attempt. The
+          // backend does not say where the code went, so the toast is its
+          // own message; verify / reset are keyed by the bound phone.
+          setRecoveryCode("");
+          dispatchRecovery({ type: "phoneCodeSent", attempt: recoveryAttempt, phone });
+          setMessage(null);
+          toast.showToast({ variant: "success", title: t("auth.toast.codeSent"), message: getMessage(answer, t("auth.otp.resent")) });
           return;
         }
 
@@ -340,15 +342,16 @@ export default function AuthScreen() {
           return;
         }
 
-        const codeEmail = recovery.email;
-        if (!codeEmail) return;
+        // The identity this attempt's code belongs to — never a live field.
+        const codeTarget = recoveryTarget(recovery);
+        if (!codeTarget) return;
 
         if (recovery.step === "code") {
           if (recoveryCode.length !== 6) {
             notify("warning", t("auth.toast.checkDetails"), t("auth.otp.required"));
             return;
           }
-          await authService.verifyForgotPasswordOtp(codeEmail, recoveryCode);
+          await authService.verifyForgotPasswordOtp(codeTarget, recoveryCode);
           if (!isRecoveryCurrent(recoveryAttempt)) return;
           dispatchRecovery({ type: "codeVerified", attempt: recoveryAttempt });
           return;
@@ -363,7 +366,7 @@ export default function AuthScreen() {
           return;
         }
         await authService.resetPassword(
-          codeEmail,
+          codeTarget,
           recoveryCode,
           recoveryPassword,
           recoveryPasswordConfirmation,
@@ -372,7 +375,7 @@ export default function AuthScreen() {
         // Back to Sign in with the identifier the recovery used.
         const method = recovery.method;
         if (method === "phone") setLoginPhone(recoveryPhone);
-        else setEmail(codeEmail);
+        else if ("email" in codeTarget) setEmail(codeTarget.email);
         setLoginMethod(method);
         setPassword("");
         resetRecovery();
@@ -437,18 +440,24 @@ export default function AuthScreen() {
     }
   };
 
-  /** Recovery resend: asks again for the same address, within the same attempt. */
+  /** Recovery resend: asks again for the same address or phone, within the same attempt. */
   const resendRecoveryCode = async () => {
-    const codeEmail = recovery.email;
-    if (!codeEmail || resending || loading) return;
+    const codeTarget = recoveryTarget(recovery);
+    if (!codeTarget || resending || loading) return;
     if (!submissionGuard.current.tryAcquire()) return;
     const attempt = recoveryAttempts.current.current();
     setResending(true);
     setMessage(null);
     try {
-      await authService.forgotPassword({ email: codeEmail });
+      const answer = await authService.forgotPassword(codeTarget);
       if (!isRecoveryCurrent(attempt)) return;
-      toast.showToast({ variant: "success", title: t("auth.toast.codeSent"), message: t("auth.code.detail", { email: codeEmail }) });
+      toast.showToast({
+        variant: "success",
+        title: t("auth.toast.codeSent"),
+        message: "email" in codeTarget
+          ? t("auth.code.detail", { email: codeTarget.email })
+          : getMessage(answer, t("auth.otp.resent")),
+      });
     } catch (err) {
       if (!isRecoveryCurrent(attempt)) return;
       notify("error", t("auth.toast.resendFailed"), backendProvidedError(err, t("auth.error.resend")));
@@ -576,7 +585,10 @@ export default function AuthScreen() {
           : mode === "otp" ? t("auth.otp.detail")
             : step === "identify" ? t("auth.forgot.detail")
               : step === "addEmail" ? t("auth.addEmail.detail", { phone: recovery.phone ? formatBackendPhoneForDisplay(recovery.phone) : "" })
-                : step === "code" ? t("auth.code.detail", { email: recovery.email ?? "" })
+                : step === "code"
+                  ? recovery.email
+                    ? t("auth.code.detail", { email: recovery.email })
+                    : t("auth.code.detailPhone", { phone: recovery.phone ? formatBackendPhoneForDisplay(recovery.phone) : "" })
                   : t("auth.newPassword.detail");
   const primaryLabel = loading
     ? t("auth.action.wait")
@@ -802,7 +814,7 @@ export default function AuthScreen() {
                       editable={!loading}
                       autoFocus
                     />
-                    <View style={local.resendRow}>
+                    {/* <View style={local.resendRow}>
                       <AppText variant="meta" tone="muted">{t("auth.code.resendPrompt")}</AppText>
                       <Pressable
                         accessibilityRole="button"
@@ -818,7 +830,7 @@ export default function AuthScreen() {
                           {resending ? t("auth.action.resending") : t("auth.action.resend")}
                         </AppText>
                       </Pressable>
-                    </View>
+                    </View> */}
                   </>
                 ) : (
                   <>

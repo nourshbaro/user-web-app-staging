@@ -112,8 +112,8 @@ response shape at runtime and throws on mismatch.
 | `POST /auth/check-email-verification` → `/auth/check-email` → `/auth/email-verification-status` | `email` | Tries in order, skipping 404/405; returns `null` if none exist |
 | `POST /auth/forgot-password` | `email` **or** `phone` | Returns the raw answer; read by `forgotPasswordOutcome` (§5.2) |
 | `POST /auth/forgot-password/add-email` | `email, phone` | `addRecoveryEmail`. Only after `email_required` for the current phone attempt (§5.2). Security concern: `docs/SECURITY.md` §3.18 |
-| `POST /auth/forgot-password/verify-otp` | `email, code` | Email is the only recovery identity accepted (§5.2) |
-| `POST /auth/reset-password` | `email, code, password, password_confirmation` | Code and tests agree; the sibling `user-web` client sends the same field (backend source not inspected) |
+| `POST /auth/forgot-password/verify-otp` | `email` **or** `phone`, `code` | One field: the attempt's recovery identity (`recoveryTarget`, §5.2). Staging accepts only `email`; `{ phone, code }` → 422 "The email field is required." (2026-10-07) |
+| `POST /auth/reset-password` | `email` **or** `phone`, `code, password, password_confirmation` | Same recovery identity as verify. Staging accepts only `email`; with `phone` → 422 "The email field is required." (2026-10-07). Backend source not inspected |
 | `GET /auth/me` | — | Validated (`isUser`); `email` may be `null` |
 | `POST /auth/change-password` | `current_password, password, password_confirmation` | Session cleared afterwards |
 | `POST /auth/profile-picture` | multipart `avatar` | Returns `{ avatar }` |
@@ -152,8 +152,8 @@ source not inspected):
 ### 5.2 Password recovery
 
 One owner: `src/lib/passwordRecovery.ts` (`recoveryReducer`, held by
-`src/app/auth.tsx`). Steps: identify (Email | Phone) → add email (phone path
-only) → code → new password → Sign in.
+`src/app/auth.tsx`). Steps: identify (Email | Phone) → add email (phone path,
+`email_required` only) → code → new password → Sign in.
 
 - **`POST /auth/forgot-password`** takes `{ "email": … }` or `{ "phone": … }`.
   Known and unknown emails (and unknown phones) receive the same generic 2xx:
@@ -161,6 +161,13 @@ only) → code → new password → Sign in.
   account without an email** answers 2xx with
   `{ "reason": "email_required", "message": … }`. `forgotPasswordOutcome`
   branches on that `reason` only, never on message text.
+- **Phone branching (implemented frontend behavior):**
+  - phone + `reason: "email_required"` → **add email** (below);
+  - phone + any other 2xx → **code step immediately**, bound to the phone
+    that started the attempt (`phoneCodeSent`; never the live field). The
+    toast shows the backend's own message, since the answer does not say
+    where the code went. The flow never stays on the phone step and never
+    asks for the account's email.
 - **`POST /auth/forgot-password/add-email`**
   `{ "email": "<entered email>", "phone": "<digits-only phone>" }`. The client
   calls it only after the **current** phone attempt answered
@@ -169,16 +176,19 @@ only) → code → new password → Sign in.
   code sent to it; only then does the flow move to the code step for that
   address. An error (e.g. 422 "Account not found.", invalid email) keeps the
   step and the entered values, with the backend message inline.
-- **Verification identity:** `forgot-password/verify-otp` and
-  `reset-password` accept **`email`** as the recovery identity (`{ phone,
-  code }` → 422 "The email field is required."). The client keys both on the
-  address the backend sent this attempt's code to.
-- **Not continuable — phone account that already has an email:** its answer
-  is the generic message, with neither the email nor a recovery token, so the
-  client cannot call verify / reset. This branch is **not implemented**: the
-  flow stays on the phone step and shows the backend's own message (it does
-  not ask the user to type the account's email — that earlier fallback was
-  removed on 2026-10-06 by product decision). Backend dependency (§5.3).
+- **Recovery identity (client):** verify, reset and resend send one field,
+  the attempt's `recoveryTarget`: the address the backend sent the code to
+  (email path, or after add email), otherwise the phone bound to the attempt.
+  There is none before a code exists. The client never invents an email.
+- **Current staging limitation (verified 2026-10-07, non-existent
+  identifiers only):** `forgot-password/verify-otp` `{ phone, code }` → 422
+  "The email field is required."; `reset-password` with `phone` → 422 "The
+  email field is required." The generic phone answer carries neither the
+  account's email nor a token. So **Phone → code is implemented, but Phone →
+  code → new password → Sign in is not yet end-to-end functional**: Verify on
+  a phone-bound code shows the backend's 422 message inline and keeps the
+  step. The email path and phone → add email → code (keyed by the added
+  email) are unaffected. Backend dependency (§5.3).
 - **No "unknown email → try phone" branch:** the generic answer is identical
   for known and unknown emails, so the client cannot (and must not) decide
   that an email is unavailable. The email path always continues to the code
@@ -187,8 +197,8 @@ only) → code → new password → Sign in.
 - **Code entry:** six visual cells over one numeric six-digit value
   (`src/components/account/OtpCodeInput.tsx`, one native input: numeric
   keyboard, paste, iOS `oneTimeCode` / Android `sms-otp` autofill). Resend
-  re-sends `forgot-password` for the same address; there is no client
-  countdown.
+  re-sends `forgot-password` for the same recovery identity (address or bound
+  phone); there is no client countdown.
 - **Attempts:** every request carries the attempt it was sent in; editing the
   identifier, switching method, Back, cancel and completion start a new
   attempt, so a late success or error for an earlier identifier is dropped.
@@ -199,24 +209,28 @@ only) → code → new password → Sign in.
   (Re-observed 2026-10-06: the throttle applies per identifier — a different
   address was accepted while the first was throttled.)
 
-### 5.3 Required recovery flow — PENDING BACKEND (not implemented)
+### 5.3 Required recovery flow — PENDING BACKEND
 
-Product requirement (2026-10-06). **None of the branches below that differ
-from §5.2 work today**; they are listed so the backend can supply the
-contract. The client must not emulate them.
+Product requirement (2026-10-06; phone branching rule 2026-10-07). Status of
+each branch:
 
 ```
-PHONE  has email    → OTP → new password → Sign in        (blocked: no phone/token verify)
-PHONE  no email     → add email → OTP → new password       (implemented, §5.2; §3.18 risk)
-EMAIL  exists       → OTP → new password → Sign in        (implemented)
-EMAIL  unavailable  → backend message → "Try phone number" → phone flow   (blocked: no signal)
+PHONE  generic 2xx     → OTP                                (frontend implemented, §5.2)
+                         → new password → Sign in           (blocked: verify / reset reject phone)
+PHONE  email_required  → add email → OTP → new password → Sign in   (implemented, §5.2; §3.18 risk)
+EMAIL  exists          → OTP → new password → Sign in       (implemented)
+EMAIL  unavailable     → backend message → "Try phone number" → phone flow   (blocked: no signal)
 ```
 
-Re-probed 2026-10-06 (non-existent identifiers only): `verify-otp`
-`{ phone, code }` → 422 "The email field is required."; `reset-password`
-requires `email`; an unknown email still gets the generic 2xx.
+Re-probed 2026-10-07 (non-existent identifiers only): `verify-otp`
+`{ phone, code }` and `{ identifier, code }` → 422 "The email field is
+required."; `reset-password` with `phone` → 422 "The email field is
+required."; the generic phone answer is `{ message }` only. Other field names
+(`recovery_token`, `token`, …) could not be probed (429 throttle). An unknown
+email still gets the generic 2xx (2026-10-06).
 
-**Backend change request:**
+**Backend change request** (a recommendation; none of it is an implemented
+contract):
 1. **`POST /auth/forgot-password` outcomes.** Keep one generic success for
    anything that sent a code, but return a machine-readable `reason`:
    `code_sent` (a code was sent — to the account's email or phone; the
@@ -251,9 +265,12 @@ requires `email`; an unknown email still gets the generic 2xx.
    that yields the `recovery_token`), and the email should become recovery
    authority only after it is verified.
 
-When this ships, the client change is confined to `authService` (token in
-the request bodies), `forgotPasswordOutcome` (the new reasons) and the
-recovery reducer (holding the token instead of the email).
+If the backend instead accepts `{ phone, code }` on verify / reset, the
+current client completes the phone flow with no change (it already sends the
+bound phone). If it ships the token design, the client change is confined to
+`authService` (token in the request bodies), `forgotPasswordOutcome` (the new
+reasons) and the recovery reducer / `recoveryTarget` (holding the token
+instead of the email or phone).
 
 ### Matches — `src/services/matches.ts` (`matchesService`)
 | Method & path | Notes |

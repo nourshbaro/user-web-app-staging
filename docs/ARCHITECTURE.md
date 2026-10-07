@@ -931,9 +931,13 @@ entry is always CyberSource's own form.
   - email → code → new password → Sign in;
   - phone without an email (`reason: "email_required"`) → add email
     (`/auth/forgot-password/add-email`) → code → new password → Sign in;
-  - phone whose account has an email: the backend's generic message, no
-    advance (verify / reset accept only `email`; pending backend contract,
-    `docs/API_INTEGRATION.md` §5.3).
+  - phone, any other successful answer → code immediately, bound to the
+    phone that started the attempt (`phoneCodeSent`; verify / reset / resend
+    keyed by `recoveryTarget`). Phone → code is implemented; Phone → code →
+    new password → Sign in is **not yet end-to-end functional**: staging
+    verify / reset reject `phone` with 422 "The email field is required."
+    (verified 2026-10-07), shown inline. Pending backend contract,
+    `docs/API_INTEGRATION.md` §5.2–§5.3.
   Code steps use `OtpCodeInput` (`src/components/account/`): six cells over
   one numeric value and one native input (paste, OS one-time-code
   autofill), never mirrored; resend is a real request with no countdown.

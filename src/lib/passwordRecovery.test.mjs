@@ -8,32 +8,40 @@ import {
   initialRecoveryState,
   isValidRecoveryEmail,
   recoveryReducer,
+  recoveryTarget,
 } from "./passwordRecovery.ts";
 
 const screen = await readFile(new URL("../app/auth.tsx", import.meta.url), "utf8");
 
-test("recovery resend synchronously excludes duplicate resends and Verify until settlement", async () => {
-  // Execute the actual handler with a pending transport and an unchanged React
-  // render snapshot: setResending does not immediately update its closure.
-  const handler = screen.slice(screen.indexOf("  const resendRecoveryCode = async () => {"), screen.indexOf("  const switchMode ="));
-  const guard = createAuthSubmissionGuard();
-  let settle;
-  let calls = 0;
-  const resend = new Function("recovery", "resending", "loading", "submissionGuard", "recoveryAttempts", "setResending", "setMessage", "authService", "isRecoveryCurrent", "toast", "t", "notify", "backendProvidedError", "mountedRef", `${handler}\nreturn resendRecoveryCode;`)(
-    { email: "fan@example.com" }, false, false, { current: guard },
-    { current: createRecoveryAttempts() }, () => {}, () => {},
-    { forgotPassword: () => { calls++; return new Promise((resolve) => { settle = resolve; }); } },
-    () => true, { showToast: () => {} }, () => "", () => {}, () => "", { current: true },
-  );
-  const first = resend();
-  await resend();
-  assert.equal(calls, 1);
-  assert.equal(guard.tryAcquire(), false, "Verify uses the same guard while resend is pending");
-  settle({});
-  await first;
-  assert.equal(guard.tryAcquire(), true, "settlement releases the guard");
-  guard.release();
-});
+for (const [label, recovery, expectedBody] of [
+  ["email", { step: "code", method: "email", email: "fan@example.com", phone: null }, { email: "fan@example.com" }],
+  ["phone", { step: "code", method: "phone", email: null, phone: "96171123456" }, { phone: "96171123456" }],
+]) {
+  test(`recovery resend (${label} code) synchronously excludes duplicate resends and Verify until settlement`, async () => {
+    // Execute the actual handler with a pending transport and an unchanged React
+    // render snapshot: setResending does not immediately update its closure.
+    const handler = screen.slice(screen.indexOf("  const resendRecoveryCode = async () => {"), screen.indexOf("  const switchMode ="));
+    const guard = createAuthSubmissionGuard();
+    let settle;
+    const sent = [];
+    const resend = new Function("recovery", "resending", "loading", "submissionGuard", "recoveryAttempts", "setResending", "setMessage", "authService", "isRecoveryCurrent", "toast", "t", "notify", "backendProvidedError", "mountedRef", "recoveryTarget", "getMessage", `${handler}\nreturn resendRecoveryCode;`)(
+      recovery, false, false, { current: guard },
+      { current: createRecoveryAttempts() }, () => {}, () => {},
+      { forgotPassword: (body) => { sent.push(body); return new Promise((resolve) => { settle = resolve; }); } },
+      () => true, { showToast: () => {} }, () => "", () => {}, () => "", { current: true },
+      recoveryTarget, () => "",
+    );
+    const first = resend();
+    await resend();
+    // Resend asks again for the attempt's own identity, once.
+    assert.deepEqual(sent, [expectedBody]);
+    assert.equal(guard.tryAcquire(), false, "Verify uses the same guard while resend is pending");
+    settle({});
+    await first;
+    assert.equal(guard.tryAcquire(), true, "settlement releases the guard");
+    guard.release();
+  });
+}
 
 /** Drives the reducer the way the screen does: invalidating events take `attempts.next()`. */
 function flow(method = "email") {
@@ -81,6 +89,66 @@ test("phone recovery with no email: phone → add email → code, keeping the bo
     { step: f.state.step, phone: f.state.phone, email: f.state.email },
     { step: "code", phone: "96171123456", email: "fan@example.com" },
   );
+});
+
+test("phone recovery, generic success: phone → code → new password, keyed by the bound phone", () => {
+  // The screen dispatches phoneCodeSent for any 2xx without email_required.
+  assert.equal(forgotPasswordOutcome(GENERIC), "codeSent");
+  const f = flow("phone");
+  const attempt = f.attempts.current();
+  f.apply({ type: "phoneCodeSent", attempt, phone: "96171123456" });
+  // It no longer stays on the phone step.
+  assert.notEqual(f.state.step, "identify");
+  assert.deepEqual(
+    { step: f.state.step, phone: f.state.phone, email: f.state.email },
+    { step: "code", phone: "96171123456", email: null },
+  );
+  assert.deepEqual(recoveryTarget(f.state), { phone: "96171123456" });
+  f.apply({ type: "codeVerified", attempt });
+  assert.equal(f.state.step, "newPassword");
+  assert.deepEqual(recoveryTarget(f.state), { phone: "96171123456" });
+});
+
+test("phone + email_required → add email; add-email success → code keyed by the address it was sent to", () => {
+  const f = flow("phone");
+  const attempt = f.attempts.current();
+  assert.equal(forgotPasswordOutcome(EMAIL_REQUIRED), "emailRequired");
+  f.apply({ type: "emailRequired", attempt, phone: "96171123456" });
+  assert.equal(f.state.step, "addEmail");
+  assert.equal(recoveryTarget(f.state), null, "no code exists until add-email succeeds");
+  f.apply({ type: "codeSent", attempt, email: "fan@example.com" });
+  assert.equal(f.state.step, "code");
+  assert.deepEqual(recoveryTarget(f.state), { email: "fan@example.com" });
+});
+
+test("a stale phone answer cannot move a newer attempt to the code", () => {
+  const f = flow("phone");
+  const first = f.attempts.current();
+  f.apply({ type: "identifierEdited", attempt: f.attempts.next() });
+  f.apply({ type: "phoneCodeSent", attempt: first, phone: "96171000000" });
+  assert.equal(f.state.step, "identify");
+  assert.equal(f.state.phone, null);
+  // A late answer after switching to email is dropped too.
+  const g = flow("phone");
+  const phoneAttempt = g.attempts.current();
+  g.apply({ type: "method", attempt: g.attempts.next(), method: "email" });
+  g.apply({ type: "phoneCodeSent", attempt: phoneAttempt, phone: "96171123456" });
+  assert.deepEqual(g.state, initialRecoveryState(g.attempts.current(), "email"));
+  // And a phone code answer is meaningless on the email path.
+  const h = flow("email");
+  h.apply({ type: "phoneCodeSent", attempt: h.attempts.current(), phone: "96171123456" });
+  assert.equal(h.state.step, "identify");
+});
+
+test("Back from a phone code starts a new attempt: its code cannot be verified", () => {
+  const f = flow("phone");
+  const attempt = f.attempts.current();
+  f.apply({ type: "phoneCodeSent", attempt, phone: "96171123456" });
+  f.apply({ type: "back", attempt: f.attempts.next() });
+  assert.deepEqual(f.state, initialRecoveryState(f.attempts.current(), "phone"));
+  assert.equal(recoveryTarget(f.state), null);
+  f.apply({ type: "codeVerified", attempt });
+  assert.equal(f.state.step, "identify");
 });
 
 test("a failed add-email (no event) stays on the add-email step", () => {
@@ -200,7 +268,7 @@ test("every recovery request is checked against its attempt after it resolves", 
 });
 
 test("add-email sends the phone the backend answered for, never the live phone field", () => {
-  const addEmail = screen.slice(screen.indexOf(`if (recovery.step === "addEmail") {`), screen.indexOf("const codeEmail = recovery.email;"));
+  const addEmail = screen.slice(screen.indexOf(`if (recovery.step === "addEmail") {`), screen.indexOf("const codeTarget = recoveryTarget(recovery);"));
   assert.match(addEmail, /const boundPhone = recovery\.phone;/);
   assert.match(addEmail, /await authService\.addRecoveryEmail\(boundPhone, trimmedEmail\);/);
   assert.doesNotMatch(addEmail, /recoveryPhone/);
@@ -208,15 +276,21 @@ test("add-email sends the phone the backend answered for, never the live phone f
   assert.match(addEmail, /await authService\.addRecoveryEmail[\s\S]*if \(!isRecoveryCurrent\(recoveryAttempt\)\) return;[\s\S]*enterRecoveryCode\(recoveryAttempt, trimmedEmail\)/);
 });
 
-test("the phone path advances only on email_required; the generic answer never opens the code", () => {
+test("the phone path: email_required → add email; any other success → the code for that phone", () => {
   const phone = screen.slice(screen.indexOf("const phone = toBackendPhoneDigits(recoveryPhone.canonicalPhone);"), screen.indexOf(`if (recovery.step === "addEmail") {`));
   assert.match(phone, /const answer = await authService\.forgotPassword\(\{ phone \}\);/);
-  assert.match(phone, /if \(forgotPasswordOutcome\(answer\) === "emailRequired"\) \{[\s\S]*type: "emailRequired", attempt: recoveryAttempt, phone/);
-  assert.doesNotMatch(phone, /enterRecoveryCode|codeSent/);
-  // Phone with an email (generic answer): the backend's own message, and
-  // never a request to type the account's email (no client workaround).
-  assert.match(phone, /setMessage\(getMessage\(answer, t\("auth\.error\.generic"\)\)\);/);
-  assert.doesNotMatch(phone, /setRecoveryEmail|"method"|auth\.forgot\.phoneSent/);
+  // Both branches act only for the attempt that sent the request.
+  assert.match(phone, /await authService\.forgotPassword\(\{ phone \}\);\s*if \(!isRecoveryCurrent\(recoveryAttempt\)\) return;\s*if \(forgotPasswordOutcome\(answer\) === "emailRequired"\)/);
+  assert.match(phone, /if \(forgotPasswordOutcome\(answer\) === "emailRequired"\) \{[\s\S]*type: "emailRequired", attempt: recoveryAttempt, phone[\s\S]*return;\s*\}/);
+  // The generic answer no longer stays on the phone step: it opens the code,
+  // bound to the phone that was sent (not the live field), and shows the
+  // backend's own message (it does not say where the code went).
+  const generic = phone.slice(phone.indexOf(`type: "emailRequired"`));
+  assert.match(generic, /dispatchRecovery\(\{ type: "phoneCodeSent", attempt: recoveryAttempt, phone \}\);/);
+  assert.match(generic, /message: getMessage\(answer, t\("auth\.otp\.resent"\)\)/);
+  assert.doesNotMatch(generic, /setMessage\(getMessage\(answer/);
+  // Never a request to type the account's email, or an invented address.
+  assert.doesNotMatch(phone, /setRecoveryEmail|enterRecoveryCode|type: "codeSent"|"method"|auth\.forgot\.phoneSent/);
 });
 
 test("the email path keeps the backend's generic answer (no inferred 'email unavailable')", () => {
