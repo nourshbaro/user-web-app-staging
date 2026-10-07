@@ -123,7 +123,7 @@ function buildCheckoutHtml(captureContext: string) {
           if (!window.VAS) throw new Error("Payment form is not ready.");
 
           const client = await window.VAS.UnifiedCheckout(${safeCaptureContext});
-          const checkout = await client.createCheckout({ autoProcessing: false });
+          const checkout = await client.createCheckout({ autoProcessing: true });
           observeCheckout();
           if (typeof checkout.on === "function") checkout.on("ready", markReady);
 
