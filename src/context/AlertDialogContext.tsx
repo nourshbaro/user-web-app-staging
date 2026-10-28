@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n/I18nProvider";
 import { AppText } from "@/components/foundation";
 import { Button, useTheme } from "@/components/ui";
 import { SymbolView } from "expo-symbols";
@@ -19,6 +20,7 @@ const AlertDialogContext = createContext<{ showAlert: (options: AlertOptions) =>
 
 export function AlertDialogProvider({ children }: PropsWithChildren) {
   const theme = useTheme();
+  const { t } = useI18n();
   const [active, setActive] = useState<ActiveAlert | null>(null);
   const activeRef = useRef<ActiveAlert | null>(null);
   const showAlert = useCallback((options: AlertOptions) => new Promise<boolean>((resolve) => {
@@ -42,10 +44,10 @@ export function AlertDialogProvider({ children }: PropsWithChildren) {
       {children}
       <Modal visible={Boolean(active)} transparent animationType="fade" onRequestClose={() => { if (dismissible) finish(false); }}>
         {/* v3 dialog: dark scrim, card surface, title / message, stacked full-width actions (primary first). */}
-        <Pressable style={styles.backdrop} onPress={() => { if (dismissible) finish(false); }} accessibilityRole="button" accessibilityLabel={dismissible ? "Dismiss alert" : undefined}>
+        <Pressable style={styles.backdrop} onPress={() => { if (dismissible) finish(false); }} accessibilityRole="button" accessibilityLabel={dismissible ? t("common.dismissAlert") : undefined}>
           <Pressable accessibilityViewIsModal onPress={(event) => event.stopPropagation()} style={[styles.dialog, { backgroundColor: theme.colors.surface, boxShadow: "0px 24px 60px rgba(0,0,0,0.35)" }]}>
             {dismissible ? (
-              <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => finish(false)} style={styles.close}>
+              <Pressable accessibilityRole="button" accessibilityLabel={t("common.close")} onPress={() => finish(false)} style={styles.close}>
                 <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={19} tintColor={theme.colors.textMuted} fallback={<View />} />
               </Pressable>
             ) : null}
@@ -53,12 +55,12 @@ export function AlertDialogProvider({ children }: PropsWithChildren) {
             <AppText variant="meta" tone="muted" style={styles.message}>{active?.message}</AppText>
             <View style={styles.actions}>
               <Button
-                title={active?.confirmLabel ?? "OK"}
+                title={active?.confirmLabel ?? t("common.ok")}
                 variant={active?.variant === "destructive" ? "danger" : "primary"}
                 onPress={() => finish(true)}
               />
               {active?.variant !== "info" ? (
-                <Button title={active?.cancelLabel ?? "Cancel"} variant="tonal" onPress={() => finish(false)} />
+                <Button title={active?.cancelLabel ?? t("common.cancel")} variant="tonal" onPress={() => finish(false)} />
               ) : null}
             </View>
           </Pressable>

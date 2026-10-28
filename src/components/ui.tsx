@@ -255,7 +255,7 @@ export const Input = forwardRef<TextInput, TextInputProps & {
           accessibilityLabelledBy={labelId}
           {...props}
           placeholderTextColor={theme.colors.muted}
-          style={[theme.styles.input, props.style]}
+          style={[theme.styles.input, (props.keyboardType === "email-address" || props.keyboardType === "phone-pad" || props.secureTextEntry) && { writingDirection: "ltr" }, props.style]}
         />
       </View>
     );

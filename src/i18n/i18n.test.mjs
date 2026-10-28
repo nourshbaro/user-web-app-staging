@@ -12,17 +12,17 @@ import { en } from "./messages/en.ts";
 import { pluralSelectorFor } from "./pluralRules.ts";
 import { createTranslator, interpolate } from "./translate.ts";
 
-test("English is the default and the only enabled locale until Arabic is translated", () => {
+test("English is the default and exactly English and Arabic are enabled", () => {
   assert.equal(DEFAULT_LOCALE, "en");
-  assert.deepEqual([...ENABLED_LOCALES], ["en"]);
-  assert.equal(isEnabledLocale("ar"), false);
+  assert.deepEqual([...ENABLED_LOCALES], ["en", "ar"]);
+  assert.equal(isEnabledLocale("ar"), true);
   assert.equal(LOCALE_META.ar.direction, "rtl");
   assert.equal(LOCALE_META.en.direction, "ltr");
 });
 
 test("stored preferences resolve safely to an enabled locale", () => {
   assert.equal(resolveAppLocale("en"), "en");
-  assert.equal(resolveAppLocale("ar"), "en", "a declared but disabled locale must not activate");
+  assert.equal(resolveAppLocale("ar"), "ar", "a saved Arabic preference must activate");
   assert.equal(resolveAppLocale(null), "en");
   assert.equal(resolveAppLocale("fr"), "en");
   assert.equal(resolveAppLocale(42), "en");

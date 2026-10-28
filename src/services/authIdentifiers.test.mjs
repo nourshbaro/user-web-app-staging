@@ -47,7 +47,7 @@ async function loadAuthService({ respond = () => ({}), persistedUser = null } = 
   const source = await readFile(new URL("./auth.ts", import.meta.url), "utf8");
   let executable = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
+  }).outputText.replace(/from "(\.\.\/i18n\/[^"\n]+\.ts)"/g, (_, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`);
   for (const [specifier, stub] of Object.entries(stubs)) {
     executable = executable.replace(`from "${specifier}"`, `from ${JSON.stringify(moduleUrl(stub))}`);
   }

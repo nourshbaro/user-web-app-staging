@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime.ts";
 import type { CartItem } from "@/types";
 
 export type TicketSlot = {
@@ -14,10 +15,10 @@ export type TicketSlot = {
  * screen has always used to key holder names, so existing/edited holder
  * names line up whether the cart changed between screens or not.
  */
-export function deriveTicketSlots(items: CartItem[]): TicketSlot[] {
+export function deriveTicketSlots(items: CartItem[], t: typeof translate = translate): TicketSlot[] {
   return items.flatMap((item) => {
     const matchId = String(item.match_id);
-    const zoneName = item.zone_name ?? "Zone";
+    const zoneName = item.zone_name ?? t("cart.zoneFallback");
     const matchTitle = item.match_title;
 
     if (item.seats?.length) {
@@ -26,7 +27,7 @@ export function deriveTicketSlots(items: CartItem[]): TicketSlot[] {
         matchId,
         matchTitle,
         zoneName,
-        label: `${zoneName} - Seat ${seat.label ?? `${seat.row}${seat.number}`}`,
+        label: `${zoneName} - ${t("seat.number", { number: seat.label ?? `${seat.row}${seat.number}` })}`,
       }));
     }
 
@@ -35,7 +36,7 @@ export function deriveTicketSlots(items: CartItem[]): TicketSlot[] {
       matchId,
       matchTitle,
       zoneName,
-      label: `${zoneName} - Ticket ${index + 1}`,
+      label: `${zoneName} - ${t("holders.ticketNumber", { number: index + 1 })}`,
     }));
   });
 }

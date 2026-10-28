@@ -1155,7 +1155,7 @@ layering):
   centre line (v3 `lfBar` 0.7 s, 120 ms + 50 ms per row, ease-out) each time
   Stats is shown. Values and labels are final from the first frame; a missing
   statistic keeps "—" and has no bar. Reduced motion: final state at once.
-- RTL readiness (English only today): layouts use start/end props;
+- Arabic/English RTL implementation (physical-device QA pending): layouts use start/end props;
   forward/back and disclosure arrows use `DirectionalChevron` (including the
   payment screens' `FlowHeader` and the ticket pager);
   stadium, seat and QR geometry sit in `PhysicalLayout`; Arabic text falls
@@ -1192,23 +1192,28 @@ layering):
 
 ## 15. Localization and RTL
 
-An English-only foundation exists (Phase 1). **Arabic UI is not translated or
-enabled.** No third-party i18n library is used.
+English and Arabic UI are implemented on the existing foundation. No third-party
+i18n framework is used. **Physical-device RTL, payment-flow testing with language
+changes, and authenticated backend translation support are not yet verified.**
 
 - **Locale ownership** — `src/i18n/locales.ts`:
   - `AppLocale` is `en | ar`, with `LOCALE_META` holding the tag, direction,
     script and native name.
-  - `ENABLED_LOCALES = ["en"]`. The app language is an app setting stored in
-    `lfa_locale`, never inferred from the device. Unknown or disabled values
-    resolve to `en`.
-- **Catalog** — `src/i18n/messages/en.ts`:
+  - `ENABLED_LOCALES = ["en", "ar"]`. The app language is an app setting stored
+    in `lfa_locale` (AsyncStorage on native, localStorage on web), independent
+    of authentication and never inferred from the device. Invalid/missing values
+    resolve to `en`. Restoration precedes app content to avoid an English flash.
+  - `I18nProvider.setLanguage` persists before publishing; a failed write keeps
+    the current language. Settings and signed-out Profile share `LanguageSelector`.
+- **Catalogs** — `src/i18n/messages/en.ts` and `ar.ts`:
   - flat keys (`area.purpose`), `{name}` interpolation, and plural families
     (`.one`/`.other`, and other CLDR categories where a language needs them);
-  - foundation, navigation, Competitions shell, onboarding, reservation
-    indicator and direction-restart strings, plus the screens redesigned so
-    far (Home, Matches, Match Detail, Cart, ticket holders, Checkout, payment
-    screens); other screens still hold
-    inline English and move to the catalog as they are redesigned.
+  - reachable customer UI includes navigation, onboarding, auth/recovery,
+    discovery, match/seat selection, cart/expiry, holders, checkout/payment
+    wrappers, tickets, profile/settings, legal/contact shells and system states;
+  - API names, legal/notification text and errors remain authoritative; hosted
+    provider content and OS dialogs are outside the catalogs. Unreachable
+    legacy modal/sheet bodies may still contain English.
 - **Translator** — `src/i18n/translate.ts`, pure:
   - lookup falls back from locale → English → the key itself;
   - the explicit plural `count` is authoritative, and a conflicting
@@ -1224,14 +1229,28 @@ enabled.** No third-party i18n library is used.
   `I18nProvider`:
   - The desired direction comes from the app language; the active direction is
     `I18nManager.isRTL`, fixed per runtime.
-  - Match → ready. Mismatch → set `allowRTL`/`forceRTL`, persist
+  - At startup: match → ready. Mismatch → set `allowRTL`/`forceRTL`, persist
     `lfa_direction_transition`, then reload once with `reloadAppAsync`
     (shipped in `expo`).
   - A mismatch that survives the reload, a no-op reload (4 s timeout), or an
     unreadable or unwritable marker produces a blocking "Restart required"
     screen with a manual restart button.
   - At most one automatic reload per desired direction, so no loop is possible.
-  - Web sets `document.documentElement.dir`/`lang` and is ready immediately.
+  - Runtime changes update text/formatting/request language immediately while
+    leaving providers mounted. Native direction flags are saved but layout
+    requires a user-initiated restart; the selector explains this. `isRTL`
+    reports the active native direction until restart. Never auto-reload an
+    active payment solely because the language changed.
+  - Web sets document `dir`/`lang` and an RN Web root View direction context
+    immediately; `PhysicalLayout` supplies an explicit web `dir="ltr"` boundary.
+- **Networking** — `backendHeaders` reads the provider-published language at
+  request time in `apiRequest`; binary `profileService.orderPdf` reads the same
+  value. The web proxy forwards a per-request `Accept-Language: en|ar`.
+  Auth/custom headers, multipart boundaries, endpoints and payloads are preserved.
+  Third-party CyberSource/BLUE pages, SDKs and external map/image fetches do not
+  inherit this header. Read-cache scopes separate languages without clearing
+  authentication, carts or payment state. Header delivery is tested locally;
+  translated authenticated backend responses remain unverified.
 - **RTL conventions** — `src/i18n/direction.ts`: logical start/end props,
   natural text alignment, and mirrored directional chevrons only.
   `PHYSICAL_LAYOUT_STYLE` / `<PhysicalLayout>` pins real-world geometry to LTR:
@@ -1240,13 +1259,16 @@ enabled.** No third-party i18n library is used.
   - date, time and money follow the app locale (`setFormatLocale`), not the
     device's;
   - `formatMoney` shows two decimals with locale grouping plus the backend
-    currency code, and returns `MONEY_UNAVAILABLE` ("Price unavailable") for
+    currency code, with an LTR isolate in Arabic; returns localized "Price unavailable" for
     missing or non-finite values, never a fake `0.00`;
   - `Intl.NumberFormat` is capability-checked, with a `toFixed(2)` fallback;
   - formatters never alter the values that callers or transactions use.
 - **Other locale touchpoints:** the CyberSource capture context still requests
-  `locale: "en-us"`, and phone country names use `i18n-iso-countries` English
-  data. The browser entry (`i18n-iso-countries/index.js`) is imported on
+  `locale: "en-us"`. Phone countries use explicitly registered English/Arabic
+  `i18n-iso-countries` data. English preserves its established order; Arabic
+  sorts display names with optional Arabic collation and an engine-safe
+  fallback. Both name languages, ISO codes and calling codes remain searchable.
+  The browser entry (`i18n-iso-countries/index.js`) is imported on
   purpose: the package Node entry loads every locale through a dynamic require
   that Metro cannot bundle, which broke web server rendering.
 
@@ -1264,7 +1286,7 @@ enabled.** No third-party i18n library is used.
 8. Duplicate-submission guards on checkout and auth forms remain.
 9. 503 → maintenance, 401/403 → session invalidation remain centralized in `apiRequest`; maintenance clears only through `recheckMaintenance` (a successful backend probe), never by setting the flag.
 10. Platform splits (`.native` / `.web`) keep equivalent ownership on each platform.
-11. App content renders only when `I18nProvider` is ready, i.e. when the active native direction equals the app language's.
+11. Startup content waits for `I18nProvider` readiness and matching native direction. Runtime language changes keep the app mounted; native direction stays active until restart, and `isRTL` reports that active direction.
 12. Stadium maps, seat maps and QR codes never mirror (`PHYSICAL_LAYOUT_STYLE`).
 13. Startup code never constructs an `Intl` API without a capability check (Hermes lacks some, e.g. `PluralRules`).
 14. Scheduled-match loading goes through `useScheduledMatches` over `matchesService`; filter changes invalidate synchronously, and results are shown only under the filters that produced them.
@@ -1304,6 +1326,6 @@ enabled.** No third-party i18n library is used.
 The Phase 1 foundations described in §14–§15 now exist. Still planned, per the
 roadmap (`docs/WORKFLOW.md` §4) and subject to per-phase approval:
 - screen redesigns that consume these foundations (Phases 5–6; Phases 2–4 are delivered, see §7–§10);
-- an Arabic catalog and enabling `ar` (plus the Arabic numerals decision);
+- physical-device Arabic/RTL QA and an optional branded Arabic font (catalogs and `ar` selection are implemented);
 - RTL-aware tab swipe and entrance motion;
 - migrating legacy colors and `accessibilityState` usage.

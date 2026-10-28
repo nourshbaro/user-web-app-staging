@@ -152,7 +152,7 @@ export function OutcomeDetails({ rows }: { rows: { label: string; value: string;
           <AppText
             variant="bodyStrong"
             numberOfLines={2}
-            style={[local.detailValue, row.mono ? local.mono : null]}
+            style={[local.detailValue, row.mono ? [local.mono, { writingDirection: "ltr" }] : null]}
           >
             {row.value}
           </AppText>

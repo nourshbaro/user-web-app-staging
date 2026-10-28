@@ -19,6 +19,7 @@ async function forward(request: Request) {
     method,
     headers: {
       Accept: request.headers.get("Accept") ?? "application/json",
+      "Accept-Language": request.headers.get("Accept-Language") === "ar" ? "ar" : "en",
       ...(hasBody ? { "Content-Type": request.headers.get("Content-Type") ?? "application/json" } : {}),
       password: apiPassword,
       ...(request.headers.get("Authorization") ? { Authorization: request.headers.get("Authorization")! } : {}),

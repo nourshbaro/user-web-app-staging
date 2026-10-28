@@ -321,7 +321,7 @@ function PortalMatchCard({
   const i18n = useI18n();
   const date = formatDate(match.kickoff_at);
   const time = formatTime(match.kickoff_at);
-  const title = `${match.home_team.name} vs ${match.away_team.name}`;
+  const title = i18n.t("myTickets.fixture", { home: match.home_team.name, away: match.away_team.name });
   const countLabel = i18n.plural("myTickets.count", match.ticket_count);
   // Past matches are quieter (v3), from the backend's own `is_upcoming`.
   const past = !match.is_upcoming;
@@ -334,7 +334,7 @@ function PortalMatchCard({
         date,
         time,
         venue: match.stadium ?? "",
-        count: `${match.ticket_count} ${countLabel}`,
+        count: i18n.plural("transaction.ticketCount", match.ticket_count),
       })}
       style={({ pressed }) => [
         local.card,
@@ -495,7 +495,7 @@ function TicketViewer({
         <View style={local.viewerHeader}>
           <View style={local.viewerHeaderBack}>
             <FlowHeader
-              title={`${match.home_team.name} vs ${match.away_team.name}`}
+              title={i18n.t("myTickets.fixture", { home: match.home_team.name, away: match.away_team.name })}
               backLabel={i18n.t("myTickets.back")}
               onBack={onClose}
               // v3 ticket: no header title on iOS; the position is end-aligned on both platforms.
@@ -827,7 +827,7 @@ function FlipTicket({
         >
           {ticket.zone.name}
         </AppText>
-        <AppText variant="meta" style={local.mono}>
+        <AppText variant="meta" style={[local.mono, { writingDirection: "ltr" }]}>
           {ticket.ticket_code}
         </AppText>
       </View>
@@ -1008,7 +1008,7 @@ function FlipTicket({
               numberOfLines={1}
               style={local.backTitle}
             >
-              {`${match.home_team.name} vs ${match.away_team.name}`}
+              {i18n.t("myTickets.fixture", { home: match.home_team.name, away: match.away_team.name })}
             </AppText>
             <AppText
               variant="caption"
@@ -1171,7 +1171,7 @@ function Fact({
       <AppText variant="overline" tone="muted" style={local.factLabel}>
         {label}
       </AppText>
-      <AppText variant={large ? "displaySection" : "displayDay"}>
+      <AppText variant={large ? "displaySection" : "displayDay"} style={{ writingDirection: "ltr" }}>
         {value}
       </AppText>
     </View>

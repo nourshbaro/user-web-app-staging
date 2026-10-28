@@ -137,7 +137,7 @@ test("card payment is a dedicated route rather than a Checkout modal", async () 
   assert.match(cardScreen, /paymentArea: \{ flex: 1, width: "100%" \}/);
   assert.match(cardProvider, /fullscreenFrame: \{ flex: 1, borderWidth: 0, borderRadius: 0 \}/);
   assert.match(cardProvider, /requestAnimationFrame\(\(\) => requestAnimationFrame\(markReady\)\)/);
-  assert.match(cardProvider, /Unable to load payment\. Please try again\./);
+  assert.match(cardProvider, /translate\("payment\.card\.prepareFailed"\)/);
   // Loading and retry copy now comes from the catalog (Phase 4); the states themselves are unchanged.
   const catalog = await readFile(new URL("../i18n/messages/en.ts", import.meta.url), "utf8");
   assert.match(catalog, /"payment\.card\.loading": "Loading payment\.\.\."/);

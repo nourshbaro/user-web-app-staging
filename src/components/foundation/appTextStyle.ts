@@ -34,6 +34,7 @@ export function appTextBaseStyle({
     ...(token.fontVariant ? { fontVariant: [...token.fontVariant] } : null),
     color,
     textAlign: align === "center" ? ("center" as const) : ("auto" as const),
+    writingDirection: latin ? ("ltr" as const) : ("rtl" as const),
     // Uppercase display titles are Latin-only: Arabic script has no case.
     ...(token.uppercase && latin ? { textTransform: "uppercase" as const } : null),
   };

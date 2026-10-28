@@ -1,3 +1,6 @@
+import { translate } from "../i18n/runtime.ts";
+import type { MessageKey } from "../i18n/messages/en";
+
 export type CheckoutResultProvider = "blue" | "cybersource" | "unknown";
 
 export type CheckoutResultParams = {
@@ -36,10 +39,10 @@ export type CheckoutResultSearchParams = {
 };
 
 const MAX_DISPLAY_LENGTH = 120;
-const REASON_MESSAGES: Record<string, string> = {
-  payment_declined: "The payment was declined. Please use another payment method or contact your bank.",
-  payment_failed: "The payment could not be completed.",
-  payment_expired: "The payment session expired before it could be completed.",
+const REASON_MESSAGES: Record<string, MessageKey> = {
+  payment_declined: "payment.reason.declined",
+  payment_failed: "payment.reason.failed",
+  payment_expired: "payment.reason.expired",
 };
 
 export function parseCheckoutResultParams(raw: RawCheckoutResultParams): CheckoutResultParams {
@@ -58,7 +61,7 @@ export function parseCheckoutResultParams(raw: RawCheckoutResultParams): Checkou
     ...(orderNumber ? { order_number: orderNumber } : {}),
     ...(reference ? { reference } : {}),
     ...(status ? { status } : {}),
-    ...(reason ? { reason, reasonMessage: REASON_MESSAGES[reason] } : {}),
+    ...(reason ? { reason, reasonMessage: REASON_MESSAGES[reason] ? translate(REASON_MESSAGES[reason]) : undefined } : {}),
   };
 }
 

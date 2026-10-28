@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime.ts";
 import { profileService } from "@/services/auth";
 import { Platform } from "react-native";
 
@@ -26,11 +27,11 @@ export async function downloadProfileOrderPdf(
     file.create({ overwrite: true });
     file.write(pdfBytes);
     if (!file.exists || file.size !== pdfBytes.byteLength || file.size === 0) {
-      throw new Error("The PDF file could not be written.");
+      throw new Error(translate("pdf.writeFailed"));
     }
     if (!isCurrent()) return false;
     if (!(await Sharing.isAvailableAsync())) {
-      throw new Error("No app is available to open this PDF.");
+      throw new Error(translate("pdf.noApp"));
     }
     await Sharing.shareAsync(file.uri, {
       mimeType: "application/pdf",

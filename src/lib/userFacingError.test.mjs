@@ -13,7 +13,7 @@ const apiMock = `data:text/javascript;base64,${Buffer.from(`
 `).toString("base64")}`;
 const executable = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText.replace('from "@/services/api"', `from ${JSON.stringify(apiMock)}`);
+}).outputText.replace(/from "(\.\.\/i18n\/[^"\n]+\.ts)"/g, (_, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`).replace('from "@/services/api"', `from ${JSON.stringify(apiMock)}`);
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(executable).toString("base64")}`;
 const { userFacingError, backendProvidedError, backendResponseMessage } = await import(moduleUrl);
 const { ApiError, ApiTransportError } = await import(apiMock);

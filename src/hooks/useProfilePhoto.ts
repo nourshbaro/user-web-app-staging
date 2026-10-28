@@ -1,3 +1,4 @@
+import { translate } from "@/i18n/runtime";
 import { useAlertDialog } from "@/context/AlertDialogContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
@@ -36,7 +37,7 @@ export function useProfilePhoto({ currentUser, onUserUpdated }: { currentUser: (
   const uploadSelectedPhoto = useCallback(
     async (asset: ImagePicker.ImagePickerAsset) => {
       if (!asset.uri) {
-        toast.showToast({ variant: "error", title: "Could not use photo", message: "Please choose another image." });
+        toast.showToast({ variant: "error", title: translate("photo.unusable"), message: translate("photo.chooseAnother") });
         return;
       }
       try {
@@ -54,10 +55,10 @@ export function useProfilePhoto({ currentUser, onUserUpdated }: { currentUser: (
           publish,
         });
         if (outcome === "stale") return;
-        toast.showToast({ variant: "success", title: "Profile picture updated", message: "Your profile picture was updated." });
+        toast.showToast({ variant: "success", title: translate("photo.updated"), message: translate("photo.updated.detail") });
       } catch (error) {
         console.error("[avatar] upload failed:", error);
-        toast.showToast({ variant: "error", title: "Could not update photo", message: userFacingError(error, "Please try again.") });
+        toast.showToast({ variant: "error", title: translate("photo.updateFailed"), message: userFacingError(error, translate("photo.retry")) });
       } finally {
         setBusy(false);
       }
@@ -71,21 +72,21 @@ export function useProfilePhoto({ currentUser, onUserUpdated }: { currentUser: (
       if (canAskAgain) {
         toast.showToast({
           variant: "error",
-          title: photos ? "Photo access required" : "Camera access required",
+          title: photos ? translate("photo.access") : translate("photo.cameraAccess"),
           message: photos
-            ? "Allow photo access to choose a profile picture. Tap Choose new photo to try again."
-            : "Allow camera access to take a profile picture. Tap Take photo to try again.",
+            ? translate("photo.askPhotos")
+            : translate("photo.askCamera"),
         });
         return;
       }
       const openSettings = await alertDialog.showAlert({
-        title: photos ? "Photo access required" : "Camera access required",
+        title: photos ? translate("photo.access") : translate("photo.cameraAccess"),
         message: photos
-          ? "Allow Photos access for LFA Tickets in Settings to choose a profile picture."
-          : "Allow Camera access for LFA Tickets in Settings to take a profile picture.",
+          ? translate("photo.settingsPhotos")
+          : translate("photo.settingsCamera"),
         variant: "confirm",
-        cancelLabel: "Cancel",
-        confirmLabel: "Open Settings",
+        cancelLabel: translate("deleteAccount.cancel"),
+        confirmLabel: translate("photo.openSettings"),
         dismissible: true,
       });
       if (!openSettings) return;
@@ -95,8 +96,8 @@ export function useProfilePhoto({ currentUser, onUserUpdated }: { currentUser: (
         console.error("[avatar] open settings failed:", error);
         toast.showToast({
           variant: "error",
-          title: "Could not open settings",
-          message: `Open your device settings, select LFA Tickets, and allow ${photos ? "Photos" : "Camera"} access.`,
+          title: translate("settings.openFailed"),
+          message: translate(photos ? "photo.settingsPhotos" : "photo.settingsCamera"),
         });
       }
     },
@@ -125,7 +126,7 @@ export function useProfilePhoto({ currentUser, onUserUpdated }: { currentUser: (
       await uploadSelectedPhoto(asset);
     } catch (error) {
       console.error("[avatar] gallery failed:", error);
-      toast.showToast({ variant: "error", title: "Could not open gallery", message: "Please try again." });
+      toast.showToast({ variant: "error", title: translate("photo.galleryFailed"), message: translate("photo.retry") });
     }
   }, [busy, explainDenied, toast, uploadSelectedPhoto]);
 
@@ -143,7 +144,7 @@ export function useProfilePhoto({ currentUser, onUserUpdated }: { currentUser: (
       await uploadSelectedPhoto(result.assets[0]);
     } catch (error) {
       console.error("[avatar] camera failed:", error);
-      toast.showToast({ variant: "error", title: "Could not take photo", message: "Please try again." });
+      toast.showToast({ variant: "error", title: translate("photo.cameraFailed"), message: translate("photo.retry") });
     }
   }, [busy, explainDenied, toast, uploadSelectedPhoto]);
 
@@ -151,11 +152,11 @@ export function useProfilePhoto({ currentUser, onUserUpdated }: { currentUser: (
   const removePhoto = useCallback(async () => {
     if (busy) return;
     const confirmed = await alertDialog.showAlert({
-      title: "Remove profile photo?",
-      message: "Your profile will return to your initials.",
+      title: translate("photo.remove.confirm"),
+      message: translate("photo.remove.detail"),
       variant: "destructive",
-      cancelLabel: "Cancel",
-      confirmLabel: "Remove",
+      cancelLabel: translate("deleteAccount.cancel"),
+      confirmLabel: translate("cart.remove.confirm.action"),
       dismissible: true,
     });
     if (!confirmed) return;
@@ -172,10 +173,10 @@ export function useProfilePhoto({ currentUser, onUserUpdated }: { currentUser: (
         publish,
       });
       if (outcome === "stale") return;
-      toast.showToast({ variant: "success", title: "Profile picture removed", message: "Your profile picture was removed." });
+      toast.showToast({ variant: "success", title: translate("photo.removed"), message: translate("photo.removed.detail") });
     } catch (error) {
       console.error("[avatar] remove failed:", error);
-      toast.showToast({ variant: "error", title: "Could not remove photo", message: userFacingError(error, "Please try again.") });
+      toast.showToast({ variant: "error", title: translate("photo.removeFailed"), message: userFacingError(error, translate("photo.retry")) });
     } finally {
       setBusy(false);
     }

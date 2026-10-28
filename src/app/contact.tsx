@@ -35,8 +35,8 @@ export default function ContactScreen() {
     } catch {
       toast.showToast({
         variant: "error",
-        title: "Could not open contact",
-        message: "Please try again from another app.",
+        title: i18n.t("maintenance.contactFailed.title"),
+        message: i18n.t("maintenance.contactFailed.message"),
       });
     }
   };
@@ -49,10 +49,10 @@ export default function ContactScreen() {
           const brand = "brand" in contact ? contact.brand : null;
           return (
             <Pressable
-              key={contact.label}
+              key={contact.label === "Email" ? i18n.t("auth.field.email") : contact.label}
               onPress={() => void openContact(contact)}
               accessibilityRole="link"
-              accessibilityLabel={"accessibilityLabel" in contact ? contact.accessibilityLabel : contact.label}
+              accessibilityLabel={"accessibilityLabel" in contact ? i18n.t("contact.whatsapp") : i18n.t("auth.field.email")}
               accessibilityHint={contact.detail}
               style={({ pressed }) => [local.row, index > 0 && { borderTopWidth: 1, borderTopColor: theme.colors.hairline }, pressed && { backgroundColor: theme.colors.surfaceSecondary }]}
             >
@@ -69,8 +69,8 @@ export default function ContactScreen() {
                 ) : null}
               </View>
               <View style={local.copy}>
-                <AppText variant="body" style={local.label}>{contact.label}</AppText>
-                <AppText variant="meta" tone="muted" style={local.detail}>{contact.detail}</AppText>
+                <AppText variant="body" style={local.label}>{contact.label === "Email" ? i18n.t("auth.field.email") : contact.label}</AppText>
+                <AppText variant="meta" tone="muted" style={[local.detail, { writingDirection: "ltr" }]}>{contact.detail}</AppText>
               </View>
               <DirectionalChevron kind="forward" size={18} color={theme.colors.textMuted} />
             </Pressable>

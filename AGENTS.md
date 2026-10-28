@@ -181,19 +181,27 @@ ticket lifecycle states that contradict backend data.
 
 ## 11. Localization and RTL — current reality
 
-- **What exists:** an English-only localization foundation in `src/i18n/`
+- **What exists:** Arabic/English localization in `src/i18n/`
   (details in `docs/ARCHITECTURE.md` §15):
-  - an app-language setting stored in `lfa_locale`;
-  - a typed catalog, and a translator with internal CLDR plural rules;
-  - restart-aware native direction handling;
+  - exactly `en` and `ar`, selected in Settings or signed-out Profile, stored
+    independently of authentication in `lfa_locale`; invalid/missing values
+    default to English and restoration precedes app content;
+  - typed English/Arabic catalogs and internal CLDR plural rules;
+  - immediate text/request-language updates; native direction takes effect
+    after a user-initiated restart, with startup mismatch/reload-loop guards;
+  - central live `Accept-Language: en|ar` for LFA JSON/PDF requests and the
+    web proxy, excluding third-party payment pages, scripts and images;
   - locale-aware formatters in `src/lib/format.ts`.
-- **What doesn't:** Arabic metadata and plural rules exist, but **Arabic UI is
-  not translated or enabled**. Do not claim Arabic or RTL support that has not
-  been built and verified.
+- **Not yet verified:** physical-device RTL, payment-flow testing under
+  language switching, and authenticated backend translation support. Header
+  tests do not establish translated backend content. Arabic uses the platform
+  font; API names/content and provider-owned UI stay authoritative.
 - **Rules for new work:**
   - Use this infrastructure for user-facing strings and date, time and money
     formatting. Do not add another localization mechanism or per-screen
     translation hacks.
+  - Maintain both catalogs and applicable Arabic plural forms. Use explicit
+    direction metadata; never infer behavior from translated text.
   - Prefer logical (start/end) layout. Stadium maps, seat maps and QR codes
     must never mirror.
   - Do not add startup reliance on an `Intl` constructor without confirming the

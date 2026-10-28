@@ -54,7 +54,7 @@ export function ReservationHoldBar({ secondsLeft, topInset, onPress }: Props) {
       <AppText
         variant="displayCountdown"
         numberOfLines={1}
-        style={[local.time, { color: urgent ? theme.colors.onHeroUrgent : theme.colors.onHero }]}
+        style={[local.time, { color: urgent ? theme.colors.onHeroUrgent : theme.colors.onHero, writingDirection: "ltr" }]}
       >
         {minutesSeconds(secondsLeft)}
       </AppText>

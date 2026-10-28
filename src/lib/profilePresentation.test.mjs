@@ -27,7 +27,7 @@ test("profile is the v3 account hub over the existing account owners", () => {
   // Logout: the existing confirmation and the owner's session cleanup.
   assert.match(profile, /await auth\.logout\(\)/);
   assert.match(profile, /alertDialog\.showAlert\(\{/);
-  assert.match(profile, /title: "Log out\?"/);
+  assert.match(profile, /title: i18n\.t\("profile\.logout\.confirm"\)/);
   assert.match(profile, /variant: "destructive"/);
   assert.match(profile, /if \(!confirmed\) return;/);
   assert.match(profile, /router\.replace\("\/"\)/);

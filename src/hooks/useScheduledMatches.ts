@@ -8,6 +8,7 @@ import {
 import type { RevalidationReason } from "@/lib/liveRevalidation";
 import { createRequestAuthority, createRequestIdentity } from "@/lib/requestAuthority";
 import { userFacingError } from "@/lib/userFacingError";
+import { translate } from "@/i18n/runtime";
 import { matchesService, onLiveTransition } from "@/services/matches";
 import type { ApiMatch, FilterOption, MatchFilters } from "@/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -93,7 +94,7 @@ export function useScheduledMatches(
       if (nextFilters) setFilterOptions(nextFilters);
     } catch (err) {
       if (!requestAuthority.isCurrent(ticket)) return;
-      const message = userFacingError(err, "Could not load matches. Please try again.");
+      const message = userFacingError(err, translate("ticketError.match"));
       setSnapshot((current) => applyQueryFailure(current, identity, message));
     } finally {
       if (requestAuthority.isCurrent(ticket)) {

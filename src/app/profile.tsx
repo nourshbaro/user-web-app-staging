@@ -1,3 +1,4 @@
+import { LanguageSelector } from "@/components/LanguageSelector";
 import { AuthRequired } from "@/components/AuthRequired";
 import { ProfilePhotoSheet } from "@/components/ProfilePhotoSheet";
 import { TabHeader } from "@/components/TabHeader";
@@ -60,11 +61,11 @@ function ProfileScreen() {
 
   const logout = async () => {
     const confirmed = await alertDialog.showAlert({
-      title: "Log out?",
-      message: "Are you sure you want to log out?",
+      title: i18n.t("profile.logout.confirm"),
+      message: i18n.t("profile.logout.message"),
       variant: "destructive",
-      cancelLabel: "Cancel",
-      confirmLabel: "Log out",
+      cancelLabel: i18n.t("common.cancel"),
+      confirmLabel: i18n.t("profile.logout"),
       dismissible: true,
     });
     if (!confirmed) return;
@@ -74,8 +75,8 @@ function ProfileScreen() {
     } catch {
       toast.showToast({
         variant: "error",
-        title: "Could not log out",
-        message: "Your local session was cleared.",
+        title: i18n.t("profile.logout.failed"),
+        message: i18n.t("profile.logout.cleared"),
       });
     } finally {
       router.replace("/");
@@ -189,6 +190,10 @@ function PublicMenu() {
   const i18n = useI18n();
   return (
     <Card>
+      <View style={{ padding: 16, gap: 8 }}>
+        <AppText>{i18n.t("settings.language")}</AppText>
+        <LanguageSelector />
+      </View>
       <MenuRow icon={{ ios: "doc.text", android: "description", web: "description" }} label={i18n.t("profile.menu.legal")} href="/legal" first />
       <MenuRow icon={{ ios: "message", android: "chat", web: "chat" }} label={i18n.t("profile.menu.contact")} href="/contact" />
     </Card>
@@ -205,7 +210,7 @@ function InfoRow({ icon, value, first = false, children }: { icon: { ios: string
   return (
     <View style={[local.infoRow, !first && { borderTopWidth: 1, borderTopColor: theme.colors.hairline }]} accessible>
       <SymbolView name={icon as never} size={20} tintColor={theme.colors.textMuted} fallback={<View />} />
-      <AppText variant="body" numberOfLines={1} style={local.infoValue}>{value}</AppText>
+      <AppText variant="body" numberOfLines={1} style={[local.infoValue, { writingDirection: "ltr" }]}>{value}</AppText>
       {children}
     </View>
   );

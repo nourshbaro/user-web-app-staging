@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { publishAppLocale } from "../i18n/locales.ts";
 
 const apiSource = await readFile(new URL("./api.ts", import.meta.url), "utf8");
 const authSource = await readFile(new URL("./auth.ts", import.meta.url), "utf8");
@@ -13,7 +14,7 @@ const maintenanceAuthoritySource = await readFile(new URL("../lib/maintenanceAut
 const toModuleUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const transpile = (source) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+}).outputText.replace(/from "(\.\.\/i18n\/[^"\n]+\.ts)"/g, (_, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`);
 
 function deferred() {
   let resolve;
@@ -1547,4 +1548,29 @@ test("a 503 from another request while the probe is in flight outranks the probe
   } finally {
     h.cleanup();
   }
+});
+
+test("JSON and binary LFA requests use the live language without changing the session", async () => {
+  const h = await createHarness({ platform: "android" });
+  try {
+    await install(h, "live-token");
+    publishAppLocale("en");
+    const json = h.api.apiRequest("/matches/scheduled", { headers: new Headers({ "X-LFA-Test": "preserved" }) });
+    const first = await h.waitForFetch();
+    assert.equal(first.init.headers["Accept-Language"], "en");
+    assert.equal(new Headers(first.init.headers).get("X-LFA-Test"), "preserved");
+    first.pending.resolve(response(200, { data: [] }));
+    await json;
+    publishAppLocale("ar");
+    const pdf = h.auth.profileService.orderPdf("42");
+    const second = await h.waitForFetch(2);
+    assert.equal(second.init.headers["Accept-Language"], "ar");
+    assert.equal(second.init.headers.Authorization, "Bearer live-token");
+    assert.equal(second.init.headers.Accept, "application/pdf,application/octet-stream,*/*");
+    assert.equal(second.init.headers.password, "public-password");
+    second.pending.resolve(response(200, {}, new ArrayBuffer(2)));
+    await pdf;
+    assert.equal(h.state.notifications, 0);
+    assert.equal(h.state.values.get("lfa_portal_token"), "live-token");
+  } finally { publishAppLocale("en"); h.cleanup(); }
 });

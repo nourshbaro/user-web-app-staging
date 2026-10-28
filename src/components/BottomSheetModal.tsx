@@ -115,7 +115,7 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
 }, ref) {
   const theme = useTheme();
   const reducedMotion = useReducedMotion();
-  const { meta } = useI18n();
+  const { meta, t } = useI18n();
   const titleToken = titleVariant === "display" ? typography.displaySheet : typography.displaySheetOption;
   const insets = useSafeAreaInsets();
   // Only the Animated.Value needs a stable identity across renders (it
@@ -274,7 +274,7 @@ export const BottomSheetModal = forwardRef<BottomSheetModalHandle, {
         <View style={local.overlay}>
           <Pressable
             style={local.backdrop}
-            accessibilityLabel="Dismiss"
+            accessibilityLabel={t("common.dismiss")}
             accessibilityRole="button"
             onPress={requestClose}
           />

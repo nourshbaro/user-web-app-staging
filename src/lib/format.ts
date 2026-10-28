@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime.ts";
 import type { ApiMatch } from "@/types";
 
 /**
@@ -16,14 +17,14 @@ export function getFormatLocale() {
 }
 
 export function matchTitle(match?: ApiMatch | null) {
-  if (!match) return "Match";
-  return `${match.home_team?.name ?? "Home"} vs ${match.away_team?.name ?? "Away"}`;
+  if (!match) return translate("format.match");
+  return `${match.home_team?.name ?? translate("format.home")} ${translate("match.vs")} ${match.away_team?.name ?? translate("format.away")}`;
 }
 
 export function formatDate(value?: string) {
-  if (!value) return "Date TBC";
+  if (!value) return translate("format.dateTbc");
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Date TBC";
+  if (Number.isNaN(date.getTime())) return translate("format.dateTbc");
   return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "short", month: "short", day: "numeric" }).format(date);
 }
 
@@ -38,7 +39,7 @@ export function parseCalendarDate(value?: string | null) {
 /** Calendar-date label for backend `match_date` values ("Thu, Oct 22"). */
 export function formatCalendarDate(value?: string | null) {
   const date = parseCalendarDate(value);
-  if (!date) return "Date TBC";
+  if (!date) return translate("format.dateTbc");
   return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "short", month: "short", day: "numeric" }).format(date);
 }
 
@@ -64,19 +65,19 @@ export function formatDayOfMonth(date: Date) {
 /** Long calendar-date heading ("Saturday, October 3") for backend `match_date` values. */
 export function formatLongCalendarDate(value?: string | null) {
   const date = parseCalendarDate(value);
-  if (!date) return "Date TBC";
+  if (!date) return translate("format.dateTbc");
   return new Intl.DateTimeFormat(formatLocaleTag, { weekday: "long", month: "long", day: "numeric" }).format(date);
 }
 
 export function formatTime(value?: string) {
-  if (!value) return "TBC";
+  if (!value) return translate("format.tbc");
 
   // API kickoff values are sometimes clock-only values. Parsing those as a Date
   // would incorrectly introduce a timezone, so format them without conversion.
   const clock = value.match(/^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/);
   if (clock) {
     const hour = Number(clock[1]);
-    if (hour > 23) return "TBC";
+    if (hour > 23) return translate("format.tbc");
     if (formatLocaleTag === "en-US") {
       const displayHour = hour % 12 || 12;
       return `${displayHour}:${clock[2]} ${hour < 12 ? "AM" : "PM"}`;
@@ -90,7 +91,7 @@ export function formatTime(value?: string) {
   }
 
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "TBC";
+  if (Number.isNaN(date.getTime())) return translate("format.tbc");
   return new Intl.DateTimeFormat(formatLocaleTag, {
     hour: "numeric",
     minute: "2-digit",
@@ -98,9 +99,9 @@ export function formatTime(value?: string) {
 }
 
 export function formatDateTime(value?: string) {
-  if (!value) return "Date unavailable";
+  if (!value) return translate("matches.dateTbc");
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  if (Number.isNaN(date.getTime())) return translate("matches.dateTbc");
   return new Intl.DateTimeFormat(formatLocaleTag, {
     month: "short",
     day: "numeric",
@@ -132,12 +133,15 @@ function parseAmount(value: unknown): number | null {
  */
 export function formatMoney(value?: number | string | null, currency = "USD") {
   const amount = parseAmount(value);
-  if (amount === null) return MONEY_UNAVAILABLE;
+  if (amount === null) return translate("format.priceUnavailable");
   // Capability check: never assume an Intl constructor exists on every JS engine.
   const number = typeof Intl !== "undefined" && typeof Intl.NumberFormat === "function"
     ? new Intl.NumberFormat(formatLocaleTag, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)
     : amount.toFixed(2);
-  return `${number} ${currency}`;
+  const label = `${number} ${currency}`;
+  // Isolate the amount/code pair inside Arabic sentences without changing
+  // backend currency codes or the numeric value used by checkout.
+  return formatLocaleTag.startsWith("ar") ? `\u2066${label}\u2069` : label;
 }
 
 export function minutesSeconds(seconds: number) {

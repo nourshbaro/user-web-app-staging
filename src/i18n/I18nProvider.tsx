@@ -6,11 +6,14 @@ import {
   type Direction,
 } from "@/i18n/directionTransition";
 import { en } from "@/i18n/messages/en";
+import { ar } from "@/i18n/messages/ar";
 import {
   DEFAULT_LOCALE,
   LOCALE_STORAGE_KEY,
   localeMeta,
   resolveAppLocale,
+  publishAppLocale,
+  isEnabledLocale,
   type AppLocale,
   type LocaleMeta,
 } from "@/i18n/locales";
@@ -21,11 +24,10 @@ import { storage } from "@/lib/storage";
 import { darkColors, lightColors } from "@/lib/themePalette";
 import { reloadAppAsync } from "expo";
 import * as SplashScreen from "expo-splash-screen";
-import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef, type PropsWithChildren } from "react";
 import { I18nManager, Platform, Pressable, Text, useColorScheme, View } from "react-native";
 
-// Only enabled locales need a catalog here; add `ar` when its translation is complete.
-const CATALOGS: Partial<Record<AppLocale, Partial<Record<string, string>>>> = { en };
+const CATALOGS = { en, ar };
 
 /** If a requested reload has not replaced this runtime by then, stop waiting. */
 const RELOAD_TIMEOUT_MS = 4000;
@@ -38,6 +40,9 @@ type I18nContextValue = Translator & {
   /** Only ever true/false for a direction that is actually active in the layout. */
   isRTL: boolean;
   isReady: boolean;
+  setLanguage: (locale: AppLocale) => Promise<void>;
+  changingLanguage: boolean;
+  restartRequired: boolean;
   formatDate: typeof formatDate;
   formatTime: typeof formatTime;
   formatDateTime: typeof formatDateTime;
@@ -55,8 +60,11 @@ function buildValue(locale: AppLocale, isReady: boolean): I18nContextValue {
     ...translator,
     locale,
     meta,
-    isRTL: meta.direction === "rtl",
+    isRTL: Platform.OS === "web" ? meta.direction === "rtl" : I18nManager.isRTL,
     isReady,
+    setLanguage: async () => {},
+    changingLanguage: false,
+    restartRequired: false,
     formatDate,
     formatTime,
     formatDateTime,
@@ -113,6 +121,36 @@ const I18nContext = createContext<I18nContextValue | null>(null);
 export function I18nProvider({ children }: PropsWithChildren) {
   const [locale, setLocale] = useState<AppLocale>(DEFAULT_LOCALE);
   const [phase, setPhase] = useState<Phase>("loading");
+  const [changingLanguage, setChangingLanguage] = useState(false);
+  const changing = useRef(false);
+
+  const setLanguage = useCallback(async (next: AppLocale) => {
+    if (!isEnabledLocale(next)) throw new Error("Unsupported app language");
+    if (changing.current) return;
+    changing.current = true;
+    setChangingLanguage(true);
+    try {
+      // Do not publish a preference that could not be saved.
+      await storage.set(LOCALE_STORAGE_KEY, next);
+      publishAppLocale(next);
+      const meta = localeMeta(next);
+      setFormatLocale(meta.tag);
+      if (Platform.OS === "web") {
+        if (typeof document !== "undefined") {
+          document.documentElement.dir = meta.direction;
+          document.documentElement.lang = meta.tag;
+        }
+      } else {
+        applyNativeDirection(meta.direction);
+      }
+      // Keep providers and transactional screens mounted. Native direction
+      // takes effect on the next user-initiated reload/cold start.
+      setLocale(next);
+    } finally {
+      changing.current = false;
+      setChangingLanguage(false);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -121,6 +159,7 @@ export function I18nProvider({ children }: PropsWithChildren) {
     void (async () => {
       const stored = await storage.get(LOCALE_STORAGE_KEY).catch(() => null);
       const nextLocale = resolveAppLocale(stored);
+      publishAppLocale(nextLocale);
       const meta = localeMeta(nextLocale);
       setFormatLocale(meta.tag);
 
@@ -159,13 +198,26 @@ export function I18nProvider({ children }: PropsWithChildren) {
   }, []);
 
   const isReady = phase === "ready";
-  const value = useMemo(() => buildValue(locale, isReady), [locale, isReady]);
+  const value = useMemo(() => ({
+    ...buildValue(locale, isReady),
+    setLanguage,
+    changingLanguage,
+    restartRequired: Platform.OS !== "web" && (localeMeta(locale).direction === "rtl") !== I18nManager.isRTL,
+  }), [locale, isReady, setLanguage, changingLanguage]);
 
   if (phase === "restart-required") return <DirectionRestartRequired value={value} />;
   // While loading or reloading, nothing (not even providers below) renders; the splash stays up.
   if (!isReady) return null;
 
-  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+  return (
+    <I18nContext.Provider value={value}>
+      {Platform.OS === "web" ? (
+        // RN Web uses its View locale context to resolve logical edges; the
+        // document's dir alone does not update that context.
+        <View {...{ dir: value.meta.direction, lang: value.meta.tag }} style={{ flex: 1 }}>{children}</View>
+      ) : children}
+    </I18nContext.Provider>
+  );
 }
 
 /**

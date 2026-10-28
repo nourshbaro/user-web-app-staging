@@ -11,7 +11,7 @@ async function importTypeScript(url) {
       module: ts.ModuleKind.ESNext,
       target: ts.ScriptTarget.ES2022,
     },
-  }).outputText;
+  }).outputText.replace(/from "(\.\.\/i18n\/[^"\n]+\.ts)"/g, (_, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`);
   return import(`data:text/javascript;base64,${Buffer.from(executableSource).toString("base64")}`);
 }
 

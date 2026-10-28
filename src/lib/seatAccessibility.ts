@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime.ts";
 export type AccessibleSeatState = "available" | "selected" | "in cart" | "unavailable";
 
 type SeatIdentityInput = {
@@ -40,10 +41,10 @@ export function getSeatIdentity(seat: SeatIdentityInput) {
 
   const row = meaningful(seat.row);
   const number = meaningful(seat.number);
-  if (row && number) return `Row ${row}, Seat ${number}`;
-  if (number) return `Seat ${number}`;
-  if (row) return `Row ${row}`;
-  return "Seat";
+  if (row && number) return translate("seat.rowNumber", { row, number });
+  if (number) return translate("seat.number", { number });
+  if (row) return translate("seat.row", { row });
+  return translate("seat.label");
 }
 
 export function getSeatAccessibility({
@@ -68,8 +69,8 @@ export function getSeatAccessibility({
   return {
     identity,
     state,
-    label: [zone, identity, state].filter((part): part is string => Boolean(part)).join(", "),
-    hint: disabled ? undefined : isSelected ? "Removes this seat from your selection." : "Selects this seat.",
+    label: [zone, identity, translate(inCart ? "seat.state.inCart" : isSelected ? "seat.state.selected" : available ? "seat.state.available" : "seat.state.unavailable")].filter((part): part is string => Boolean(part)).join(", "),
+    hint: disabled ? undefined : isSelected ? translate("seat.removeHint") : translate("seat.selectHint"),
     selected: isSelected,
     disabled,
   };

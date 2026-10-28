@@ -40,7 +40,7 @@ async function harness(platformOS = "ios") {
       styles: { muted: {} },
       colors: { bg: "white", line: "gray", panel: "white", ink: "black", muted: "gray" },
     });
-    export const useI18n = () => ({ meta: { script: "latin" } });
+    export const useI18n = () => ({ meta: { script: "latin" }, t: () => "Dismiss" });
     export const useReducedMotion = () => globalThis.__sheetReducedMotion === true;
     export const typography = {
       displaySheet: { fontSize: 30, lineHeight: 36, fontWeight: "700" },

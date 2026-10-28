@@ -1,4 +1,6 @@
 import { config } from "@/lib/config";
+import { backendHeaders } from "../i18n/backendHeaders.ts";
+import { translate } from "../i18n/runtime.ts";
 import { createAuthenticationAuthority, type AuthenticationSnapshot } from "@/lib/authSessionOwnership";
 import { Platform } from "react-native";
 import { authTokenStorage } from "@/lib/authTokenStorage";
@@ -351,7 +353,7 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
     const response = await fetch(url, {
       ...requestInit,
       signal: controller.signal,
-      headers: {
+      headers: backendHeaders({
         Accept: "application/json",
 
         ...(!isFormData
@@ -366,8 +368,7 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
           ? { Authorization: `Bearer ${token}` }
           : {}),
 
-        ...(requestInit.headers ?? {}),
-      },
+      }, requestInit.headers),
     });
 
     const body = await response.json().catch(() => null);
@@ -384,8 +385,8 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
     return body as T;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    if (didTimeout) throw new ApiTransportError("The request timed out. Please try again.", "timeout", error);
-    throw new ApiTransportError("Unable to reach the server. Check your connection and try again.", "network", error);
+    if (didTimeout) throw new ApiTransportError(translate("transport.timeout"), "timeout", error);
+    throw new ApiTransportError(translate("transport.network"), "network", error);
   } finally {
     clearTimeout(timeout);
   }

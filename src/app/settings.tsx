@@ -1,3 +1,4 @@
+import { LanguageSelector } from "@/components/LanguageSelector";
 import { SubpageShell } from "@/components/SubpageShell";
 import { AppText, SegmentedControl } from "@/components/foundation";
 import { useTheme } from "@/components/ui";
@@ -62,8 +63,8 @@ function SettingsScreen() {
     } catch {
       toast.showToast({
         variant: "error",
-        title: "Could not open settings",
-        message: "Open your device settings and select LFA to change notification permission.",
+        title: i18n.t("settings.openFailed"),
+        message: i18n.t("settings.openFailed.detail"),
       });
     }
   };
@@ -103,16 +104,7 @@ function SettingsScreen() {
       </Section>
 
       <Section title={i18n.t("settings.language")}>
-        {/* Display only: English is the only complete catalog, so there is nothing to switch to. */}
-        <View
-          style={[local.card, local.languageRow, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowCard }]}
-          accessible
-          accessibilityLabel={i18n.t("settings.language.a11y", { language: i18n.meta.nativeName })}
-        >
-          <SymbolView name={{ ios: "globe", android: "language", web: "language" }} size={20} tintColor={theme.colors.textMuted} fallback={<View />} />
-          <AppText variant="body" style={local.rowLabel}>{i18n.meta.nativeName}</AppText>
-          <SymbolView name={{ ios: "checkmark", android: "check", web: "check" }} size={18} tintColor={theme.colors.actionPrimary} fallback={<View />} />
-        </View>
+        <LanguageSelector />
       </Section>
 
       <Section title={i18n.t("settings.account")}>

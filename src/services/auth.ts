@@ -1,3 +1,5 @@
+import { getAppLocale } from "../i18n/locales.ts";
+import { translate } from "../i18n/runtime.ts";
 import { config } from "@/lib/config";
 import { normalizePaginatedProfileResult } from "@/lib/profilePortal";
 import { storage } from "@/lib/storage";
@@ -207,7 +209,7 @@ function phoneRequiredResult(payload: unknown): LoginResult | null {
     message:
       typeof data.message === "string" && data.message.trim()
         ? data.message.trim()
-        : "Please add your phone number to continue.",
+        : translate("auth.completePhone.detail"),
   };
 }
 
@@ -475,7 +477,7 @@ export const authService = {
     const message = isRecord(payload) ? payload.message : null;
     return typeof message === "string" && message.trim()
       ? message
-      : "Password changed. Please log in again.";
+      : translate("auth.passwordChanged");
   },
 
   async uploadProfilePicture(file: {
@@ -611,6 +613,7 @@ export const profileService = {
         signal: controller.signal,
         headers: {
           Accept: "application/pdf,application/octet-stream,*/*",
+          "Accept-Language": getAppLocale(),
           ...(Platform.OS !== "web" && config.apiPassword
             ? { password: config.apiPassword }
             : {}),
@@ -634,7 +637,7 @@ export const profileService = {
         }
 
         throw new PdfDownloadHttpError(
-          backendResponseMessage(body) ?? "Failed to download PDF.",
+          backendResponseMessage(body) ?? translate("pdf.failed"),
         );
       }
 
@@ -644,14 +647,14 @@ export const profileService = {
 
       if (didTimeout) {
         throw new ApiTransportError(
-          "The request timed out. Please try again.",
+          translate("transport.timeout"),
           "timeout",
           error,
         );
       }
 
       throw new ApiTransportError(
-        "Unable to reach the server. Check your connection and try again.",
+        translate("transport.network"),
         "network",
         error,
       );

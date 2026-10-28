@@ -6,7 +6,7 @@ import ts from "typescript";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const transpile = (source) =>
-  ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+  ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText.replace(/from "(\.\.\/i18n\/[^"\n]+\.ts)"/g, (_, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`);
 const toModuleUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 
 const queryCacheSource = transpile(await read("../lib/queryCache.ts"));

@@ -5,11 +5,30 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-10-07 · Phone recovery branching correction (Codex: PASS; uncommitted on `39ea18d`)
+**As of:** 2026-10-21 · Arabic/English localization and review corrections (uncommitted)
 
 ---
 
 ## Stage
+
+- **Arabic/English localization:** implemented on the existing i18n owner,
+  with review corrections for the single signed-out selector, bilingual country
+  search/localized sorting, Arabic plurals, explicit billing direction metadata,
+  native SDK-load error copy and dedicated ticket-title keys.
+  Exactly `en`/`ar` are enabled. `lfa_locale` persists independently of auth;
+  restoration precedes content and invalid values default to English. Text and
+  future LFA JSON/PDF requests update immediately; the web proxy forwards
+  `Accept-Language: en|ar`. Third-party payment transports are excluded.
+  Web direction updates immediately; native direction requires a user-initiated
+  restart, retaining startup mismatch/reload-loop guards and mounted owners
+  during runtime switching. Arabic uses the platform font.
+  **NOT VERIFIED:** physical-device RTL, payment-flow testing with language
+  switching/restarts, and authenticated backend translation support. Local
+  header/regression tests do not establish these. Manual QA remains required.
+  Local correction checks: TypeScript passes; lint has 0 errors and 2 existing
+  unused-variable warnings; the full Node suite passes 1,072/1,072 tests,
+  including selector, country sorting/search, plural/placeholder and native
+  SDK error-event regressions. These are automated checks, not device evidence.
 
 - ✅ Phase 0 — Baseline / redesign readiness (`e64a150`).
 - ✅ Phase 1 — Design Foundations (`3863673`).
@@ -480,7 +499,7 @@ tests pass unchanged.
 | Web / Android / iOS export | PASS |
 | Web runtime, signed out (headless Chrome, staging) | PASS: 13 routes (Home, Matches, Match 4 scheduled GA, Match 17 completed with goal / cards / substitution, Competitions, the My Tickets / Settings / Cart gates, Profile, Auth, Legal, Privacy, Contact) at 320 / 390 / 430 / 768 / 1024 px light and 390 px dark: no horizontal overflow, no unlabeled control, no runtime error; tablet widths keep a bounded column |
 | Reserved-seat picker | NOT VERIFIED at runtime (no scheduled seated match on staging today) |
-| RTL layout | Source-verified only (Arabic is not enabled, so RTL cannot be rendered) |
+| RTL layout | Arabic enabled; automated/source coverage exists. Physical-device RTL remains NOT VERIFIED. |
 | Reduced-motion modal fade | Test-verified (`BottomSheetModal`); not observed on a device |
 | Signed-in flows (cart, holders, checkout, card / BLUE handoff, tickets / QR, avatar, settings, logout) | NOT VERIFIED (no staging test account in this environment) |
 | Native runtime (iOS / Android) | NOT VERIFIED (no development build or device) |
@@ -508,7 +527,7 @@ tests pass unchanged.
   `/edit-profile` → `/profile`.
 - **Settings:** live push permission plus "Open phone settings" (iOS /
   Android builds only; web shows "Not available" with no action); appearance;
-  language shown (English only, no Arabic option); account deletion in two
+  English/Arabic selector with persisted selection; account deletion in two
   steps (v3 `settings_delete` confirmation → `/delete-account`,
   `delete_verify`, current password; the backend contract is unchanged).
 - **Notifications:** Home bell with the backend unread count; `/notifications`
@@ -788,8 +807,9 @@ Runtime checks still owed for Phase 4:
   route); `qr_image` representations beyond raster data URIs unconfirmed;
   competition-matches and single-match status can disagree (Match Details
   decides). Event kinds, competitions and standings are integrated.
-- **Arabic / RTL:** no Arabic translation, and `ar` is not enabled. No
-  Arabic-capable font is chosen yet (Arabic falls back to the platform font).
+- **Arabic / RTL:** English/Arabic catalogs and `ar` selection are implemented;
+  Arabic uses the platform font. Physical-device RTL, payment-flow testing with
+  language changes and authenticated backend translation support remain NOT VERIFIED.
 - **v3 carry-overs:** every screen is redesigned; the legacy `muted` colour
   remains in a few non-redesigned surfaces (phone-number field, password
   sheet, toasts, dialogs, CyberSource loading, maintenance screen).

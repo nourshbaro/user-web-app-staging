@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime.ts";
 import { ApiError, ApiTransportError } from "@/services/api";
 
 export function userFacingError(error: unknown, fallback: string) {
@@ -43,5 +44,5 @@ export function backendResponseMessage(body: unknown) {
 }
 
 export function paymentError() {
-  return "Payment could not be completed. Please try again or choose another payment method.";
+  return translate("payment.generic");
 }

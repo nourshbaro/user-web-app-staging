@@ -102,9 +102,9 @@ No unrelated refactors. Exit criterion: a credible `PASS — READY FOR REDESIGN`
 Semantic tokens (extending `src/lib/themePalette.ts`), typography, surfaces,
 spacing, radii, status badges, section headers, skeletons, state panels
 (loading/empty/error), a sticky transaction bar, the ticket-card foundation, an
-accessibility baseline, and RTL-safe layout conventions. The English-only
-localization foundation was also brought forward into this phase (see the note
-below). Delivered as described in `docs/ARCHITECTURE.md` §14–§15.
+accessibility baseline, and RTL-safe layout conventions. The localization
+foundation began with English in this phase and now supports English/Arabic.
+Delivered as described in `docs/ARCHITECTURE.md` §14–§15.
 
 **How Phases 2–6 use the foundations:**
 - **Tokens:** the semantic tokens and scales (no new literals where a token exists).
@@ -171,13 +171,21 @@ follow the backend's required / available flags for the running platform
 and installed version (`docs/API_INTEGRATION.md` §14). Activation no longer
 waits for a backend contract; each environment's backend policy controls it.
 
-### Beyond the redesign (not started)
+### Localization follow-up and runtime coverage
 
-Each is a separate, explicitly scoped task:
+Current implementation and remaining verification:
 
-- **Arabic:** the Arabic catalog, an Arabic-capable font, enabling `ar`, and
-  Arabic/RTL device verification. The localization/RTL mechanism exists
-  (Phase 1) and screens are built RTL-safe; Arabic itself is not translated.
+- **Arabic/English localization is implemented:** the existing i18n owner
+  enables `en`/`ar`, restores `lfa_locale` before content and persists selection
+  independently of authentication. Settings and signed-out Profile expose the
+  selector. Text and future LFA API requests update immediately; JSON/PDF and
+  the web proxy send `Accept-Language: en|ar`, excluding third-party transports.
+  Web direction updates immediately; native layout direction requires a
+  user-initiated restart. Active transaction owners stay mounted during switching.
+  Arabic uses the platform font and the internal CLDR plural engine.
+- **Not yet verified:** physical-device RTL, payment flows with language
+  switching/restarts, and authenticated backend translation support. Confirm
+  these through manual QA before release; do not infer them from header tests.
 - **Runtime coverage:** signed-in and native-device verification of the
   redesigned flows (`docs/STATUS.md` lists what is unverified).
 
@@ -223,7 +231,7 @@ Bad: *"Copy the reference's `buy/` routes, Zustand store, and mock data."*
   `all | upcoming | past`; ticket `status` and `checked_in_at` are the real signals)
 - QR-first ticket detail using the backend `qr_image`
 - stronger profile grouping
-- Arabic/RTL-aware design (after the localization decision)
+- Arabic/RTL-aware design on the implemented foundation (device QA pending)
 - improved typography; semantic design tokens
 
 ### 5.2 Rejected implementation patterns

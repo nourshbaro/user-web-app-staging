@@ -1,3 +1,4 @@
+import { translate } from "@/i18n/runtime";
 import { useAuth } from "@/context/AuthContext";
 import { router } from "expo-router";
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -411,7 +412,7 @@ export function CartProvider({ children }: PropsWithChildren) {
         return unconfirmedPublication("session-ended");
       }
 
-      setCartRefreshError(userFacingError(error, "We couldn't refresh your cart. Your reservation reference was kept; please try again."));
+      setCartRefreshError(userFacingError(error, translate("cart.refreshFailed.detail")));
       return unconfirmedPublication("refresh-failed");
     }
   }, [applyCart, clearCartIfSession, publishCartResponseIfCurrent]);

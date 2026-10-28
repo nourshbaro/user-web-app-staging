@@ -1,8 +1,9 @@
+import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/components/ui";
 import { SheetDismissHandle } from "@/components/SheetDismissHandle";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import {
-    PHONE_COUNTRIES,
+    phoneCountryOptions,
     createEmptyPhoneValue,
     getPhoneCallingCode,
     getPhoneCountryName,
@@ -28,7 +29,7 @@ interface InternationalPhoneInputProps {
     value: PhoneValue;
     error?: string;
     disabled?: boolean;
-    /** Visible field label (also the number field's accessible name); defaults to "Phone". */
+    /** Visible/accessibility label; defaults to the current catalog's phone label. */
     label?: string;
     /** Example national number shown while the field is empty. */
     placeholder?: string;
@@ -39,11 +40,14 @@ export function InternationalPhoneInput({
     value,
     error,
     disabled = false,
-    label = "Phone",
-    placeholder = "National number",
+    label: suppliedLabel,
+    placeholder: suppliedPlaceholder,
     onChange,
 }: InternationalPhoneInputProps) {
     const theme = useTheme();
+    const { t, locale } = useI18n();
+    const label = suppliedLabel ?? t("phone.label");
+    const placeholder = suppliedPlaceholder ?? t("phone.placeholder");
     const reducedMotion = useReducedMotion();
     const [selectorOpen, setSelectorOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
@@ -51,21 +55,7 @@ export function InternationalPhoneInput({
     const phoneCountryName = getPhoneCountryName(value.phoneCountry);
     const callingCode = getPhoneCallingCode(value.phoneCountry);
 
-    const filteredCountries = useMemo(() => {
-        const query = searchQuery.trim().toLocaleLowerCase("en");
-
-        if (!query) return PHONE_COUNTRIES;
-
-        const callingCodeQuery = query.replace(/^\+/, "");
-
-        return PHONE_COUNTRIES.filter((option) => {
-            return (
-                option.name.toLocaleLowerCase("en").includes(query) ||
-                option.phoneCountry.toLocaleLowerCase("en").includes(query) ||
-                option.callingCode.includes(callingCodeQuery)
-            );
-        });
-    }, [searchQuery]);
+    const filteredCountries = useMemo(() => phoneCountryOptions(locale, searchQuery), [searchQuery, locale]);
 
     const closeSelector = () => {
         Keyboard.dismiss();
@@ -82,8 +72,8 @@ export function InternationalPhoneInput({
             <View style={styles.phoneRow}>
                 <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`Phone country, ${phoneCountryName}, calling code +${callingCode}`}
-                    accessibilityHint="Opens the phone-country selector."
+                    accessibilityLabel={t("phone.country.a11y", { country: phoneCountryName, code: callingCode })}
+                    accessibilityHint={t("phone.country.hint")}
                     accessibilityState={{
                         expanded: selectorOpen,
                         disabled,
@@ -127,6 +117,7 @@ export function InternationalPhoneInput({
                 </Pressable>
 
                 <View
+                    {...(Platform.OS === "web" ? { dir: "ltr" } : {})}
                     style={[
                         styles.numberField,
                         {
@@ -145,8 +136,8 @@ export function InternationalPhoneInput({
                     </Text>
 
                     <TextInput
-                        accessibilityLabel={label === "Phone" ? "Phone number" : label}
-                        accessibilityHint={`Enter the national phone number for ${phoneCountryName}, or paste a complete international phone number.`}
+                        accessibilityLabel={suppliedLabel ?? t("phone.number")}
+                        accessibilityHint={t("phone.numberHint", { country: phoneCountryName })}
                         accessibilityState={{ disabled }}
                         value={value.phoneNationalValue}
                         editable={!disabled}
@@ -158,7 +149,7 @@ export function InternationalPhoneInput({
                         onChangeText={(input) => {
                             onChange(updateNationalPhone(input, value.phoneCountry));
                         }}
-                        style={[styles.numberInput, { color: theme.colors.ink }]}
+                        style={[styles.numberInput, { color: theme.colors.ink, writingDirection: "ltr" }]}
                     />
                 </View>
             </View>
@@ -172,7 +163,7 @@ export function InternationalPhoneInput({
                 </Text>
             ) : (
                 <Text style={[styles.hintText, { color: theme.colors.muted }]}>
-                    Select a phone country and enter its national number.
+                    {t("phone.country.help")}
                 </Text>
             )}
 
@@ -185,7 +176,7 @@ export function InternationalPhoneInput({
             >
                 <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Close phone-country selector"
+                    accessibilityLabel={t("phone.country.close")}
                     onPress={closeSelector}
                     style={[
                         styles.modalBackdrop,
@@ -195,7 +186,7 @@ export function InternationalPhoneInput({
                     <SafeAreaView
                         onTouchEnd={(event) => event.stopPropagation()}
                         accessibilityViewIsModal
-                        accessibilityLabel="Phone-country selector"
+                        accessibilityLabel={t("phone.country.selector")}
                         style={[
                             styles.modalPanel,
                             {
@@ -208,16 +199,16 @@ export function InternationalPhoneInput({
                         <View style={styles.modalHeader}>
                             <View style={styles.modalHeading}>
                                 <Text style={[styles.modalTitle, { color: theme.colors.ink }]}>
-                                    Phone country
+                                    {t("phone.country.title")}
                                 </Text>
                                 <Text style={[styles.modalSubtitle, { color: theme.colors.muted }]}>
-                                    Choose the calling code for this phone number.
+                                    {t("phone.country.detail")}
                                 </Text>
                             </View>
 
                             <Pressable
                                 accessibilityRole="button"
-                                accessibilityLabel="Close phone-country selector"
+                                accessibilityLabel={t("phone.country.close")}
                                 onPress={closeSelector}
                                 hitSlop={8}
                                 style={({ pressed }) => [
@@ -234,13 +225,13 @@ export function InternationalPhoneInput({
                         </View>
 
                         <TextInput
-                            accessibilityLabel="Search phone countries"
+                            accessibilityLabel={t("phone.country.search")}
                             autoFocus={Platform.OS !== "web"}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
                             autoCapitalize="none"
                             autoCorrect={false}
-                            placeholder="Search country, ISO code, or calling code"
+                            placeholder={t("phone.country.searchPlaceholder")}
                             placeholderTextColor={theme.colors.muted}
                             style={[
                                 styles.searchInput,
@@ -262,7 +253,7 @@ export function InternationalPhoneInput({
                             contentContainerStyle={styles.countryList}
                             ListEmptyComponent={
                                 <Text style={[styles.emptyText, { color: theme.colors.muted }]}>
-                                    No matching phone countries.
+                                    {t("phone.country.empty")}
                                 </Text>
                             }
                             renderItem={({ item }) => {
@@ -271,7 +262,7 @@ export function InternationalPhoneInput({
                                 return (
                                     <Pressable
                                         accessibilityRole="radio"
-                                        accessibilityLabel={`${item.name}, calling code +${item.callingCode}`}
+                                        accessibilityLabel={t("phone.country.option", { country: item.name, code: item.callingCode })}
                                         accessibilityState={{ checked: selected }}
                                         aria-checked={selected}
                                         onPress={() => {
@@ -372,6 +363,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
     numberField: {
+        ...(Platform.OS !== "web" ? { direction: "ltr" as const } : {}),
         minWidth: 0,
         minHeight: 48,
         flex: 1,

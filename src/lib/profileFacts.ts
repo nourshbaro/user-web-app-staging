@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime.ts";
 /**
  * Profile display facts, only from the backend `User` (`/auth/me`). Pure module. Nothing
  * is invented: no membership tier, no verification without
@@ -27,7 +28,7 @@ export function profileFacts(user: ProfileUser | null | undefined) {
   const created = text(user?.created_at);
   const createdDate = created ? new Date(created) : null;
   return {
-    name: name ?? email ?? "LFA supporter",
+    name: name ?? email ?? translate("profile.supporter"),
     initials: profileInitials(name),
     email,
     phone: text(user?.phone),

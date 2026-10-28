@@ -1,3 +1,4 @@
+import { getAppLocale } from "../i18n/locales.ts";
 /**
  * Small in-memory read cache for GET resources owned by the service layer
  * (pure module; clock injected for tests). Not a store: services keep the API
@@ -46,10 +47,11 @@ export function createQueryCache({ now = Date.now, scope = () => 0 }: Options = 
   /** Latest request (or invalidation) sequence per key: only its response may land. */
   const latest = new Map<string, number>();
   let sequence = 0;
-  let generation = scope();
+  const currentScope = () => `${scope()}:${getAppLocale()}`;
+  let generation = currentScope();
 
   const syncScope = () => {
-    const current = scope();
+    const current = currentScope();
     if (current === generation) return;
     generation = current;
     entries.clear();
@@ -146,7 +148,7 @@ export function createQueryCache({ now = Date.now, scope = () => 0 }: Options = 
     entries.clear();
     inFlight.clear();
     latest.clear();
-    generation = scope();
+    generation = currentScope();
   }
 
   return { peek, read, invalidate, clear };

@@ -1,3 +1,5 @@
+import { translate } from "@/i18n/runtime";
+import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/components/ui";
 import { config } from "@/lib/config";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -18,7 +20,7 @@ type CheckoutMessage =
   | { type: "ready" }
   | { type: "height"; height?: number }
   | { type: "success"; token?: string }
-  | { type: "error"; message?: string };
+  | { type: "error"; message?: string; reason?: "sdk_load_failed" };
 
 function jsStringLiteral(value: string) {
   return JSON.stringify(value).replace(/<\/script/gi, "<\\/script");
@@ -113,14 +115,16 @@ function buildCheckoutHtml(captureContext: string) {
       };
       window.addEventListener("load", scheduleMeasurement);
       const fail = (error) => {
-        post({ type: "error", message: "Payment could not be completed. Please try again or choose another payment method." });
+        // The native wrapper resolves UI copy in the current app language.
+        post({ type: "error" });
       };
+      const sdkLoadFailed = () => post({ type: "error", reason: "sdk_load_failed" });
 
       window.addEventListener("error", (event) => fail(event.error || new Error(event.message)));
 
       async function initCheckout() {
         try {
-          if (!window.VAS) throw new Error("Payment form is not ready.");
+          if (!window.VAS) throw new Error("payment_sdk_unavailable");
 
           const client = await window.VAS.UnifiedCheckout(${safeCaptureContext});
           const checkout = await client.createCheckout({ autoProcessing: true });
@@ -149,13 +153,14 @@ function buildCheckoutHtml(captureContext: string) {
         }
       }
     </script>
-    <script src="${config.cybersourceUnifiedCheckoutUrl}" async onload="initCheckout()" onerror="fail(new Error('Could not load the payment SDK. Check your connection and try again.'))"></script>
+    <script src="${config.cybersourceUnifiedCheckoutUrl}" async onload="initCheckout()" onerror="sdkLoadFailed()"></script>
   </body>
 </html>`;
 }
 
 export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError, fullscreen = false }: Props) {
   const theme = useTheme();
+  const { t } = useI18n();
   const onSuccessRef = useRef(onSuccess);
   const onErrorRef = useRef(onError);
   const completedRef = useRef(false);
@@ -184,7 +189,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
   useEffect(() => {
     if (status !== "loading") return;
     const timeout = setTimeout(() => {
-      const message = "Unable to load payment. Please try again.";
+      const message = translate("payment.card.prepareFailed");
       setStatus("error");
       setError(message);
       onErrorRef.current(message);
@@ -223,7 +228,9 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
     }
 
     if (message.type === "error") {
-      const nextError = message.message ?? "Payment could not be completed. Please try again.";
+      const nextError = message.reason === "sdk_load_failed"
+        ? translate("payment.form.sdkFailed")
+        : message.message ?? translate("payment.form.generic");
       setStatus("error");
       setError(nextError);
       onErrorRef.current(nextError);
@@ -260,8 +267,8 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
         {status === "loading" ? (
           <View style={[local.loading, { backgroundColor: theme.colors.panel }]}>
             <ActivityIndicator color={theme.colors.primary} />
-            <Text style={[local.loadingTitle, { color: theme.colors.ink }]}>Opening secure checkout</Text>
-            <Text style={[local.loadingText, { color: theme.colors.muted }]}>This usually takes a few seconds.</Text>
+            <Text style={[local.loadingTitle, { color: theme.colors.ink }]}>{t("payment.form.opening")}</Text>
+            <Text style={[local.loadingText, { color: theme.colors.muted }]}>{t("payment.form.wait")}</Text>
             <View style={local.skeletonStack}>
               <View style={[local.skeletonWide, { backgroundColor: theme.colors.panelSoft }]} />
               <View style={local.skeletonRow}>
@@ -275,7 +282,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
 
         {status === "error" ? (
           <View style={local.errorState}>
-            <Text style={[local.errorTitle, { color: theme.colors.ink }]}>We couldn’t open the payment form</Text>
+            <Text style={[local.errorTitle, { color: theme.colors.ink }]}>{t("payment.form.failed")}</Text>
             <Text style={[local.errorText, { color: theme.colors.muted }]}>{error}</Text>
             <Pressable
               accessibilityRole="button"
@@ -288,13 +295,13 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
               }}
               style={({ pressed }) => [local.retryButton, { backgroundColor: theme.colors.primary }, pressed && local.pressed]}
             >
-              <Text style={local.retryText}>Try again</Text>
+              <Text style={local.retryText}>{t("common.retry")}</Text>
             </Pressable>
           </View>
         ) : null}
       </View>
 
-      {!fullscreen ? <Text style={[local.footer, { color: theme.colors.muted }]}>Payments processed securely</Text> : null}
+      {!fullscreen ? <Text style={[local.footer, { color: theme.colors.muted }]}>{t("payment.form.secure")}</Text> : null}
     </View>
   );
 }

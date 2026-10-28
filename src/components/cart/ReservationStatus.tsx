@@ -112,7 +112,7 @@ const local = {
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
-  time: { fontSize: 13, fontVariant: ["tabular-nums" as const] },
+  time: { fontSize: 13, fontVariant: ["tabular-nums" as const], writingDirection: "ltr" as const },
   copy: { flex: 1, minWidth: 0, gap: 2 },
   title: { fontSize: 16, lineHeight: 21 },
   body: { fontWeight: "400" as const },

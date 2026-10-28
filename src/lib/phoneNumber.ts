@@ -1,6 +1,9 @@
+import { getAppLocale, type AppLocale } from "../i18n/locales.ts";
+import { translate } from "../i18n/runtime.ts";
+import arabicCountryNames from "./arabicCountryNames.cjs";
 // Browser entry on purpose: the package's Node `main` (entry-node.js) loads every
 // locale with a dynamic require that Metro cannot bundle, which broke web SSR.
-// English is registered explicitly below, so no other locale data is needed.
+// Register only the English and Arabic data explicitly; do not use entry-node.js.
 import countries from "i18n-iso-countries/index.js";
 import englishCountryNames from "./englishCountryNames.cjs";
 import {
@@ -52,6 +55,7 @@ const PREFERRED_PHONE_COUNTRY_NAMES: Partial<
 };
 
 countries.registerLocale(englishCountryNames);
+countries.registerLocale(arabicCountryNames);
 
 function resolvePhoneCountryName(
     phoneCountry: PhoneCountryCode,
@@ -103,8 +107,53 @@ export function isAllowedPhoneCountry(
     return typeof phoneCountry === "string" && allowedPhoneCountries.has(phoneCountry);
 }
 
-export function getPhoneCountryName(phoneCountry: PhoneCountryCode): string {
-    return phoneCountryNames.get(phoneCountry) ?? "Unknown country";
+export function getPhoneCountryName(phoneCountry: PhoneCountryCode, locale = getAppLocale()): string {
+    if (locale === "ar") {
+        if (phoneCountry === "AC") return "\u062c\u0632\u064a\u0631\u0629 \u0623\u0633\u0646\u0634\u064a\u0648\u0646";
+        if (phoneCountry === "TA") return "\u062a\u0631\u064a\u0633\u062a\u0627\u0646 \u062f\u0627 \u0643\u0648\u0646\u0627";
+        return countries.getName(phoneCountry, "ar", { select: "official" }) ?? phoneCountry;
+    }
+    return phoneCountryNames.get(phoneCountry) ?? translate("phone.country.unknown");
+}
+
+/** Presentation only: membership, calling codes and validation remain unchanged. */
+export function phoneCountryOptions(locale: AppLocale, search = ""): PhoneCountryOption[] {
+    const query = search.trim().toLowerCase();
+    const codeQuery = query.replace(/^\+/, "");
+    const options = PHONE_COUNTRIES.map((option) => ({
+        ...option,
+        name: getPhoneCountryName(option.phoneCountry, locale),
+        label: `${getPhoneCountryName(option.phoneCountry, locale)} (+${option.callingCode})`,
+    }));
+
+    // English keeps the established order. Arabic collation is optional on
+    // Hermes: never require Intl.Collator at startup or to open the picker.
+    if (locale === "ar") {
+        let compare: (a: string, b: string) => number = compareArabicNames;
+        try {
+            if (typeof Intl !== "undefined" && typeof Intl.Collator === "function") {
+                const collator = new Intl.Collator("ar");
+                if (collator.resolvedOptions().locale.startsWith("ar")) compare = collator.compare;
+            }
+        } catch { /* Use the deterministic Arabic alphabet fallback below. */ }
+        options.sort((a, b) => compare(a.name, b.name) || compareCodePoints(a.phoneCountry, b.phoneCountry));
+    }
+
+    return options.filter((option) => !query
+        || option.name.toLowerCase().includes(query)
+        || getPhoneCountryName(option.phoneCountry, "ar").toLowerCase().includes(query)
+        || getPhoneCountryName(option.phoneCountry, "en").toLowerCase().includes(query)
+        || option.phoneCountry.toLowerCase().includes(query)
+        || option.callingCode.includes(codeQuery));
+}
+
+function compareCodePoints(a: string, b: string) { return a < b ? -1 : a > b ? 1 : 0; }
+
+function compareArabicNames(a: string, b: string) {
+    // Fold hamza/alef variants and vowel marks before comparing Arabic letters.
+    const normalize = (value: string) => value.replace(/[\u064b-\u065f\u0670\u0640]/g, "")
+        .replace(/[أإآٱ]/g, "ا").replace(/ؤ/g, "و").replace(/[ئى]/g, "ي").replace(/ة/g, "ه");
+    return compareCodePoints(normalize(a), normalize(b));
 }
 
 export function getPhoneCallingCode(phoneCountry: PhoneCountryCode): string {

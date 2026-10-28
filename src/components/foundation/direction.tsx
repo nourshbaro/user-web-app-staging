@@ -10,7 +10,7 @@ import { Platform, Text, View, type StyleProp, type ViewStyle } from "react-nati
  * stadium maps, seat maps/grids, QR codes.
  */
 export function PhysicalLayout({ children, style }: PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {
-  return <View style={[PHYSICAL_LAYOUT_STYLE, style]}>{children}</View>;
+  return <View {...(Platform.OS === "web" ? { dir: "ltr" } : {})} style={[Platform.OS !== "web" && PHYSICAL_LAYOUT_STYLE, style]}>{children}</View>;
 }
 
 /** Decorative chevron that points "forward"/"back" relative to the reading direction. */

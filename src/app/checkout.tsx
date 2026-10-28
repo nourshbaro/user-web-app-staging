@@ -1,3 +1,4 @@
+import { translate } from "@/i18n/runtime";
 import { FlowHeader, StepBar } from "@/components/FlowHeader";
 import { CartNotice } from "@/components/cart/CartNotice";
 import { OrderSummary } from "@/components/cart/OrderSummary";
@@ -273,7 +274,7 @@ function CheckoutScreen() {
         } catch (err) {
           const message = userFacingError(
             err,
-            "Could not prepare card payment. Please try again.",
+            translate("checkout.prepareFailed"),
           );
           if (captureRequestAuthority.isCurrent(ticket)) {
             captureSessionRef.current = null;
@@ -652,9 +653,9 @@ function CheckoutScreen() {
       : null;
   const hasItems = cart.items.length > 0;
   const billingRows = [
-    { label: i18n.t("checkout.billing.name"), value: name },
-    { label: i18n.t("checkout.billing.email"), value: email },
-    { label: i18n.t("checkout.billing.phone"), value: canonicalPhone },
+    { label: i18n.t("checkout.billing.name"), value: name, isLTR: false },
+    { label: i18n.t("checkout.billing.email"), value: email, isLTR: true },
+    { label: i18n.t("checkout.billing.phone"), value: canonicalPhone, isLTR: true },
   ];
 
   return (
@@ -730,7 +731,7 @@ function CheckoutScreen() {
                         variant="body"
                         tone={row.value ? "strong" : "danger"}
                         numberOfLines={1}
-                        style={local.billingValue}
+                        style={[local.billingValue, row.value && row.isLTR ? { writingDirection: "ltr" } : null]}
                       >
                         {row.value || i18n.t("checkout.billing.missing")}
                       </AppText>

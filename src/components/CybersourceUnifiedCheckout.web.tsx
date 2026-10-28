@@ -1,3 +1,5 @@
+import { translate } from "@/i18n/runtime";
+import { useI18n } from "@/i18n/I18nProvider";
 import { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { useTheme } from "@/components/ui";
@@ -24,6 +26,7 @@ type Props = {
 
 export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError, fullscreen = false }: Props) {
   const theme = useTheme();
+  const { t } = useI18n();
   const currentLifecycleRef = useRef<symbol | null>(null);
   const onSuccessRef = useRef(onSuccess);
   const onErrorRef = useRef(onError);
@@ -41,7 +44,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
     const lifecycle = createCybersourceWebLifecycle({
       captureContext,
       unifiedCheckout: async (context) => {
-        if (!window.VAS) throw new Error("Payment form is not ready.");
+        if (!window.VAS) throw new Error(translate("payment.form.notReady"));
         return window.VAS.UnifiedCheckout(context);
       },
       onReady: () => {
@@ -82,7 +85,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
 
   return (
     <View style={[local.wrap, fullscreen && local.fullscreen]}>
-      {status === "loading" ? <Text style={theme.styles.muted}>Loading secure payment form...</Text> : null}
+      {status === "loading" ? <Text style={theme.styles.muted}>{t("payment.form.loading")}</Text> : null}
       {status === "error" && error ? <Text style={[local.errorText, { color: theme.colors.danger }]}>{error}</Text> : null}
       <View nativeID="uc-payment-buttons" style={local.buttons} />
       <View nativeID="uc-payment-form" style={local.form} />

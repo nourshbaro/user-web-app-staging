@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime.ts";
 export type CybersourceCheckout = {
   mount(selector?: string | { paymentSelection?: string; paymentScreen?: string }): Promise<string>;
   on?(event: "ready", handler: () => void): unknown;
@@ -22,7 +23,7 @@ type LifecycleOptions = {
   onError: (message: string) => void;
 };
 
-const DEFAULT_ERROR = "Payment could not be completed. Please try again.";
+// Kept as the English compatibility export; live UI messages resolve at event time.
 export const CYBERSOURCE_SCRIPT_ERROR = "Could not load the payment SDK. Check your connection and try again.";
 
 export function createCybersourceWebLifecycle(options: LifecycleOptions) {
@@ -54,7 +55,7 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
 
   const reportError = (_err: unknown) => {
     if (!active) return;
-    options.onError(DEFAULT_ERROR);
+    options.onError(translate("payment.form.generic"));
   };
 
   const start = async () => {
@@ -102,7 +103,7 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
     const onError = () => {
       removeScriptListeners?.();
       removeScriptListeners = null;
-      if (active) options.onError(CYBERSOURCE_SCRIPT_ERROR);
+      if (active) options.onError(translate("payment.form.sdkFailed"));
     };
     script.addEventListener("load", onLoad, { once: true });
     script.addEventListener("error", onError, { once: true });

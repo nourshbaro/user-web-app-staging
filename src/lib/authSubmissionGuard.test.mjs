@@ -19,7 +19,7 @@ async function loadAuthService(apiModuleSource) {
   const source = await readFile(new URL("../services/auth.ts", import.meta.url), "utf8");
   const executable = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  }).outputText
+  }).outputText.replace(/from "(\.\.\/i18n\/[^"\n]+\.ts)"/g, (_, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`)
     .replace('from "expo-file-system"', `from "data:text/javascript,export class File {}"`)
     .replace('from "react-native"', `from ${JSON.stringify(reactNativeUrl)}`)
     .replace('from "@/lib/config"', `from ${JSON.stringify(configUrl)}`)

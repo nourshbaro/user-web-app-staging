@@ -1,3 +1,4 @@
+import { useI18n } from "@/i18n/I18nProvider";
 import { createContext, PropsWithChildren, useCallback, useContext, useMemo, useState } from "react";
 import { useCart } from "@/context/CartContext";
 import { deriveTicketSlots, type TicketSlot } from "@/lib/ticketHolders";
@@ -25,12 +26,13 @@ const TicketHoldersContext = createContext<TicketHoldersContextValue | null>(nul
 
 export function TicketHoldersProvider({ children }: PropsWithChildren) {
   const cart = useCart();
+  const { t } = useI18n();
   const [holderState, setHolderState] = useState<{
     names: Record<string, string>;
     initializedFirstHolders: Record<string, true>;
   }>({ names: {}, initializedFirstHolders: {} });
   const holderNames = holderState.names;
-  const ticketSlots = useMemo(() => deriveTicketSlots(cart.items), [cart.items]);
+  const ticketSlots = useMemo(() => deriveTicketSlots(cart.items, t), [cart.items, t]);
 
   const setHolderName = useCallback((key: string, value: string) => {
     setHolderState((current) => ({ ...current, names: { ...current.names, [key]: value } }));

@@ -4,8 +4,7 @@
  * The app language is an explicit app setting — never inferred from the
  * device — so text, direction and formatting always agree. A locale is only
  * selectable once it is listed in ENABLED_LOCALES, which requires a complete,
- * reviewed catalog. Arabic is declared for layout/formatting readiness but is
- * NOT enabled: no Arabic translation exists yet.
+ * reviewed catalog.
  */
 
 export type AppLocale = "en" | "ar";
@@ -29,8 +28,14 @@ export const LOCALE_META: Record<AppLocale, LocaleMeta> = {
 };
 
 export const DEFAULT_LOCALE: AppLocale = "en";
-export const ENABLED_LOCALES: readonly AppLocale[] = ["en"];
+export const ENABLED_LOCALES: readonly AppLocale[] = ["en", "ar"];
 export const LOCALE_STORAGE_KEY = "lfa_locale";
+
+// Non-React consumers read the provider's current selection at request time.
+// This is published by I18nProvider after restoration/persistence, never by auth.
+let currentLocale: AppLocale = DEFAULT_LOCALE;
+export function getAppLocale(): AppLocale { return currentLocale; }
+export function publishAppLocale(locale: AppLocale) { currentLocale = locale; }
 
 export function isEnabledLocale(value: unknown): value is AppLocale {
   return typeof value === "string" && (ENABLED_LOCALES as readonly string[]).includes(value);

@@ -227,7 +227,7 @@ test("a malformed successful standings response is an error, not an empty or par
 async function loadCompetitionsService() {
   const libSource = await read("./competitions.ts");
   const serviceSource = await read("../services/competitions.ts");
-  const transpile = (source) => ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const transpile = (source) => ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText.replace(/from "(\.\.\/i18n\/[^"\n]+\.ts)"/g, (_, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`);
   const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
   const key = `__competitionsApi_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   globalThis[key] = { next: null };
