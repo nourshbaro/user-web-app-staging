@@ -18,7 +18,8 @@ export function createCheckoutBilling(
 
   return {
     name,
-    email,
+    // Optional: a phone-only account has no email, and the backend accepts it absent.
+    ...(email ? { email } : {}),
     phone: canonicalPhone,
     country: "LB",
   };

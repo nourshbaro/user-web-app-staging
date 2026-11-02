@@ -67,7 +67,7 @@ import { formatMoney } from "@/lib/format";
 import { initializePhoneValue } from "@/lib/phoneNumber";
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import { PAYMENT_RECOVERY_TICKETS_ROUTE } from "@/lib/paymentRecoveryTickets";
-import { paymentError, userFacingError } from "@/lib/userFacingError";
+import { paymentError, reasonWithGuidance, userFacingError } from "@/lib/userFacingError";
 import { checkoutService } from "@/services/checkout";
 import { router, Stack, useFocusEffect, useIsFocused } from "expo-router";
 import { SymbolView } from "expo-symbols";
@@ -91,7 +91,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 function getCheckoutOrigin() {
   if (Platform.OS === "web" && typeof window !== "undefined")
     return window.location.origin;
-  return config.siteUrl;
+  return config.apiOrigin;
 }
 
 function readCaptureContext(payload: unknown) {
@@ -513,8 +513,9 @@ function CheckoutScreen() {
         checkoutSubmissionAuthority.isCurrent(submissionTicket) &&
         cart.isCartSessionCurrent(cartSessionTicket)
       ) {
-        // Catalog copy only. An unknown outcome (network, timeout, server
-        // error) may have created the order, so it never reads as a failure.
+        // The backend's reason when it gave one. An unknown outcome (network,
+        // timeout, server error) may have created the order, so it keeps its
+        // guidance and never reads as a plain failure.
         if (failure === "unknown") {
           // No trustworthy answer: the order may exist. Block paying again
           // for this session (backend idempotency is not established).
@@ -524,13 +525,16 @@ function CheckoutScreen() {
           variant: "error",
           title: i18n.t("checkout.submitFailed.title"),
           message:
-            failure === "notCompleted"
-              ? i18n.t("checkout.submitFailed.notCompleted")
-              : failure === "session"
-                ? i18n.t("payment.failed.session")
-                : failure === "maintenance"
-                  ? i18n.t("ticketError.maintenance")
-                  : i18n.t("checkout.submitFailed.unknown"),
+            failure === "unknown"
+              ? reasonWithGuidance(err, i18n.t("checkout.submitFailed.unknown"))
+              : userFacingError(
+                  err,
+                  failure === "notCompleted"
+                    ? i18n.t("checkout.submitFailed.notCompleted")
+                    : failure === "session"
+                      ? i18n.t("payment.failed.session")
+                      : i18n.t("ticketError.maintenance"),
+                ),
           duration: 6200,
         });
       }
@@ -564,7 +568,7 @@ function CheckoutScreen() {
     locked: isCheckoutLocked,
     holdersComplete: holders.allComplete,
     paymentMethod,
-    profileComplete: !!name && !!email,
+    profileComplete: !!name,
     phoneValid: !!canonicalPhone,
   });
   const canContinue = readiness.ready;
@@ -586,7 +590,7 @@ function CheckoutScreen() {
       inFlight: submitInFlightRef.current || blueHandoffStartedRef.current || isCheckoutLocked,
       holdersComplete: holderCompleteness(ticketSlots, holderNames).allComplete,
       paymentMethod,
-      profileComplete: !!name && !!email,
+      profileComplete: !!name,
       phoneValid: !!canonicalPhone,
     });
     if (!guard.ok) {
@@ -654,7 +658,8 @@ function CheckoutScreen() {
   const hasItems = cart.items.length > 0;
   const billingRows = [
     { label: i18n.t("checkout.billing.name"), value: name, isLTR: false },
-    { label: i18n.t("checkout.billing.email"), value: email, isLTR: true },
+    // Email is optional, so a phone-only account shows no Email row rather than a missing value.
+    ...(email ? [{ label: i18n.t("checkout.billing.email"), value: email, isLTR: true }] : []),
     { label: i18n.t("checkout.billing.phone"), value: canonicalPhone, isLTR: true },
   ];
 
@@ -777,7 +782,7 @@ function CheckoutScreen() {
                     cybersource: captureError ? (
                       <CartNotice
                         tone="danger"
-                        message={i18n.t("checkout.payment.cardError")}
+                        message={captureError}
                         action={{
                           label: i18n.t("checkout.payment.cardRetry"),
                           disabled: isCheckoutLocked || captureLoading,

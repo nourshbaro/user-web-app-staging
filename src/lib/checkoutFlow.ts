@@ -126,7 +126,7 @@ export function checkoutReadiness({
   locked: boolean;
   holdersComplete: boolean;
   paymentMethod: string | null;
-  /** Billing name and email present. */
+  /** Billing name present (email is optional). */
   profileComplete: boolean;
   phoneValid: boolean;
 }): { ready: boolean; blocker: CheckoutBlocker | null } {

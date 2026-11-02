@@ -136,8 +136,10 @@ test("native card bridge errors remain executable without app-only translation f
   const messages = [];
   const bridge = vm.createContext({ window: { addEventListener() {}, ReactNativeWebView: { postMessage: text => messages.push(JSON.parse(text)) } } });
   vm.runInContext(script, bridge);
-  vm.runInContext('fail(new Error("provider internals"))', bridge);
-  assert.deepEqual(messages, [{ type: "error" }]);
+  vm.runInContext('fail(new Error("provider reason"))', bridge);
+  vm.runInContext("fail({})", bridge);
+  // The provider's reason passes through; without one the native wrapper uses catalog copy.
+  assert.deepEqual(messages, [{ type: "error", message: "provider reason" }, { type: "error" }]);
   assert.match(source, /message\.message \?\? translate\("payment\.form\.generic"\)/);
 });
 

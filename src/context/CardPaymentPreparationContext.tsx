@@ -23,7 +23,7 @@ import { checkoutService } from "@/services/checkout";
 
 function getCheckoutOrigin() {
   if (Platform.OS === "web" && typeof window !== "undefined") return window.location.origin;
-  return config.siteUrl;
+  return config.apiOrigin;
 }
 
 function readCaptureContext(payload: unknown) {

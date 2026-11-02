@@ -1,9 +1,10 @@
 import { FlowHeader } from "@/components/FlowHeader";
+import { KeyboardAwareView } from "@/components/foundation";
 import { useResponsive, useTheme } from "@/components/ui";
 import { layout, spacing } from "@/lib/designTokens";
 import { Stack } from "expo-router";
 import type { ReactNode } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
+import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 /**
@@ -34,7 +35,8 @@ export function AccountFormShell({
   return (
     <View style={[local.screen, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
       <Stack.Screen options={{ headerShown: false, title }} />
-      <KeyboardAvoidingView style={local.keyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      {/* Keeps the focused field and the action bar above the keyboard. */}
+      <KeyboardAwareView style={local.keyboard}>
         <View style={{ width: responsive.contentWidth, alignSelf: "center" }}>
           <FlowHeader title={title} backLabel={backLabel} onBack={onBack} backDisabled={backDisabled} />
         </View>
@@ -54,7 +56,7 @@ export function AccountFormShell({
         >
           <View style={[local.barContent, { width }]}>{footer}</View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardAwareView>
     </View>
   );
 }

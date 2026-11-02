@@ -2,6 +2,7 @@ import { SubpageShell } from "@/components/SubpageShell";
 import { AppText, SkeletonGroup, SkeletonText, StatePanel } from "@/components/foundation";
 import { useI18n } from "@/i18n/I18nProvider";
 import { spacing } from "@/lib/designTokens";
+import { failureReason } from "@/lib/userFacingError";
 import { legalService } from "@/services/legal";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { View } from "react-native";
@@ -13,7 +14,8 @@ import { View } from "react-native";
  */
 export function LegalDocumentScreen({ document }: { document: "privacy" | "terms" }) {
   const i18n = useI18n();
-  const [state, setState] = useState<{ loading: boolean; error: boolean; content: string | null }>({ loading: true, error: false, content: null });
+  // `reason`: what the backend (or the transport) said about a failed read.
+  const [state, setState] = useState<{ loading: boolean; error: boolean; content: string | null; reason?: string | null }>({ loading: true, error: false, content: null });
 
   const activeRef = useRef(true);
   const fetchDocument = useCallback(() => {
@@ -21,8 +23,8 @@ export function LegalDocumentScreen({ document }: { document: "privacy" | "terms
       .then((content) => {
         if (activeRef.current) setState({ loading: false, error: false, content });
       })
-      .catch(() => {
-        if (activeRef.current) setState({ loading: false, error: true, content: null });
+      .catch((err) => {
+        if (activeRef.current) setState({ loading: false, error: true, content: null, reason: failureReason(err) });
       });
   }, [document]);
 
@@ -51,7 +53,7 @@ export function LegalDocumentScreen({ document }: { document: "privacy" | "terms
         <StatePanel
           variant="error"
           title={i18n.t(`legal.${document}.error`)}
-          message={i18n.t("legal.error.message")}
+          message={state.reason ?? i18n.t("legal.error.message")}
           action={{ label: i18n.t("common.retry"), onPress: retry }}
         />
       ) : (

@@ -57,7 +57,9 @@ test("cart-line actions go through CartContext and are judged by the published c
 });
 
 test("unknown outcomes block further cart actions until a confirmed refresh", () => {
-  assert.match(hook, /if \(failureNeedsReconcile\(kind\)\) \{\s*reportUnconfirmed\(\);/);
+  assert.match(hook, /if \(failureNeedsReconcile\(kind\)\) \{\s*reportUnconfirmed\(error\);/);
+  // The backend's reason is shown, followed by the re-check guidance.
+  assert.match(hook, /message: reasonWithGuidance\(error, i18n\.t\("cart\.unconfirmed\.message"\)\)/);
   for (const [name, source] of [["cart", cartScreen], ["sheet", cartSheet]]) {
     assert.match(source, /actions\.needsCartCheck \|\| cart\.isLoading/, name);
     assert.match(source, /label: i18n\.t\("cart\.check\.action"\)/, name);
@@ -139,15 +141,19 @@ test("payment methods are exactly the supported ones, with radio semantics", () 
   assert.match(methods, /aria-checked=\{active\}/);
 });
 
-test("submit failures use catalog copy, and unknown outcomes are never shown as failed", () => {
+test("submit failures show the backend's reason, and unknown outcomes are never shown as failed", () => {
   const submitBlue = section(checkout, "const submitBlue = async", "const readiness = checkoutReadiness");
   const blueCatch = section(submitBlue, "} catch (err) {", "} finally {");
-  assert.doesNotMatch(blueCatch, /userFacingError|err\.message/);
+  // Raw exception text is never shown; the backend's message is.
+  assert.doesNotMatch(blueCatch, /err\.message/);
   assert.match(blueCatch, /paymentFailureKind\(errorFacts\(err\)\)/);
-  assert.match(blueCatch, /i18n\.t\("checkout\.submitFailed\.unknown"\)/);
+  // An unknown outcome keeps its "may have gone through" guidance after the reason.
+  assert.match(blueCatch, /failure === "unknown"\s*\? reasonWithGuidance\(err, i18n\.t\("checkout\.submitFailed\.unknown"\)\)\s*: userFacingError\(/);
   const cardCatch = section(card, "} catch (submissionError) {", "} finally {");
-  assert.doesNotMatch(cardCatch, /userFacingError|submissionError\.message/);
+  assert.doesNotMatch(cardCatch, /submissionError\.message/);
   assert.match(cardCatch, /paymentFailureKind\(errorFacts\(submissionError\)\)/);
+  assert.match(cardCatch, /reason: failureReason\(submissionError\)/);
+  assert.match(card, /return failure\.kind === "unknown" \? `\$\{reason\} \$\{i18n\.t\("payment\.failed\.unknown"\)\}` : reason;/);
   assert.match(card, /failure\?\.kind === "unknown" \|\| failure\?\.kind === "locked"\s*\? \{ label: i18n\.t\("payment\.viewTickets"\)/);
 });
 

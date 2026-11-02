@@ -1,6 +1,6 @@
 import { FlowHeader, StepBar } from "@/components/FlowHeader";
 import { useReservationAnnouncements } from "@/components/cart/ReservationStatus";
-import { AppText, TransactionBar } from "@/components/foundation";
+import { AppText, KeyboardAwareView, TransactionBar } from "@/components/foundation";
 import { useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
@@ -20,8 +20,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   BackHandler,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   TextInput,
@@ -116,10 +114,8 @@ function TicketHoldersScreen() {
   return (
     <View style={[local.screen, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
       <Stack.Screen options={{ headerShown: false, gestureEnabled: false }} />
-      <KeyboardAvoidingView
-        style={local.keyboardView}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
+      {/* Keeps the focused field and the footer above the keyboard. */}
+      <KeyboardAwareView style={local.keyboardView}>
         <View style={[local.header, { width: responsive.contentWidth }]}>
           <FlowHeader
             title={isEditMode ? i18n.t("holders.editTitle") : i18n.t("holders.title")}
@@ -203,7 +199,7 @@ function TicketHoldersScreen() {
             onPress: finish,
           }}
         />
-      </KeyboardAvoidingView>
+      </KeyboardAwareView>
     </View>
   );
 }

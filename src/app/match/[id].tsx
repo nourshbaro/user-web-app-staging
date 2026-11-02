@@ -80,6 +80,7 @@ import {
   type TicketErrorFacts,
   type TicketErrorKind,
 } from "@/lib/ticketSelection";
+import { failureReason, reasonWithGuidance, userFacingError } from "@/lib/userFacingError";
 import { ApiError, ApiTransportError } from "@/services/api";
 import { matchesService } from "@/services/matches";
 import type { ApiSeat, ApiZone, ApiMatchDetail } from "@/types";
@@ -142,6 +143,7 @@ export default function MatchDetail() {
   const [seatError, setSeatError] = useState<{
     identity: string;
     kind: TicketErrorKind;
+    reason: string | null;
   } | null>(null);
   // Bumped by the seat-error Retry action to re-run the guarded seat load.
   const [seatRetryNonce, setSeatRetryNonce] = useState(0);
@@ -178,6 +180,8 @@ export default function MatchDetail() {
   const [refreshing, setRefreshing] = useState(false);
   const [seatLoading, setSeatLoading] = useState(false);
   const [errorKind, setErrorKind] = useState<TicketErrorKind | null>(null);
+  // What the backend (or the transport) said about the failed match load.
+  const [errorReason, setErrorReason] = useState<string | null>(null);
   const [transactionBarHeight, setTransactionBarHeight] = useState(0);
   const pageScrollRef = useRef<ScrollView>(null);
   const ticketSectionY = useRef(0);
@@ -235,6 +239,8 @@ export default function MatchDetail() {
   const seatSnapshotLoaded = seatSnapshot?.identity === activeSeatIdentity;
   const visibleSeatError =
     seatError?.identity === activeSeatIdentity ? seatError.kind : null;
+  const visibleSeatErrorReason =
+    seatError?.identity === activeSeatIdentity ? seatError.reason : null;
   const effectiveSelectedSeats = getEffectiveSelectedSeats(
     selectedSeats,
     selectedSeatsIdentity,
@@ -300,6 +306,7 @@ export default function MatchDetail() {
         setMatchIdentity(null);
       }
       setErrorKind(null);
+      setErrorReason(null);
       return matchesService
         .details(requestIdentity, force)
         .then((data) => {
@@ -323,7 +330,9 @@ export default function MatchDetail() {
         .catch((err) => {
           if (!matchRequestAuthority.isCurrent(ticket, routeMatchId)) return;
           const kind = ticketErrorKind("match", errorFacts(err));
+          const reason = failureReason(err);
           setErrorKind(kind);
+          setErrorReason(reason);
           // A failed pull-to-refresh keeps the match on screen, so it is
           // reported as a toast; an initial failure is shown inline instead.
           // (The pre-commit re-check reports its own outcome.)
@@ -331,7 +340,7 @@ export default function MatchDetail() {
             toast.showToast({
               variant: "error",
               title: i18n.t("matchDetail.refreshError.title"),
-              message: ticketErrorMessage(i18n, "match", kind),
+              message: ticketErrorMessage(i18n, "match", kind, reason),
             });
           }
         })
@@ -407,9 +416,10 @@ export default function MatchDetail() {
           if (!seatRequestAuthority.isCurrent(ticket, activeSeatIdentity))
             return;
           const kind = ticketErrorKind("seats", errorFacts(err));
-          setSeatError({ identity: requestIdentity, kind });
+          const reason = failureReason(err);
+          setSeatError({ identity: requestIdentity, kind, reason });
           AccessibilityInfo.announceForAccessibility(
-            `${i18n.t("seats.error.title")}. ${ticketErrorMessage(i18n, "seats", kind)}`,
+            `${i18n.t("seats.error.title")}. ${ticketErrorMessage(i18n, "seats", kind, reason)}`,
           );
         })
         .finally(() => {
@@ -592,8 +602,13 @@ export default function MatchDetail() {
           ? i18n.t("selection.unconfirmed.title")
           : i18n.t("selection.error.title"),
         message: effects.needsReconcile
-          ? i18n.t("selection.unconfirmed.message")
-          : ticketErrorMessage(i18n, "cart", failureKind ?? "generic"),
+          ? reasonWithGuidance(outcome.status === "failed" ? outcome.error : null, i18n.t("selection.unconfirmed.message"))
+          : ticketErrorMessage(
+              i18n,
+              "cart",
+              failureKind ?? "generic",
+              outcome.status === "failed" ? failureReason(outcome.error) : null,
+            ),
       });
     } finally {
       setIsCommitting(false);
@@ -614,11 +629,11 @@ export default function MatchDetail() {
         title: i18n.t("selection.unconfirmed.title"),
         message: i18n.t("selection.reconcileFailed"),
       });
-    } catch {
+    } catch (error) {
       toast.showToast({
         variant: "error",
         title: i18n.t("selection.unconfirmed.title"),
-        message: i18n.t("selection.reconcileFailed"),
+        message: userFacingError(error, i18n.t("selection.reconcileFailed")),
       });
     } finally {
       setIsReconciling(false);
@@ -681,7 +696,7 @@ export default function MatchDetail() {
                 ? i18n.t("matchDetail.notFound.title")
                 : i18n.t("matchDetail.error.title")
             }
-            message={ticketErrorMessage(i18n, "match", errorKind ?? "generic")}
+            message={ticketErrorMessage(i18n, "match", errorKind ?? "generic", errorReason)}
             action={{
               label: i18n.t("common.retry"),
               onPress: () => void loadMatch(),
@@ -858,7 +873,7 @@ export default function MatchDetail() {
             <StatePanel
               variant="error"
               title={i18n.t("seats.error.title")}
-              message={ticketErrorMessage(i18n, "seats", visibleSeatError)}
+              message={ticketErrorMessage(i18n, "seats", visibleSeatError, visibleSeatErrorReason)}
               action={{
                 label: i18n.t("common.retry"),
                 onPress: () => setSeatRetryNonce((value) => value + 1),
@@ -1265,12 +1280,14 @@ function errorFacts(error: unknown): TicketErrorFacts {
   return { status: null, transport: null };
 }
 
-/** Catalog message for a classified failure; backend wording is never shown. */
+/** The backend's own reason when it gave one, else catalog copy for the classified failure. */
 function ticketErrorMessage(
   i18n: I18n,
   context: TicketErrorContext,
   kind: TicketErrorKind,
+  reason?: string | null,
 ) {
+  if (reason) return reason;
   switch (kind) {
     case "offline":
       return i18n.t("ticketError.offline");

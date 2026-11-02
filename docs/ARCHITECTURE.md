@@ -481,8 +481,9 @@ request authorities, loading, error and empty states. Nothing is persisted.
   - the actionable-seat derivation, seat-state rules, and the seat summary;
   - display-only estimates;
   - the selection preflight, the confirmation executor
-    (`executeSelectionCommit`), and error classification (catalog messages
-    only, never backend wording).
+    (`executeSelectionCommit`), and error classification (which decides
+    behaviour; the message shown is the backend's reason, catalog copy only
+    when there is none — `docs/API_INTEGRATION.md` §12).
 - Zone kinds come from the backend: `zone.has_seats` → reserved seating (seat
   selection) vs general admission (quantity stepper).
 - **Status gating (hard boundary):** only a `scheduled` match is a
@@ -771,9 +772,10 @@ payment status; the backend and portal remain the authority.
    record locks the restored session (conservative; see `docs/SECURITY.md`
    §3.16).
 
-Payment failures are classified from HTTP facts only (`paymentFailureKind`)
-and shown with catalog copy; an unknown outcome is never presented as
-"not charged".
+Payment failures are classified from HTTP facts only (`paymentFailureKind`);
+the message is the backend's (or provider's) reason, catalog copy only when
+there is none. An unknown outcome keeps its "may have gone through" guidance
+after the reason and is never presented as "not charged".
 
 **Result screens** (`CheckoutPaymentResult`) are display-only. Route params
 are sanitized by `src/lib/checkoutResultParams.ts`; they do not mutate cart or
@@ -1160,6 +1162,15 @@ layering):
   payment screens' `FlowHeader` and the ticket pager);
   stadium, seat and QR geometry sit in `PhysicalLayout`; Arabic text falls
   back to the platform font for both type roles (`fontFamilyFor`).
+- Keyboard: every form (`auth.tsx`, ticket holders, `AccountFormShell` for
+  change password / delete account) wraps its content in
+  `KeyboardAwareView` (`src/components/foundation`). iOS uses
+  `KeyboardAvoidingView` padding; Android draws edge-to-edge (the window no
+  longer resizes) and `KeyboardAvoidingView` under-pads there, so the view
+  measures itself in the window and pads by the exact keyboard overlap. Fields
+  scroll above the keyboard and the action bar stays visible and tappable
+  without closing it; "Next" moves through the fields and "Done" on the last
+  one submits.
 - Touch targets: controls drawn smaller than 44pt to match v3 (segments,
   "Show map", Filters, the Home avatar) reach ≥ 44pt on native through
   `hitSlop`; react-native-web ignores `hitSlop`, so their web pointer

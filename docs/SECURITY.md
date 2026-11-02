@@ -255,8 +255,11 @@ frontend requirement.
   (`docs/ARCHITECTURE.md` §12).
 
 ### 2.11 Errors and logging
-- User-facing errors come from backend messages or fixed fallbacks; transport
-  errors use fixed copy. No stack traces are shown.
+- User-facing errors show the backend's own message (or the payment
+  provider's reason) whenever one exists, on every API-backed surface; fixed
+  copy is only the fallback, and transport errors use fixed copy. A payment
+  with an unknown outcome keeps its "may have gone through" guidance after the
+  reason. Raw client exception text and stack traces are never shown.
 - Production `console.error` calls log error objects for avatar, notification,
   and registration failures; none log tokens or passwords.
 

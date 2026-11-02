@@ -138,7 +138,7 @@ function CartScreen() {
           <StatePanel
             variant="error"
             title={i18n.t("cart.refreshFailed.title")}
-            message={i18n.t("cart.refreshFailed.message")}
+            message={cart.cartRefreshError ?? i18n.t("cart.refreshFailed.message")}
             action={{ label: i18n.t("common.retry"), onPress: () => void actions.checkCart() }}
           />
         ) : viewState === "empty" ? (
@@ -173,7 +173,7 @@ function CartScreen() {
             ) : cart.cartRefreshError ? (
               <CartNotice
                 tone="warning"
-                message={i18n.t("cart.refreshWarning")}
+                message={cart.cartRefreshError}
                 action={{
                   label: i18n.t("common.retry"),
                   busy: actions.checkingCart,

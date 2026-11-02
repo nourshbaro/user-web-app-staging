@@ -280,7 +280,8 @@ export type CheckoutSubmitRequest = {
   checkout_session_id: string;
   billing: {
     name: string;
-    email: string;
+    /** Omitted for a phone-only account (email is optional at registration). */
+    email?: string;
     phone: string;
     address1?: string;
     locality?: string;

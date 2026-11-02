@@ -423,7 +423,7 @@ export const ar = {
   "checkout.blocker.busy": "يرجى الانتظار…",
   "checkout.blocker.holders": "أضف اسمًا لكل تذكرة.",
   "checkout.blocker.method": "اختر طريقة دفع.",
-  "checkout.blocker.profile": "يحتاج ملفك الشخصي إلى اسم وبريد إلكتروني.",
+  "checkout.blocker.profile": "يحتاج ملفك الشخصي إلى اسم.",
   "checkout.blocker.phone": "أضف رقم هاتف إلى ملفك الشخصي.",
   "checkout.blocker.reconcile": "حدّث سلتك قبل الدفع.",
   "checkout.blocker.paymentUnknown": "نتيجة عملية دفع لهذا الحجز غير معروفة. تحقق من تذاكري.",

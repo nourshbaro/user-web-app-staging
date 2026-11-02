@@ -228,10 +228,13 @@ test("current lifetime mounts and emits one success callback", async () => {
   assert.deepEqual(events, [["success", "current-token"]]);
 });
 
-test("current lifetime sanitizes provider errors", async () => {
+test("current lifetime shows the provider's reason, else catalog copy", async () => {
   const { lifecycle, events } = harness(() => Promise.reject({ reason: "current failure" }));
   await lifecycle.start();
-  assert.deepEqual(events, [["error", "Payment could not be completed. Please try again."]]);
+  assert.deepEqual(events, [["error", "current failure"]]);
+  const silent = harness(() => Promise.reject({}));
+  await silent.lifecycle.start();
+  assert.deepEqual(silent.events, [["error", "Payment could not be completed. Please try again."]]);
 });
 
 test("script load after cleanup does not start stale initialization", () => {

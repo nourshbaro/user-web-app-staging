@@ -19,6 +19,7 @@ import {
 import { storageUrl } from "@/lib/config";
 import { radius, spacing } from "@/lib/designTokens";
 import { createRequestAuthority } from "@/lib/requestAuthority";
+import { failureReason } from "@/lib/userFacingError";
 import { competitionReads } from "@/services/cachedReads";
 import { onLiveTransition } from "@/services/matches";
 import type { ApiMatch } from "@/types";
@@ -27,7 +28,8 @@ import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useState } from "react";
 import { Image, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
-type Load<T> = { loading: boolean; error: boolean; data: T };
+// `reason`: what the backend (or the transport) said about a failed read.
+type Load<T> = { loading: boolean; error: boolean; data: T; reason?: string | null };
 
 /**
  * Competitions (LFA Screen v3): competition cards, the standings table and
@@ -70,8 +72,8 @@ export default function CompetitionsScreen() {
         setList({ loading: false, error: false, data });
         setSelectedId((current) => (current !== null && data.some((item) => item.id === current) ? current : (data[0]?.id ?? null)));
       })
-      .catch(() => {
-        if (listRequest.isCurrent(ticket)) setList({ loading: false, error: true, data: [] });
+      .catch((err) => {
+        if (listRequest.isCurrent(ticket)) setList({ loading: false, error: true, data: [], reason: failureReason(err) });
       });
   }, [listRequest]);
 
@@ -105,16 +107,16 @@ export default function CompetitionsScreen() {
             .then((data) => {
               if (detailRequest.isCurrent(ticket)) setStandings({ loading: false, error: false, data });
             })
-            .catch(() => {
-              if (detailRequest.isCurrent(ticket) && !quiet) setStandings({ loading: false, error: true, data: null });
+            .catch((err) => {
+              if (detailRequest.isCurrent(ticket) && !quiet) setStandings({ loading: false, error: true, data: null, reason: failureReason(err) });
             });
       const matchesTask = competitionReads
         .matches(id, force)
         .then((data) => {
           if (detailRequest.isCurrent(ticket)) setMatches({ loading: false, error: false, data });
         })
-        .catch(() => {
-          if (detailRequest.isCurrent(ticket) && !quiet) setMatches({ loading: false, error: true, data: [] });
+        .catch((err) => {
+          if (detailRequest.isCurrent(ticket) && !quiet) setMatches({ loading: false, error: true, data: [], reason: failureReason(err) });
         });
       return Promise.all([standingsTask, matchesTask]);
     },
@@ -182,7 +184,7 @@ export default function CompetitionsScreen() {
             <StatePanel
               variant="error"
               title={i18n.t("competitions.error.title")}
-              message={i18n.t("competitions.error.message")}
+              message={list.reason ?? i18n.t("competitions.error.message")}
               action={{ label: i18n.t("common.retry"), onPress: () => { setList({ loading: true, error: false, data: [] }); void loadList(true); } }}
             />
           ) : !list.data.length ? (
@@ -241,7 +243,7 @@ export default function CompetitionsScreen() {
                 <StatePanel
                   variant="error"
                   title={i18n.t("competitions.standings.error.title")}
-                  message={i18n.t("competitions.error.message")}
+                  message={standings.reason ?? i18n.t("competitions.error.message")}
                   action={{ label: i18n.t("common.retry"), onPress: retryDetail }}
                 />
               ) : view === "unavailable" ? (
@@ -268,7 +270,7 @@ export default function CompetitionsScreen() {
                   <StatePanel
                     variant="error"
                     title={i18n.t("competitions.matches.error.title")}
-                    message={i18n.t("competitions.error.message")}
+                    message={matches.reason ?? i18n.t("competitions.error.message")}
                     action={{ label: i18n.t("common.retry"), onPress: retryDetail }}
                   />
                 ) : matches.data.length ? (

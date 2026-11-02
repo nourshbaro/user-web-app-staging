@@ -20,7 +20,8 @@ All configuration is read from `EXPO_PUBLIC_*` environment variables, which are
 | Variable | Used as |
 | -------- | ------- |
 | `EXPO_PUBLIC_LFA_API_BASE_URL` | `config.apiBaseUrl` — native request base (…`/api`) |
-| `EXPO_PUBLIC_LFA_SITE_URL` | `config.siteUrl` — CyberSource target origin (native) and WebView `baseUrl` |
+| `EXPO_PUBLIC_LFA_SITE_URL` | `config.siteUrl` — the website domain (storage fallback only) |
+| `EXPO_PUBLIC_LFA_API_ORIGIN` | `config.apiOrigin` — the API origin without `/api`: CyberSource target origin and card-form WebView `baseUrl` (native); defaults to the origin of `EXPO_PUBLIC_LFA_API_BASE_URL` |
 | `EXPO_PUBLIC_LFA_STORAGE_BASE` | `config.storageBaseUrl` — media URLs via `storageUrl()` |
 | `EXPO_PUBLIC_LFA_API_PASSWORD` | `password` request header (see §3) |
 | `EXPO_PUBLIC_LFA_API_TIMEOUT_MS` | request timeout (default 15000) |
@@ -145,9 +146,9 @@ source not inspected):
 - **Nullable email:** an account created without an email returns
   `user.email: null` (register, login and `/auth/me`). `isUser` (`/auth/me`),
   the persisted-user decoder and `User.email` (`string | null`) accept it;
-  checkout reads it null-safely. A phone-only account currently cannot pass
-  checkout's existing "name and email" billing requirement, and the profile
-  is read-only in the app (§14).
+  checkout reads it null-safely. Checkout no longer requires an email: it
+  needs a name and a valid phone, and `billing.email` is omitted when the
+  profile has none (§9). The profile stays read-only in the app.
 
 ### 5.2 Password recovery
 
@@ -386,8 +387,8 @@ defaults to `USD`.
 | `POST /payments/cybersource/capture-context` | `checkout_session_id, target_origins[], locale: "en-us"` | Returns `capture_context` (root or `data`) |
 | `POST /checkout/mobile/submit` | `CheckoutSubmitRequest` (`src/types.ts`) | Both payment methods |
 
-`CheckoutSubmitRequest`: `checkout_session_id`, `billing { name, email, phone,
-country: "LB" }`, `tickets_by_match: { [matchId]: [{ holder_name }] }`,
+`CheckoutSubmitRequest`: `checkout_session_id`, `billing { name, email?, phone,
+country: "LB" }` (`email` omitted for a phone-only account), `tickets_by_match: { [matchId]: [{ holder_name }] }`,
 `payment_method: "cybersource" | "blue"`, and for card
 `payment.transient_token`.
 `CheckoutSubmitResponse` (all optional): `order_id`, `order_number`,
@@ -471,7 +472,7 @@ Full state model: `docs/ARCHITECTURE.md` §8.
   loaded from `EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL`) runs in a WebView
   (native) or the page (web) and returns a **transient token**.
 - The capture context is requested per cart session with `target_origins` =
-  `config.siteUrl` (native) or `window.location.origin` (web). Stale responses
+  `config.apiOrigin` (native) or `window.location.origin` (web). Stale responses
   are discarded via `createRequestAuthority`.
 - The transient token is sent once to `/checkout/mobile/submit`. Only the
   backend authorizes the charge.
@@ -546,14 +547,29 @@ navigator is replaced by the v3 maintenance screen (`docs/ARCHITECTURE.md` §13)
   `ApiError.message`: beyond the body text it only ever added the transport
   string `"Request failed with <status>"`, which is never shown to users
   (likewise the password-change sheet).
+- `failureReason(error)` is the reason itself: the backend's `message` /
+  `error` / first validation error, or the transport's fixed offline/timeout
+  text; `null` when neither gave one. `userFacingError` is
+  `failureReason ?? fallback`.
+- `reasonWithGuidance(error, guidance)` puts the reason first and keeps
+  guidance the user must still act on — used for a payment or cart mutation
+  whose outcome is unknown ("it may have gone through"), never dropped in
+  favour of the reason.
 - `paymentError()` is the standard payment fallback copy.
-- Backend messages are shown verbatim when present. Raw exception text and stack
-  traces are not shown.
-- Exception: Match Details classifies failures by HTTP status and transport
-  category (`ticketErrorKind` in `src/lib/ticketSelection.ts`) and shows only
-  catalog messages, never backend wording. A structured backend error-code
-  contract would allow more specific messages, e.g. ticket limits (not
-  established; §14).
+- **Rule: every API-backed failure shows the backend's own message** —
+  authentication, cart, checkout and payment, Match Details, data screens
+  (Competitions, Notifications, My Tickets, Legal) and logout. Catalog copy is
+  only the fallback when there is no reason (a non-JSON or empty error body).
+  Failure *classification* (`ticketErrorKind`, `paymentFailureKind`) still
+  decides behaviour — locks, reconcile gates, retry — but not the wording.
+- Payment provider reasons are shown too: the CyberSource Unified Checkout
+  error's `message` / `reason` (native WebView bridge and web lifecycle),
+  else catalog copy.
+- Not backend-driven, so catalog copy remains: the BLUE page's own load and
+  redirect failures, and device failures (camera, gallery, opening settings
+  or links).
+- Raw exception text (`err.message` of client exceptions) and stack traces are
+  never shown.
 
 ---
 
@@ -630,10 +646,19 @@ read cache either: it is asked once per launch (memoized in `appUpdate.ts`).
 - **Ownership before `add-email` persists** (§5.2, `docs/SECURITY.md` §3.18).
 - **Server-side `password_confirmation` on register** is not enforced on
   staging (`docs/SECURITY.md` §3.19).
-- **Phone-only accounts and checkout:** checkout requires a billing email,
-  which a phone-only account lacks and cannot add in the app. Whether
-  `/checkout/mobile/submit` accepts a billing email that is absent, or
-  how the profile gains one, is a backend/product decision.
+- **Phone-only accounts and checkout:** the app omits `billing.email` when the
+  profile has none, and staging accepts it: a phone-only account paid by card
+  end to end on 2026-11-02 (order 1105, status `paid`). Before the backend
+  change the same submit returned `422 "The billing.email field is
+  required."`.
+- **Capture-context target origin:** on native, `target_origins` and the
+  card-form page origin are `config.apiOrigin` (`EXPO_PUBLIC_LFA_API_ORIGIN`),
+  separate from the website's `EXPO_PUBLIC_LFA_SITE_URL`. On staging
+  (2026-11-02) the website origin `https://lfa.matrixvert.com` returned `422
+  "We couldn't reach the payment provider…"`, while the API origin
+  `https://api-lfa.matrixvert.com` returned a capture context. The backend's
+  message hides the provider's reason. Production uses
+  `https://api.lfa-ticketing.com` (not yet verified for card payment).
 - **BLUE order left open when paying by card.** "Continue with BLUE" makes the
   backend create a BLUE order (staging: the BLUE page shows its order id).
   The app lets the user pay by card afterwards (a separate submit for the

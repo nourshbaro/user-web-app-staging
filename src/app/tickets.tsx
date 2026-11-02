@@ -34,6 +34,7 @@ import {
   type TicketFilter,
   type TicketVisualState,
 } from "@/lib/ticketPresentation";
+import { failureReason } from "@/lib/userFacingError";
 import { getUserScopedCacheGeneration } from "@/lib/userScopedCache";
 import { profileService } from "@/services/auth";
 import { beginTicketsVisit, portalReads } from "@/services/cachedReads";
@@ -88,6 +89,9 @@ function TicketsScreen() {
   const [loading, setLoading] = useState(cachedList === null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
+  // What the backend (or the transport) said about the failed list / ticket reads.
+  const [errorReason, setErrorReason] = useState<string | null>(null);
+  const [detailErrorReason, setDetailErrorReason] = useState<string | null>(null);
   const [selected, setSelected] = useState<PortalMatch | null>(null);
   const [tickets, setTickets] = useState<PortalTicket[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -113,9 +117,10 @@ function TicketsScreen() {
             setError(false);
           }
         })
-        .catch(() => {
+        .catch((err) => {
           if (current()) {
             setMatches([]);
+            setErrorReason(failureReason(err));
             setError(true);
           }
         })
@@ -191,8 +196,11 @@ function TicketsScreen() {
         current,
       );
       if (current()) setTickets(detailed);
-    } catch {
-      if (current()) setDetailError(true);
+    } catch (err) {
+      if (current()) {
+        setDetailErrorReason(failureReason(err));
+        setDetailError(true);
+      }
     } finally {
       if (current()) setDetailLoading(false);
     }
@@ -247,7 +255,7 @@ function TicketsScreen() {
             <StatePanel
               variant="error"
               title={i18n.t("myTickets.error.title")}
-              message={i18n.t("myTickets.error.message")}
+              message={errorReason ?? i18n.t("myTickets.error.message")}
               action={{ label: i18n.t("common.retry"), onPress: retry }}
             />
           ) : view === "empty" ? (
@@ -298,6 +306,7 @@ function TicketsScreen() {
           tickets={tickets}
           loading={detailLoading}
           error={detailError}
+          errorReason={detailErrorReason}
           onRetry={() => void openMatch(selected)}
           onClose={() => {
             detailRequest.invalidate();
@@ -446,6 +455,7 @@ function TicketViewer({
   tickets,
   loading,
   error,
+  errorReason,
   onRetry,
   onClose,
 }: {
@@ -455,6 +465,8 @@ function TicketViewer({
   tickets: PortalTicket[];
   loading: boolean;
   error: boolean;
+  /** What the backend (or the transport) said about the failed read. */
+  errorReason: string | null;
   onRetry: () => void;
   onClose: () => void;
 }) {
@@ -525,7 +537,7 @@ function TicketViewer({
             <StatePanel
               variant="error"
               title={i18n.t("myTickets.detail.error.title")}
-              message={i18n.t("myTickets.detail.error.message")}
+              message={errorReason ?? i18n.t("myTickets.detail.error.message")}
               action={{ label: i18n.t("common.retry"), onPress: onRetry }}
             />
           </View>
@@ -547,7 +559,7 @@ function TicketViewer({
                 <StatePanel
                   variant="error"
                   title={i18n.t("myTickets.detail.partial.title")}
-                  message={i18n.t("myTickets.detail.error.message")}
+                  message={errorReason ?? i18n.t("myTickets.detail.error.message")}
                   action={{ label: i18n.t("common.retry"), onPress: onRetry }}
                 />
               </View>

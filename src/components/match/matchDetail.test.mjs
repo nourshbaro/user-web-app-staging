@@ -169,7 +169,7 @@ test("seat loading keeps its request authority, identity-owned errors, and cart 
   assert.match(route, /seatRequestAuthority\.begin\(requestIdentity\)/);
   assert.match(route, /seatRequestAuthority\.invalidate\(activeSeatIdentity\)/);
   assert.equal((route.match(/if \(!seatRequestAuthority\.isCurrent\(ticket, activeSeatIdentity\)\)/g) ?? []).length, 4);
-  assert.match(route, /setSeatError\(\{ identity: requestIdentity, kind \}\)/);
+  assert.match(route, /setSeatError\(\{ identity: requestIdentity, kind, reason \}\)/);
   assert.match(route, /seatError\?\.identity === activeSeatIdentity/);
   assert.match(route, /seatSnapshot\?\.identity === activeSeatIdentity \? seatSnapshot\.seats : \[\]/);
   assert.match(route, /if \(!sameZone\) seatRequestAuthority\.invalidate\(\);/);
@@ -208,8 +208,12 @@ test("zoom scales real coordinates uniformly and never rewrites geometry", () =>
   assert.match(route, /getPolygonPointsAttribute\(zone\)/);
 });
 
-test("errors are shown from the catalog, never the backend's own wording", () => {
-  assert.doesNotMatch(route, /userFacingError|backendProvidedError|backendResponseMessage|err\.message|error\.message/);
+test("errors show the backend's own reason first, else catalog copy for the classified failure", () => {
+  // Raw exception text is never shown; the backend's message (or transport text) is.
+  assert.doesNotMatch(route, /err\.message|error\.message/);
+  assert.match(route, /function ticketErrorMessage\([\s\S]*?reason\?: string \| null,\s*\) \{\s*if \(reason\) return reason;/);
+  assert.match(route, /ticketErrorMessage\(i18n, "match", errorKind \?\? "generic", errorReason\)/);
+  assert.match(route, /ticketErrorMessage\(i18n, "seats", visibleSeatError, visibleSeatErrorReason\)/);
   assert.match(route, /ticketErrorKind\("match", errorFacts\(err\)\)/);
   assert.match(route, /ticketErrorKind\("seats", errorFacts\(err\)\)/);
   assert.match(route, /ticketErrorKind\("cart", errorFacts\(outcome\.error\)\)/);

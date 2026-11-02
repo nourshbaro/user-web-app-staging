@@ -15,7 +15,7 @@ const executable = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText.replace(/from "(\.\.\/i18n\/[^"\n]+\.ts)"/g, (_, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`).replace('from "@/services/api"', `from ${JSON.stringify(apiMock)}`);
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(executable).toString("base64")}`;
-const { userFacingError, backendProvidedError, backendResponseMessage } = await import(moduleUrl);
+const { userFacingError, backendProvidedError, backendResponseMessage, failureReason, reasonWithGuidance } = await import(moduleUrl);
 const { ApiError, ApiTransportError } = await import(apiMock);
 
 test("userFacingError surfaces the backend message and only falls back when absent", () => {
@@ -36,6 +36,25 @@ test("userFacingError surfaces the backend message and only falls back when abse
     "Unable to reach the server.",
   );
   assert.equal(userFacingError(new Error("internal detail"), "fallback"), "fallback");
+});
+
+test("failureReason is the backend's or the transport's own reason, never raw exception text", () => {
+  assert.equal(
+    failureReason(new ApiError("request failed", 422, { message: "The billing.email field is required." })),
+    "The billing.email field is required.",
+  );
+  assert.equal(failureReason(new ApiTransportError("Request timed out.")), "Request timed out.");
+  assert.equal(failureReason(new ApiError("Request failed with 500", 500, null)), null);
+  assert.equal(failureReason(new Error("internal detail")), null);
+  assert.equal(failureReason(undefined), null);
+});
+
+test("reasonWithGuidance keeps the guidance after the reason, or alone without one", () => {
+  assert.equal(
+    reasonWithGuidance(new ApiError("request failed", 500, { message: "Server Error" }), "Check My Tickets."),
+    "Server Error Check My Tickets.",
+  );
+  assert.equal(reasonWithGuidance(new Error("internal detail"), "Check My Tickets."), "Check My Tickets.");
 });
 
 test("backend-provided errors prefer message, error, then validation text", () => {

@@ -8,6 +8,7 @@ import { spacing } from "@/lib/designTokens";
 import { formatTime, getFormatLocale } from "@/lib/format";
 import { groupInbox, notificationMatchTarget, type InboxGroupKey, type InboxNotification, type InboxTeam } from "@/lib/notificationInbox";
 import { createRequestAuthority } from "@/lib/requestAuthority";
+import { failureReason } from "@/lib/userFacingError";
 import { getUserScopedCacheGeneration, onUserScopedCacheInvalidated } from "@/lib/userScopedCache";
 import { notificationReads, onNotificationsInvalidated } from "@/services/cachedReads";
 import { router, Stack } from "expo-router";
@@ -36,6 +37,8 @@ function NotificationsScreen() {
   const [loadedAt, setLoadedAt] = useState(() => cached?.fetchedAt ?? 0);
   const [loading, setLoading] = useState(cached === null);
   const [error, setError] = useState(false);
+  // What the backend (or the transport) said about the failed list read.
+  const [errorReason, setErrorReason] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [unread, setUnread] = useState<number | null>(() => notificationReads.peekUnreadCount()?.value ?? null);
   const [listRequest] = useState(createRequestAuthority);
@@ -60,9 +63,12 @@ function NotificationsScreen() {
         setLoadedAt(notificationReads.peekList()?.fetchedAt ?? Date.now());
         setError(false);
       })
-      .catch(() => {
+      .catch((err) => {
         // A failed background re-read keeps what is shown; otherwise the error state.
-        if (listCurrent() && mode !== "revalidate") setError(true);
+        if (listCurrent() && mode !== "revalidate") {
+          setErrorReason(failureReason(err));
+          setError(true);
+        }
       })
       .finally(() => {
         if (listCurrent()) {
@@ -152,7 +158,7 @@ function NotificationsScreen() {
             <StatePanel
               variant="error"
               title={i18n.t("notifications.error.title")}
-              message={i18n.t("notifications.error.message")}
+              message={errorReason ?? i18n.t("notifications.error.message")}
               action={{ label: i18n.t("common.retry"), onPress: () => void load("retry") }}
             />
           ) : items.length === 0 ? (

@@ -13,6 +13,7 @@ import { storageUrl } from "@/lib/config";
 import { spacing } from "@/lib/designTokens";
 import { formatMonthYear } from "@/lib/format";
 import { profileFacts } from "@/lib/profileFacts";
+import { reasonWithGuidance } from "@/lib/userFacingError";
 import { authService } from "@/services/auth";
 import type { User } from "@/types";
 import { Stack, router, type Href } from "expo-router";
@@ -72,11 +73,11 @@ function ProfileScreen() {
 
     try {
       await auth.logout();
-    } catch {
+    } catch (error) {
       toast.showToast({
         variant: "error",
         title: i18n.t("profile.logout.failed"),
-        message: i18n.t("profile.logout.cleared"),
+        message: reasonWithGuidance(error, i18n.t("profile.logout.cleared")),
       });
     } finally {
       router.replace("/");

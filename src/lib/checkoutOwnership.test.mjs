@@ -52,6 +52,21 @@ test("checkout billing always retains Lebanon as billing country", () => {
   }
 });
 
+test("checkout billing omits the email for a phone-only account", () => {
+  assert.deepEqual(createCheckoutBilling("Phone Buyer", "", "96170123456"), {
+    name: "Phone Buyer",
+    phone: "96170123456",
+    country: "LB",
+  });
+});
+
+test("checkout does not require an email to pay", async () => {
+  const source = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /profileComplete: !!name && !!email/);
+  assert.match(source, /profileComplete: !!name,/);
+});
+
 test("checkout maps billing fields from the current authenticated user", async () => {
   const source = await readFile(new URL("../app/checkout.tsx", import.meta.url), "utf8");
 

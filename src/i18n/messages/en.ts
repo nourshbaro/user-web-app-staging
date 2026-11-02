@@ -406,7 +406,7 @@ export const en = {
   "checkout.blocker.busy": "Please wait…",
   "checkout.blocker.holders": "Add a name for every ticket.",
   "checkout.blocker.method": "Choose a payment method.",
-  "checkout.blocker.profile": "Your profile needs a name and email.",
+  "checkout.blocker.profile": "Your profile needs a name.",
   "checkout.blocker.phone": "Add a phone number to your profile.",
   "checkout.blocker.reconcile": "Refresh your cart before paying.",
   "checkout.blocker.paymentUnknown": "A payment for this reservation has an unknown result. Check My Tickets.",

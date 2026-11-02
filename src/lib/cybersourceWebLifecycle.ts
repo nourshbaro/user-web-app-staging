@@ -53,9 +53,12 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
     destroyClient(client);
   };
 
-  const reportError = (_err: unknown) => {
+  // The provider's own reason when it gave one, else catalog copy.
+  const reportError = (err: unknown) => {
     if (!active) return;
-    options.onError(translate("payment.form.generic"));
+    const record = err && typeof err === "object" ? (err as { message?: unknown; reason?: unknown }) : null;
+    const reason = record ? (typeof record.message === "string" && record.message.trim() ? record.message : record.reason) : null;
+    options.onError(typeof reason === "string" && reason.trim() ? reason : translate("payment.form.generic"));
   };
 
   const start = async () => {

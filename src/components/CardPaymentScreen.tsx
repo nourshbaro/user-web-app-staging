@@ -7,6 +7,7 @@ import { useCart } from "@/context/CartContext";
 import { useToast } from "@/context/ToastContext";
 import { useI18n } from "@/i18n/I18nProvider";
 import { errorFacts } from "@/lib/apiErrorFacts";
+import { failureReason } from "@/lib/userFacingError";
 import {
   clearCardPaymentHandoff,
   readCardPaymentHandoff,
@@ -50,10 +51,16 @@ type CardFailure =
   | { kind: "notStarted" }
   /** Another payment attempt (e.g. BLUE) holds this session: nothing was sent. */
   | { kind: "inProgress" }
-  | { kind: PaymentFailureKind };
+  /** `reason`: what the backend (or the transport) said about the failed submit. */
+  | { kind: PaymentFailureKind; reason?: string | null };
 
-function failureMessage(i18n: ReturnType<typeof useI18n>, kind: CardFailure["kind"]) {
-  switch (kind) {
+function failureMessage(i18n: ReturnType<typeof useI18n>, failure: CardFailure) {
+  const reason = "reason" in failure ? failure.reason : null;
+  if (reason) {
+    // An unknown outcome keeps its guidance: the payment may have gone through.
+    return failure.kind === "unknown" ? `${reason} ${i18n.t("payment.failed.unknown")}` : reason;
+  }
+  switch (failure.kind) {
     case "unavailable":
       return i18n.t("payment.card.sessionGone");
     case "expired":
@@ -99,7 +106,8 @@ export function CardPaymentScreen() {
   const [captureContext, setCaptureContext] = useState<string | null>(
     handoff?.captureContext ?? null,
   );
-  const [preparationError, setPreparationError] = useState(false);
+  // The reason the card form could not be prepared, or null.
+  const [preparationError, setPreparationError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [failure, setFailure] = useState<CardFailure | null>(() =>
     !handoff
@@ -135,16 +143,19 @@ export function CardPaymentScreen() {
 
   const preparePayment = useCallback(async (force = false) => {
     if (!handoff || cart.sessionId !== handoff.sessionId) return;
-    setPreparationError(false);
+    setPreparationError(null);
     try {
       const context = await handoff.prepareCaptureContext(force);
       if (activeRef.current && cart.sessionId === handoff.sessionId) setCaptureContext(context);
-    } catch {
+    } catch (error) {
       if (activeRef.current && cart.sessionId === handoff.sessionId) {
-        setPreparationError(true);
+        // Checkout's capture-context owner rejects with the backend's reason.
+        setPreparationError(
+          error instanceof Error && error.message ? error.message : i18n.t("payment.card.prepareFailed"),
+        );
       }
     }
-  }, [cart.sessionId, handoff]);
+  }, [cart.sessionId, handoff, i18n]);
 
   useEffect(() => {
     let active = true;
@@ -258,11 +269,12 @@ export function CardPaymentScreen() {
         if (kind === "unknown") markPaymentOutcomeUnknown(cartTicket.sessionId as string, "card");
         else if (attempt) void settlePaymentAttempt(sessionId, attempt.id);
         if (!activeRef.current) return;
-        setFailure({ kind });
+        const failed = { kind, reason: failureReason(submissionError) };
+        setFailure(failed);
         toast.showToast({
           variant: "error",
           title: kind === "unknown" ? i18n.t("payment.unknown.title") : i18n.t("payment.failed.title"),
-          message: failureMessage(i18n, kind),
+          message: failureMessage(i18n, failed),
         });
       } finally {
         submittingRef.current = false;
@@ -319,7 +331,7 @@ export function CardPaymentScreen() {
                       ? i18n.t("payment.failed.title")
                       : i18n.t("payment.unavailable.title")
               }
-              message={failure ? failureMessage(i18n, failure.kind) : i18n.t("payment.reservationGone")}
+              message={failure ? failureMessage(i18n, failure) : i18n.t("payment.reservationGone")}
               action={
                 failure?.kind === "unknown" || failure?.kind === "locked"
                   ? { label: i18n.t("payment.viewTickets"), onPress: () => router.replace(PAYMENT_RECOVERY_TICKETS_ROUTE) }
@@ -367,7 +379,7 @@ export function CardPaymentScreen() {
             <StatePanel
               variant="error"
               title={i18n.t("payment.unavailable.title")}
-              message={i18n.t("payment.card.prepareFailed")}
+              message={preparationError}
               action={{ label: i18n.t("payment.retry"), onPress: () => void preparePayment(true) }}
               secondaryAction={{ label: i18n.t("payment.back"), onPress: returnToCheckout }}
             />

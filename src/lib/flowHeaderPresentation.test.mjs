@@ -88,8 +88,9 @@ test("screens opt into their v3 header pattern only (no per-screen platform chec
   for (const path of ["../components/SubpageShell.tsx", "../app/notifications.tsx"]) {
     assert.doesNotMatch(await read(path), /Platform\.OS/, path);
   }
-  // The account shell's only platform branch is the keyboard behaviour, not the header.
+  // The account shell has no platform branch: keyboard avoidance is the shared
+  // KeyboardAwareView (Android draws edge-to-edge and measures its own overlap).
   const shell = await read("../components/account/AccountFormShell.tsx");
-  assert.equal((shell.match(/Platform\.OS/g) ?? []).length, 1);
-  assert.match(shell, /behavior=\{Platform\.OS === "ios" \? "padding" : "height"\}/);
+  assert.equal((shell.match(/Platform\.OS/g) ?? []).length, 0);
+  assert.match(shell, /<KeyboardAwareView style=\{local\.keyboard\}>/);
 });

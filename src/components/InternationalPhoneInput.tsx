@@ -10,7 +10,7 @@ import {
     updateNationalPhone,
     type PhoneValue,
 } from "@/lib/phoneNumber";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type Ref } from "react";
 import { SymbolView } from "expo-symbols";
 import {
     FlatList,
@@ -21,6 +21,7 @@ import {
     StyleSheet,
     Text,
     TextInput,
+    type TextInputProps,
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -34,6 +35,10 @@ interface InternationalPhoneInputProps {
     /** Example national number shown while the field is empty. */
     placeholder?: string;
     onChange: (value: PhoneValue) => void;
+    /** The national-number input, so a form can move focus into it ("Next"). */
+    inputRef?: Ref<TextInput>;
+    returnKeyType?: TextInputProps["returnKeyType"];
+    onSubmitEditing?: TextInputProps["onSubmitEditing"];
 }
 
 export function InternationalPhoneInput({
@@ -43,6 +48,9 @@ export function InternationalPhoneInput({
     label: suppliedLabel,
     placeholder: suppliedPlaceholder,
     onChange,
+    inputRef,
+    returnKeyType,
+    onSubmitEditing,
 }: InternationalPhoneInputProps) {
     const theme = useTheme();
     const { t, locale } = useI18n();
@@ -136,6 +144,11 @@ export function InternationalPhoneInput({
                     </Text>
 
                     <TextInput
+                        ref={inputRef}
+                        returnKeyType={returnKeyType}
+                        onSubmitEditing={onSubmitEditing}
+                        // "Next" keeps the keyboard open while focus moves on.
+                        submitBehavior={returnKeyType === "next" ? "submit" : undefined}
                         accessibilityLabel={suppliedLabel ?? t("phone.number")}
                         accessibilityHint={t("phone.numberHint", { country: phoneCountryName })}
                         accessibilityState={{ disabled }}

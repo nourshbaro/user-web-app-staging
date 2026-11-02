@@ -780,7 +780,8 @@ Runtime checks still owed for Phase 4:
   - unknown outcomes and unfinished attempts found after a restart lock the
     session; definite non-completion releases it; a different session never
     inherits it.
-- **Payment screens:** catalog copy, unknown outcomes never shown as failures,
+- **Payment screens:** the backend's reason (catalog copy only without one),
+  unknown outcomes never shown as failures,
   synchronous back refusal while a card submit is in flight.
 - **Expo Go:** `expo-notifications` is loaded only outside Expo Go, fixing the
   Android Expo Go import crash and its downstream "missing default export"

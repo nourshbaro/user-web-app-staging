@@ -43,6 +43,11 @@ function resolveStorageBase() {
 export const config = {
   apiBaseUrl: trimEndSlash(process.env.EXPO_PUBLIC_LFA_API_BASE_URL) ?? "",
   siteUrl: trimEndSlash(process.env.EXPO_PUBLIC_LFA_SITE_URL) ?? "",
+  // The API's origin (no /api): the CyberSource target origin and card-form
+  // page origin on native. Defaults to the API base URL's origin.
+  apiOrigin:
+    configuredHttpOrigin(process.env.EXPO_PUBLIC_LFA_API_ORIGIN) ||
+    originFrom(process.env.EXPO_PUBLIC_LFA_API_BASE_URL),
   storageBaseUrl: resolveStorageBase(),
   apiPassword: process.env.EXPO_PUBLIC_LFA_API_PASSWORD ?? "",
   timeoutMs: Number(process.env.EXPO_PUBLIC_LFA_API_TIMEOUT_MS ?? 15000),

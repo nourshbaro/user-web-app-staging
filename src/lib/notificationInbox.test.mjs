@@ -168,7 +168,9 @@ test("Retry and pull-to-refresh force reads; a background re-read keeps what is 
   assert.match(screen, /const force = mode === "retry" \|\| mode === "refresh";/);
   assert.match(screen, /action=\{\{ label: i18n\.t\("common\.retry"\), onPress: \(\) => void load\("retry"\) \}\}/);
   assert.match(screen, /refreshControl=\{<RefreshControl refreshing=\{refreshing\} onRefresh=\{refresh\} \/>\}/);
-  assert.match(screen, /if \(listCurrent\(\) && mode !== "revalidate"\) setError\(true\);/);
+  assert.match(screen, /if \(listCurrent\(\) && mode !== "revalidate"\) \{\s*setErrorReason\(failureReason\(err\)\);\s*setError\(true\);/);
+  // The backend's reason is shown when it gave one.
+  assert.match(screen, /message=\{errorReason \?\? i18n\.t\("notifications\.error\.message"\)\}/);
 });
 
 test("only a match target is pressable; other notifications are plain rows", async () => {

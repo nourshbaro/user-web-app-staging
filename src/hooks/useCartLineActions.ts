@@ -7,6 +7,7 @@ import type { CartDisplayItem } from "@/lib/cartDisplay";
 import { quantityChangeConfirmed, removalConfirmed } from "@/lib/cartPresentation";
 import { reconciliationActive, remainingLockKeys } from "@/lib/cartReconciliation";
 import { failureNeedsReconcile, ticketErrorKind } from "@/lib/ticketSelection";
+import { reasonWithGuidance, userFacingError } from "@/lib/userFacingError";
 import { useState } from "react";
 
 /**
@@ -33,11 +34,12 @@ export function useCartLineActions() {
 
   const currentSession = () => cart.captureCartSession()?.sessionId ?? null;
 
-  const reportUnconfirmed = () => {
+  // `error`: the failed request, whose reason precedes the re-check guidance.
+  const reportUnconfirmed = (error?: unknown) => {
     toast.showToast({
       variant: "warning",
       title: i18n.t("cart.unconfirmed.title"),
-      message: i18n.t("cart.unconfirmed.message"),
+      message: reasonWithGuidance(error, i18n.t("cart.unconfirmed.message")),
     });
   };
 
@@ -45,13 +47,14 @@ export function useCartLineActions() {
     const kind = ticketErrorKind("cart", errorFacts(error));
     // The owner has already raised the shared gate for an ambiguous failure.
     if (failureNeedsReconcile(kind)) {
-      reportUnconfirmed();
+      reportUnconfirmed(error);
       return;
     }
     toast.showToast({
       variant: "error",
       title: i18n.t("cart.actionFailed.title"),
-      message:
+      message: userFacingError(
+        error,
         kind === "session"
           ? i18n.t("ticketError.session")
           : kind === "expired"
@@ -61,6 +64,7 @@ export function useCartLineActions() {
               : kind === "rejected"
                 ? i18n.t("ticketError.rejected")
                 : i18n.t("ticketError.cart"),
+      ),
     });
   };
 
@@ -155,8 +159,8 @@ export function useCartLineActions() {
       const publication = await cart.refreshCart();
       if (publication.confirmed) return;
       toast.showToast({ variant: "error", title: i18n.t("cart.unconfirmed.title"), message: i18n.t("cart.check.failed") });
-    } catch {
-      toast.showToast({ variant: "error", title: i18n.t("cart.unconfirmed.title"), message: i18n.t("cart.check.failed") });
+    } catch (error) {
+      toast.showToast({ variant: "error", title: i18n.t("cart.unconfirmed.title"), message: userFacingError(error, i18n.t("cart.check.failed")) });
     } finally {
       setCheckingCart(false);
     }

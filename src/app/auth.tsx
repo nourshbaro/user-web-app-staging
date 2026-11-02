@@ -1,9 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { forwardRef, useEffect, useReducer, useRef, useState } from "react";
 import {
   Image,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -17,7 +15,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Button, useResponsive, useTheme } from "@/components/ui";
 import { FlowHeader } from "@/components/FlowHeader";
-import { AppText, SegmentedControl } from "@/components/foundation";
+import { AppText, KeyboardAwareView, SegmentedControl } from "@/components/foundation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { InternationalPhoneInput } from "@/components/InternationalPhoneInput";
 import { OtpCodeInput } from "@/components/account/OtpCodeInput";
@@ -167,6 +165,13 @@ export default function AuthScreen() {
     setMessage(null);
     toast.showToast({ variant: "success", title: t("auth.toast.codeSent"), message: t("auth.code.detail", { email: codeEmail }) });
   };
+
+  // Return-key focus chain: every field moves on with "Next"; the last one submits.
+  const lastNameRef = useRef<TextInput>(null);
+  const emailRef = useRef<TextInput>(null);
+  const phoneRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmationRef = useRef<TextInput>(null);
 
   const submit = async () => {
     if (!submissionGuard.current.tryAcquire()) return;
@@ -625,6 +630,10 @@ export default function AuthScreen() {
     (step === "addEmail" && !addedEmail.trim()) ||
     (step === "code" && recoveryCode.length !== 6) ||
     (step === "newPassword" && (!recoveryPassword || !recoveryPasswordConfirmation));
+  // "Done" on the last field submits, exactly as the primary button would.
+  const submitFromKeyboard = () => {
+    if (!primaryDisabled) void submit();
+  };
   const showsLogo = mode === "login";
   const showsMailIcon = mode === "otp" || step === "addEmail" || step === "code";
   const backLabel =
@@ -632,7 +641,8 @@ export default function AuthScreen() {
 
   return (
     <View style={[local.screen, { backgroundColor: theme.colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <KeyboardAvoidingView style={local.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      {/* Keeps the focused field and the actions above the keyboard. */}
+      <KeyboardAwareView style={local.keyboard}>
         <View style={[local.shell, { width: responsive.contentWidth }]}>
           <FlowHeader title="" backLabel={backLabel} onBack={goBack} />
           <ScrollView
@@ -697,6 +707,8 @@ export default function AuthScreen() {
                         textContentType="emailAddress"
                         autoComplete="email"
                         editable={!loading}
+                        returnKeyType="next"
+                        onSubmitEditing={() => passwordRef.current?.focus()}
                       />
                     ) : (
                       <InternationalPhoneInput
@@ -705,15 +717,20 @@ export default function AuthScreen() {
                         disabled={loading}
                         error={phoneError(loginPhone, t("auth.error.phone"))}
                         onChange={setLoginPhone}
+                        returnKeyType="next"
+                        onSubmitEditing={() => passwordRef.current?.focus()}
                       />
                     )}
                     <PasswordField
+                      ref={passwordRef}
                       label={t("auth.field.password")}
                       value={password}
                       onChangeText={setPassword}
                       visible={showPassword}
                       onToggle={() => setShowPassword((value) => !value)}
                       editable={!loading}
+                      returnKeyType="done"
+                      onSubmitEditing={submitFromKeyboard}
                     />
                   </>
                 ) : mode === "register" ? (
@@ -726,8 +743,11 @@ export default function AuthScreen() {
                       textContentType="givenName"
                       autoComplete="given-name"
                       editable={!loading}
+                      returnKeyType="next"
+                      onSubmitEditing={() => lastNameRef.current?.focus()}
                     />
                     <Field
+                      ref={lastNameRef}
                       label={t("auth.field.lastName")}
                       value={lastName}
                       onChangeText={setLastName}
@@ -735,8 +755,11 @@ export default function AuthScreen() {
                       textContentType="familyName"
                       autoComplete="family-name"
                       editable={!loading}
+                      returnKeyType="next"
+                      onSubmitEditing={() => emailRef.current?.focus()}
                     />
                     <Field
+                      ref={emailRef}
                       label={t("auth.field.emailOptional")}
                       placeholder={t("auth.field.emailPlaceholder")}
                       value={email}
@@ -747,15 +770,21 @@ export default function AuthScreen() {
                       textContentType="emailAddress"
                       autoComplete="email"
                       editable={!loading}
+                      returnKeyType="next"
+                      onSubmitEditing={() => phoneRef.current?.focus()}
                     />
                     <InternationalPhoneInput
+                      inputRef={phoneRef}
                       label={t("auth.field.mobile")}
                       value={registrationPhone}
                       disabled={loading}
                       error={phoneError(registrationPhone, t("auth.error.phone"))}
                       onChange={setRegistrationPhone}
+                      returnKeyType="next"
+                      onSubmitEditing={() => passwordRef.current?.focus()}
                     />
                     <PasswordField
+                      ref={passwordRef}
                       label={t("auth.field.password")}
                       placeholder={t("auth.field.passwordPlaceholder")}
                       value={password}
@@ -764,8 +793,11 @@ export default function AuthScreen() {
                       onToggle={() => setShowPassword((value) => !value)}
                       editable={!loading}
                       newPassword
+                      returnKeyType="next"
+                      onSubmitEditing={() => confirmationRef.current?.focus()}
                     />
                     <PasswordField
+                      ref={confirmationRef}
                       label={t("auth.field.confirmPassword")}
                       value={passwordConfirmation}
                       onChangeText={setPasswordConfirmation}
@@ -773,6 +805,8 @@ export default function AuthScreen() {
                       onToggle={() => setShowPasswordConfirmation((value) => !value)}
                       editable={!loading}
                       newPassword
+                      returnKeyType="done"
+                      onSubmitEditing={submitFromKeyboard}
                     />
                   </>
                 ) : mode === "complete-phone" ? (
@@ -781,6 +815,8 @@ export default function AuthScreen() {
                     disabled={loading}
                     error={phoneError(completionPhone, t("auth.error.phone"))}
                     onChange={setCompletionPhone}
+                    returnKeyType="done"
+                    onSubmitEditing={submitFromKeyboard}
                   />
                 ) : mode === "otp" ? (
                   <OtpCodeInput
@@ -803,6 +839,8 @@ export default function AuthScreen() {
                       textContentType="emailAddress"
                       autoComplete="email"
                       editable={!loading}
+                      returnKeyType="done"
+                      onSubmitEditing={submitFromKeyboard}
                     />
                   ) : (
                     <InternationalPhoneInput
@@ -811,6 +849,8 @@ export default function AuthScreen() {
                       disabled={loading}
                       error={phoneError(recoveryPhone, t("auth.error.phone"))}
                       onChange={editRecoveryPhone}
+                      returnKeyType="done"
+                      onSubmitEditing={submitFromKeyboard}
                     />
                   )
                 ) : step === "addEmail" ? (
@@ -825,6 +865,8 @@ export default function AuthScreen() {
                     textContentType="emailAddress"
                     autoComplete="email"
                     editable={!loading}
+                    returnKeyType="done"
+                    onSubmitEditing={submitFromKeyboard}
                   />
                 ) : step === "code" ? (
                   <>
@@ -866,8 +908,11 @@ export default function AuthScreen() {
                       onToggle={() => setShowRecoveryPassword((value) => !value)}
                       editable={!loading}
                       newPassword
+                      returnKeyType="next"
+                      onSubmitEditing={() => confirmationRef.current?.focus()}
                     />
                     <PasswordField
+                      ref={confirmationRef}
                       label={t("auth.field.confirmNewPassword")}
                       value={recoveryPasswordConfirmation}
                       onChangeText={setRecoveryPasswordConfirmation}
@@ -875,6 +920,8 @@ export default function AuthScreen() {
                       onToggle={() => setShowRecoveryPasswordConfirmation((value) => !value)}
                       editable={!loading}
                       newPassword
+                      returnKeyType="done"
+                      onSubmitEditing={submitFromKeyboard}
                     />
                   </>
                 )}
@@ -947,7 +994,7 @@ export default function AuthScreen() {
             ) : null}
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardAwareView>
     </View>
   );
 }
@@ -966,17 +1013,22 @@ type FieldProps = {
   | "editable"
   | "textContentType"
   | "autoComplete"
+  | "returnKeyType"
+  | "onSubmitEditing"
 >;
 
 /** v3 field: muted label, 52pt input, radius 12, hairline ring (2pt brand ring while focused). */
-function Field({ label, ...inputProps }: FieldProps) {
+const Field = forwardRef<TextInput, FieldProps>(function Field({ label, ...inputProps }, ref) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   return (
     <View style={local.inputWrap}>
       <AppText variant="meta" tone="muted" style={local.label}>{label}</AppText>
       <TextInput
+        ref={ref}
         {...inputProps}
+        // "Next" keeps the keyboard open while focus moves on.
+        submitBehavior={inputProps.returnKeyType === "next" ? "submit" : undefined}
         accessibilityLabel={label}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
@@ -993,18 +1045,9 @@ function Field({ label, ...inputProps }: FieldProps) {
       />
     </View>
   );
-}
+});
 
-function PasswordField({
-  label,
-  value,
-  onChangeText,
-  visible,
-  onToggle,
-  editable,
-  placeholder,
-  newPassword = false,
-}: {
+const PasswordField = forwardRef<TextInput, {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
@@ -1013,7 +1056,18 @@ function PasswordField({
   editable: boolean;
   placeholder?: string;
   newPassword?: boolean;
-}) {
+} & Pick<React.ComponentProps<typeof TextInput>, "returnKeyType" | "onSubmitEditing">>(function PasswordField({
+  label,
+  value,
+  onChangeText,
+  visible,
+  onToggle,
+  editable,
+  placeholder,
+  newPassword = false,
+  returnKeyType,
+  onSubmitEditing,
+}, ref) {
   const theme = useTheme();
   const i18n = useI18n();
   const [focused, setFocused] = useState(false);
@@ -1031,6 +1085,11 @@ function PasswordField({
         ]}
       >
         <TextInput
+          ref={ref}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          // "Next" keeps the keyboard open while focus moves on.
+          submitBehavior={returnKeyType === "next" ? "submit" : undefined}
           value={value}
           onChangeText={onChangeText}
           secureTextEntry={!visible}
@@ -1066,7 +1125,7 @@ function PasswordField({
       </View>
     </View>
   );
-}
+});
 
 const local = {
   screen: { flex: 1, alignItems: "center" as const },

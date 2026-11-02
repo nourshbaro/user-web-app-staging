@@ -1,12 +1,28 @@
 import { translate } from "../i18n/runtime.ts";
 import { ApiError, ApiTransportError } from "@/services/api";
 
-export function userFacingError(error: unknown, fallback: string) {
+/**
+ * Why a request failed, as the backend (or the transport) put it: the
+ * backend's `message` / `error` / first validation error, or the fixed
+ * offline/timeout text. Null when neither gave a reason.
+ */
+export function failureReason(error: unknown): string | null {
   if (error instanceof ApiTransportError) return error.message;
-  if (error instanceof ApiError) {
-    return backendResponseMessage(error.body) ?? fallback;
-  }
-  return fallback;
+  if (error instanceof ApiError) return backendResponseMessage(error.body);
+  return null;
+}
+
+export function userFacingError(error: unknown, fallback: string) {
+  return failureReason(error) ?? fallback;
+}
+
+/**
+ * The failure reason followed by guidance the user must still act on — e.g. a
+ * payment whose outcome is unknown and may have gone through.
+ */
+export function reasonWithGuidance(error: unknown, guidance: string) {
+  const reason = failureReason(error);
+  return reason ? `${reason} ${guidance}` : guidance;
 }
 
 export function backendProvidedError(error: unknown, fallback: string) {

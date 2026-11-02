@@ -115,8 +115,10 @@ function buildCheckoutHtml(captureContext: string) {
       };
       window.addEventListener("load", scheduleMeasurement);
       const fail = (error) => {
-        // The native wrapper resolves UI copy in the current app language.
-        post({ type: "error" });
+        // The provider's own reason when it gave one; the native wrapper
+        // falls back to catalog copy in the current app language.
+        const reason = error && (error.message || error.reason);
+        post({ type: "error", message: typeof reason === "string" && reason.trim() ? reason : undefined });
       };
       const sdkLoadFailed = () => post({ type: "error", reason: "sdk_load_failed" });
 
@@ -254,7 +256,8 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
           <WebView
             key={`${captureContext}-${attempt}`}
             originWhitelist={["https://*", "http://*"]}
-            source={{ html, baseUrl: config.siteUrl || "https://api-lfa.matrixvert.com" }}
+            // Must be the same origin sent as the capture context's target origin.
+            source={{ html, baseUrl: config.apiOrigin }}
             javaScriptEnabled
             domStorageEnabled
             mixedContentMode="never"
