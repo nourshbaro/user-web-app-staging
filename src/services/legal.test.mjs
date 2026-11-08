@@ -77,8 +77,19 @@ test("privacyPolicy still throws its own message on missing content, independent
   );
 });
 
-test("termsOfUse normalizes HTML the same way privacy content is normalized", async () => {
-  globalThis[responseKey].value = { content: "<p>Line one</p><br><li>Item</li>" };
-  const content = await legalService.termsOfUse();
-  assert.equal(content, "Line one\n\n• Item");
+test("both documents return the published HTML intact for structured display", async () => {
+  const html = "<h2>1. Title</h2>\n<p><strong>Label:</strong> Body</p>";
+  globalThis[responseKey].value = { content: `  ${html}\n` };
+  assert.equal(await legalService.termsOfUse(), html);
+
+  globalThis[responseKey].value = html;
+  assert.equal(await legalService.privacyPolicy(), html);
+});
+
+test("a blank string document is unavailable, not an empty page", async () => {
+  globalThis[responseKey].value = "   ";
+  await assert.rejects(
+    () => legalService.termsOfUse(),
+    (error) => error instanceof Error && error.message === "The terms of use are currently unavailable.",
+  );
 });

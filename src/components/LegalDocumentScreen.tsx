@@ -2,9 +2,10 @@ import { SubpageShell } from "@/components/SubpageShell";
 import { AppText, SkeletonGroup, SkeletonText, StatePanel } from "@/components/foundation";
 import { useI18n } from "@/i18n/I18nProvider";
 import { spacing } from "@/lib/designTokens";
+import { parseLegalDocument, type LegalBlock, type LegalRun } from "@/lib/legalDocument";
 import { failureReason } from "@/lib/userFacingError";
 import { legalService } from "@/services/legal";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 
 /**
@@ -41,7 +42,7 @@ export function LegalDocumentScreen({ document }: { document: "privacy" | "terms
     fetchDocument();
   };
 
-  const paragraphs = (state.content ?? "").split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+  const blocks = useMemo(() => parseLegalDocument(state.content ?? ""), [state.content]);
 
   return (
     <SubpageShell title={i18n.t(`legal.${document}.title`)} backLabel={i18n.t("legal.title")} fallback="/legal">
@@ -58,8 +59,8 @@ export function LegalDocumentScreen({ document }: { document: "privacy" | "terms
         />
       ) : (
         <View style={local.body}>
-          {paragraphs.map((paragraph, index) => (
-            <AppText key={index} variant="body" style={local.paragraph}>{paragraph}</AppText>
+          {blocks.map((block, index) => (
+            <LegalBlockView key={index} block={block} first={index === 0} />
           ))}
         </View>
       )}
@@ -67,7 +68,54 @@ export function LegalDocumentScreen({ document }: { document: "privacy" | "terms
   );
 }
 
+function LegalBlockView({ block, first }: { block: LegalBlock; first: boolean }) {
+  if (block.kind === "heading") {
+    return (
+      <AppText variant="sectionTitle" accessibilityRole="header" style={first ? null : local.heading}>
+        {block.runs.map((run) => run.text).join("")}
+      </AppText>
+    );
+  }
+  if (block.kind === "list") {
+    return (
+      <View role="list" style={local.list}>
+        {block.items.map((item, index) => (
+          <View key={index} role="listitem" style={local.listItem}>
+            <AppText variant="body" tone="muted" style={[local.paragraph, local.marker]}>
+              {block.ordered ? `${index + 1}.` : "•"}
+            </AppText>
+            <AppText variant="body" style={[local.paragraph, local.itemText]}>
+              <LegalRuns runs={item} />
+            </AppText>
+          </View>
+        ))}
+      </View>
+    );
+  }
+  return (
+    <AppText variant="body" style={local.paragraph}>
+      <LegalRuns runs={block.runs} />
+    </AppText>
+  );
+}
+
+/** Bold runs nest as `bodyStrong` so the script-aware font family carries the weight. */
+function LegalRuns({ runs }: { runs: LegalRun[] }) {
+  return runs.map((run, index) =>
+    run.strong ? (
+      <AppText key={index} variant="bodyStrong" style={local.paragraph}>{run.text}</AppText>
+    ) : (
+      run.text
+    ),
+  );
+}
+
 const local = {
   body: { gap: spacing.md, paddingHorizontal: spacing.xs },
+  heading: { marginTop: spacing.md },
   paragraph: { lineHeight: 23 },
+  list: { gap: spacing.sm },
+  listItem: { flexDirection: "row" as const, gap: spacing.sm },
+  marker: { minWidth: 18 },
+  itemText: { flex: 1 },
 };

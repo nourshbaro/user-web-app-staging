@@ -22,30 +22,18 @@ async function fetchLegalDocument(path: string, unavailableMessage: string) {
   return readLegalContent(payload, unavailableMessage);
 }
 
+/**
+ * Returns the document as published (HTML fragment or plain text). Structure
+ * is read for display by `parseLegalDocument`, never rendered as HTML.
+ */
 function readLegalContent(payload: LegalDocumentPayload, unavailableMessage: string): string {
-  if (typeof payload === "string") return normalizeLegalText(payload);
+  if (typeof payload === "string" && payload.trim()) return payload.trim();
+  if (typeof payload === "string") throw new Error(unavailableMessage);
 
   for (const key of CONTENT_KEYS) {
     const value = payload[key];
-    if (typeof value === "string" && value.trim()) return normalizeLegalText(value);
+    if (typeof value === "string" && value.trim()) return value.trim();
   }
 
   throw new Error(unavailableMessage);
-}
-
-function normalizeLegalText(value: string) {
-  return value
-    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
-    .replace(/<\/(p|div|h[1-6]|li|ul|ol|section)>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "• ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#(?:39|x27);/gi, "'")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
