@@ -176,12 +176,12 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
 This is a CyberSource Unified Checkout SDK defect, not an LFA backend or
 frontend requirement.
 
-- Card entry uses `client.createCheckout({ autoProcessing: false })` +
+- Card entry uses `client.createCheckout({ autoProcessing: true })` +
   `checkout.mount({ paymentSelection, paymentScreen })` on native and web.
   CyberSource renders its own "Checkout with card" selection button inside its
   iframe; the card form opens after the user taps it.
 - Removing that step with the documented v1
-  `client.createTrigger("PANENTRY", { autoProcessing: false })` +
+  `client.createTrigger("PANENTRY", { autoProcessing: true })` +
   `trigger.mount("#uc-payment-form")` was investigated. On Android staging it
   failed before rendering card entry
   (`TypeError: Cannot read properties of undefined (reading 'telegram')`).
