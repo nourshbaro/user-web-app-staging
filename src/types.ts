@@ -290,7 +290,8 @@ export type CheckoutSubmitRequest = {
     country: string;
   };
   tickets_by_match: Record<string, { holder_name: string }[]>;
-  payment_method: "cybersource" | "blue";
+  /** "free": only when the backend cart total is 0 (no provider, no payment payload). */
+  payment_method: "cybersource" | "blue" | "free";
   payment?: { transient_token?: string };
 };
 

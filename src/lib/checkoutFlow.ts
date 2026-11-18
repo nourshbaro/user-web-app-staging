@@ -172,7 +172,7 @@ export function checkoutAttemptBlocks({
   hasReusableBlueAttempt,
 }: {
   /** Method of the attempt holding the session, or null when none does. */
-  heldMethod: "card" | "blue" | null;
+  heldMethod: "card" | "blue" | "free" | null;
   paymentMethod: string | null;
   hasReusableBlueAttempt: boolean;
 }) {

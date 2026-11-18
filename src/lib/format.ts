@@ -144,6 +144,16 @@ export function formatMoney(value?: number | string | null, currency = "USD") {
   return formatLocaleTag.startsWith("ar") ? `\u2066${label}\u2069` : label;
 }
 
+/**
+ * A line price: "Free" when the backend value is exactly 0, otherwise
+ * `formatMoney`. A missing or non-numeric value is never shown as free.
+ * For unit and line prices only (cart, order summary, match zones);
+ * order totals keep `formatMoney`.
+ */
+export function formatLinePrice(value?: number | string | null, currency = "USD") {
+  return parseAmount(value) === 0 ? translate("format.free") : formatMoney(value, currency);
+}
+
 export function minutesSeconds(seconds: number) {
   const min = Math.floor(seconds / 60).toString().padStart(2, "0");
   const sec = Math.floor(seconds % 60).toString().padStart(2, "0");

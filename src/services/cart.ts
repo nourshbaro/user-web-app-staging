@@ -1,3 +1,4 @@
+import { parseCartTotal } from "@/lib/cartTotal";
 import { apiRequest, unwrapData } from "@/services/api";
 import type { AddCartRequest, CartItem, CartResponse, UpdateCartRequest } from "@/types";
 
@@ -24,7 +25,8 @@ function normalize(payload: unknown): CartResponse {
     ...candidate,
     cart: {
       ...candidate.cart,
-      total: Number(candidate.cart.total ?? 0),
+      // Unavailable stays NaN, never 0 (0 means a free order).
+      total: parseCartTotal(candidate.cart.total),
       currency: candidate.cart.currency ?? "USD",
       items: getCartItems(candidate.cart),
     },

@@ -63,7 +63,7 @@ Treat these as transactional or security boundaries. Presentation changes are
 fine; behavior changes need explicit scope, focused inspection, and tests:
 
 - `CartContext` operations, session tickets, expiry, and persistence.
-- Checkout submission (`submitBlue`, `handleContinue`), holder-name gating, and
+- Checkout submission (`submitBlue`, `submitFree`, `handleContinue`), holder-name gating, and
   the `captureCartSession` / `isCartSessionCurrent` / `clearCartIfSession` pattern.
 - `BluePaymentScreen.native.tsx` navigation policy and terminal handling.
 - `CardPaymentScreen.tsx` / `CybersourceUnifiedCheckout.*` token flow.

@@ -139,7 +139,8 @@ the existing owners. It preserved:
 - existing CyberSource and BLUE ownership (`docs/ARCHITECTURE.md` §10,
   `docs/SECURITY.md`);
 - the authoritative payment-completion rules: the cart is cleared only after
-  a trusted terminal result for the same session.
+  a trusted terminal result for the same session (for a free zero-total
+  order, a proven submit response on Checkout).
 
 **Payment retry policy update (2026-11-18, `f6d5e05`):** Checkout now offers
 "Pay again" after an unknown result, including on the same reservation.

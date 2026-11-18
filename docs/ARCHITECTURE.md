@@ -659,8 +659,9 @@ request authorities, loading, error and empty states. Nothing is persisted.
   match; GA quantity changes judged by `quantityChangeConfirmed` and removals
   by `removalConfirmed` against the published cart; the displayed total is
   always the owner's `cart.total` (group subtotals are display-only and
-  missing prices show "Price unavailable", never 0); Cart and the sheet never
-  clear the cart.
+  missing prices, or a missing total, show "Price unavailable", never 0; a
+  line priced exactly 0 reads "Free"); Cart and the sheet never clear the
+  cart.
 - Unauthenticated `addItem` routes to `/auth`. Signed-out mount removes any
   persisted session ID.
 - Consumers use `captureCartSession`, `isCartSessionCurrent`, and
@@ -686,7 +687,8 @@ a name. Names are sent as `tickets_by_match`, built by the one shared
 ## 10. Checkout and payment
 
 **Checkout (`src/app/checkout.tsx`)** — owns payment-method selection,
-capture-context loading for CyberSource, and BLUE submission. Billing comes
+capture-context loading for CyberSource, BLUE submission, and free
+(zero-total) order submission. Billing comes
 from the authenticated profile (name, email, canonical phone, country `LB`); a
 valid phone is required. `refreshUser()` runs on focus. Duplicate submission
 is blocked by `submitInFlightRef` + `checkoutSubmissionAuthority`, and results
@@ -694,13 +696,14 @@ are ignored if the cart session changed.
 - **Readiness** (`checkoutReadiness`, `src/lib/checkoutFlow.ts`) blocks Pay
   for, in order: no items, reservation expired, cart re-read gate, unknown
   payment outcome, another attempt in progress, busy, missing holders, no
-  method, incomplete profile, invalid phone. The first blocker is shown.
+  method, incomplete profile, invalid phone. The first blocker is shown. A
+  free cart's method is `"free"` (`effectiveMethod`), so it never needs one.
 - **Pay handler** (`handleContinue`) re-validates with `submissionGuard`
   against `readCartGuardState()` and the payment gate at the moment of the
   press, before either handoff; the rendered session must still be current.
 
 **Payment gate** (`src/lib/paymentOutcomeLock.ts`) — the single per-session
-authority for "may a payment start?", shared by Card and BLUE. It stores no
+authority for "may a payment start?", shared by Card, BLUE and free orders. It stores no
 payment status; the backend and portal remain the authority.
 - **Attempt.** Every submission first calls `acquirePaymentAttempt(session,
   method)`. The claim is synchronous (a second caller from any surface or
@@ -808,6 +811,27 @@ production state that routed there:
   locked, with Checkout's explicit "Pay again" option), never as a failure.
 Detail rows show backend-provided values only.
 
+**Free (zero-total) order** (`docs/API_INTEGRATION.md` §9a)
+1. `isFreeCart` = `isFreeCartTotal(cart.total, cart.items.length)`: items and
+   a validated backend total of exactly 0 (`parseCartTotal` keeps a missing
+   or malformed total `NaN`). Checkout then hides the method options, shows
+   "No payment needed", never prepares a capture context, and the action
+   reads "Get my tickets".
+2. `submitFree` runs the same guards as BLUE (cart session ticket, holder
+   names, billing, `checkoutSubmissionAuthority`), acquires the payment
+   attempt with method `"free"`, runs the final guard, and posts
+   `/checkout/mobile/submit` with `payment_method: "free"`.
+3. Only a response that `freeSubmitCompletion` calls complete, for the
+   still-current cart session and the still-current submission, clears the
+   cart (`clearCartIfSession`) and routes to `/checkout/success`
+   (`provider: "free"`: "Order confirmed", no "Paid with" row). The authority
+   is re-checked after the clear, so an unmounted Checkout never navigates.
+   `freeOrderCompletingRef` keeps the empty-cart redirect from racing it.
+4. An unproven 2xx or an unknown failure locks the session (`"free"`); a
+   definite rejection settles the attempt.
+This is the only place Checkout clears the cart: a free order has no payment
+screen to return a terminal result.
+
 **Checkout Back:** header and Android hardware Back share one policy
 (`checkoutBackBlocked` / `checkoutBackHandlers` in `src/lib/checkoutFlow.ts`)
 over the existing synchronous guards (`submitInFlightRef`,
@@ -818,8 +842,8 @@ and the Card screen keeps its own in-flight back guard.
 
 **Checkout presentation (v3):** choosing a payment method only records the
 choice (and, for Card, prepares the capture context). The single explicit
-action ("Pay {total}" / "Continue with BLUE") runs `handleContinue`. Card
-entry is always CyberSource's own form.
+action ("Pay {total}" / "Continue with BLUE" / "Get my tickets" for a free
+cart) runs `handleContinue`. Card entry is always CyberSource's own form.
 
 ---
 
@@ -1319,7 +1343,7 @@ changes, and authenticated backend translation support are not yet verified.**
 1. `CartProvider` keyed by identity; `withAuthRequired` keys screens by `userCacheKey`.
 2. Backend JSON/API calls go through services and `apiRequest`; the only direct transports are the PDF fetch, the match-screen SVG map fetch, and the web proxy (`AGENTS.md` §7).
 3. Auth-generation and cart-session-ticket checks before publishing async results.
-4. Cart cleared only via `clearCartIfSession` after a trusted terminal result for the same session.
+4. Cart cleared only via `clearCartIfSession` after a trusted terminal result for the same session (card / BLUE success, or a proven free order).
 5. BLUE URL validation and `decideBlueNavigation` stay in the path of every WebView navigation.
 6. Holder-name completeness gates checkout submission.
 7. QR comes only from backend `qr_image` data URIs.

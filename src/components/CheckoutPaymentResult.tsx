@@ -32,7 +32,7 @@ export function CheckoutPaymentResult({ outcome, result }: Props) {
   const responsive = useResponsive();
   const insets = useSafeAreaInsets();
   const succeeded = outcome === "success";
-  const presentation = getCheckoutResultPresentation(outcome);
+  const presentation = getCheckoutResultPresentation(outcome, result.provider);
   const ticketsAction = purchasedTicketsAction(result);
   const title = i18n.t(presentation.titleKey);
   const providerKey = getCheckoutResultProviderKey(result.provider);

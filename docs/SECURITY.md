@@ -117,7 +117,7 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
 - **One payment attempt per cart session, across methods and surfaces**
   (`src/lib/paymentOutcomeLock.ts`, `docs/ARCHITECTURE.md` §10):
   - a submission must first acquire the session's attempt (a synchronous
-    claim; any other Card or BLUE attempt for that session is refused) and
+    claim; any other Card, BLUE or free attempt for that session is refused) and
     persist it (`lfa_payment_outcome_lock`: session id and method only — no
     payment data) **before** anything is sent; if it cannot be persisted,
     nothing is sent;
@@ -153,7 +153,17 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   - card: a submit response that the single completion decision
     (`cardSubmitCompletion`) calls complete: a 2xx without
     `payment.payment_url`, the rule `user-web` uses (§2.8, §3.5), or
-  - BLUE: a terminal success URL classified by `decideBlueNavigation`.
+  - BLUE: a terminal success URL classified by `decideBlueNavigation`, or
+  - free (zero-total) order: a submit response that `freeSubmitCompletion`
+    calls complete (same rule as card: an order id or number, `status:
+    "paid"`, no `payment_url`), for the still-current cart session and
+    Checkout submission. The response shape was stated by the product owner,
+    not verified (`docs/API_INTEGRATION.md` §9a, §14).
+- Free checkout is chosen only from a validated backend zero
+  (`parseCartTotal` / `isFreeCartTotal`): a missing, `null`, empty or
+  malformed total is `NaN`, never 0, so it can never turn a paid cart into
+  `payment_method: "free"`. An account-scope card pause does not block a free
+  order (no card is involved); a session lock does.
 - BLUE failure and user "Leave" keep the reservation active; expiry is left to
   `CartContext`. "Leave" keeps the BLUE attempt held (§2.5), so Card cannot
   start for that session meanwhile.

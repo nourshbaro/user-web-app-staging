@@ -1,7 +1,8 @@
 import { translate } from "../i18n/runtime.ts";
 import type { MessageKey } from "../i18n/messages/en";
 
-export type CheckoutResultProvider = "blue" | "cybersource" | "unknown";
+/** "free": a zero-total order (`payment_method: "free"`), no payment provider. */
+export type CheckoutResultProvider = "blue" | "cybersource" | "free" | "unknown";
 
 export type CheckoutResultParams = {
   provider: CheckoutResultProvider;
@@ -97,7 +98,7 @@ function numericId(value: RawValue) {
 function parseProvider(value: RawValue): CheckoutResultProvider {
   if (Array.isArray(value) || typeof value !== "string") return "unknown";
   const candidate = value.trim();
-  return candidate === "blue" || candidate === "cybersource" ? candidate : "unknown";
+  return candidate === "blue" || candidate === "cybersource" || candidate === "free" ? candidate : "unknown";
 }
 
 function displayValue(value: RawValue) {

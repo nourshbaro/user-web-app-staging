@@ -326,8 +326,8 @@ test("BLUE isolation: an account card marker never blocks an unrelated BLUE chec
   // Checkout reads BLUE gates with the BLUE view and pauses only card for the account.
   const checkout = strip(await read("../app/checkout.tsx"));
   assert.match(checkout, /paymentOutcomeUnknown: readPaymentOutcomeLock\(submissionTicket\.sessionId, null, "blue"\) !== null/);
-  assert.match(checkout, /readPaymentOutcomeLock\(ownerState\.sessionId, null, paymentMethod === "blue" \? "blue" : "card"\)/);
-  assert.match(checkout, /const paymentOutcomeUnknown = sessionPaymentUnknown \|\| \(paymentMethod === "cybersource" && cardPausedForAccount\);/);
+  assert.match(checkout, /readPaymentOutcomeLock\(\s*ownerState\.sessionId,\s*null,\s*effectiveMethod === "blue" \? "blue" : effectiveMethod === "free" \? "free" : "card",\s*\)/);
+  assert.match(checkout, /const paymentOutcomeUnknown = sessionPaymentUnknown \|\| \(effectiveMethod === "cybersource" && cardPausedForAccount\);/);
   assert.match(checkout, /if \(lock && lock\.scope !== "account"\) setPaymentLockSession\(lock\.sessionId\);/, "an account card pause never locks the whole checkout");
 });
 

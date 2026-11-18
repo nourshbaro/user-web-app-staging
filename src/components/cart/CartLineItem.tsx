@@ -4,7 +4,7 @@ import { useI18n } from "@/i18n/I18nProvider";
 import type { CartDisplayItem } from "@/lib/cartDisplay";
 import { canAdjustQuantity } from "@/lib/cartPresentation";
 import { size, spacing } from "@/lib/designTokens";
-import { formatMoney } from "@/lib/format";
+import { formatLinePrice } from "@/lib/format";
 import { SymbolView } from "expo-symbols";
 import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, View } from "react-native";
@@ -80,11 +80,11 @@ export function CartLineItem({
               : i18n.plural("cart.line.quantity", line.quantity)}
           </AppText>
           <AppText variant="caption" tone="muted" style={local.regular}>
-            {i18n.t("cart.line.unitPrice", { price: formatMoney(line.unit_price, line.currency) })}
+            {i18n.t("cart.line.unitPrice", { price: formatLinePrice(line.unit_price, line.currency) })}
           </AppText>
         </View>
         <View style={local.end}>
-          <AppText variant="bodyStrong" style={local.subtotal}>{formatMoney(line.subtotal, line.currency)}</AppText>
+          <AppText variant="bodyStrong" style={local.subtotal}>{formatLinePrice(line.subtotal, line.currency)}</AppText>
           <Pressable
             onPress={onRemove}
             disabled={blocked}

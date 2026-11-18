@@ -71,7 +71,8 @@
  * CyberSource can recover that payment.
  */
 
-export type PaymentMethodKind = "card" | "blue";
+/** "free": a zero-total order submitted with `payment_method: "free"` (no provider). */
+export type PaymentMethodKind = "card" | "blue" | "free";
 
 export type PaymentOutcomeLock = {
   sessionId: string;
@@ -247,7 +248,7 @@ export function parsePaymentOutcomeRecord(raw: string | null): PaymentOutcomeLoc
       && typeof value.sessionId === "string"
       && value.sessionId.trim()
     ) {
-      const method = value.method === "card" || value.method === "blue" ? value.method : "unknown";
+      const method = value.method === "card" || value.method === "blue" || value.method === "free" ? value.method : "unknown";
       return { sessionId: value.sessionId, method };
     }
   } catch {
@@ -359,7 +360,8 @@ function sessionMarkerBlock(sessionId: string, own: CardResultClaim | null): "ma
  *   markers that could not be read) blocks new **card** payments only. Pass
  *   `method: "blue"` for a BLUE gate: such a marker never blocks an unrelated
  *   BLUE checkout, so unreadable storage or an old card result can never
- *   stop the account paying with BLUE on a new checkout. Without `method`
+ *   stop the account paying with BLUE on a new checkout. `method: "free"`
+ *   is treated the same way: a zero-total order involves no card. Without `method`
  *   the account lock is returned (for notices and card gates).
  */
 export function readPaymentOutcomeLock(
@@ -372,7 +374,7 @@ export function readPaymentOutcomeLock(
   const markerBlock = sessionMarkerBlock(sessionId, own);
   if (markerBlock === "unreadable") return { sessionId, method: "card", reason: "unreadable" };
   if (markerBlock) return { sessionId, method: "card" };
-  if (method === "blue") return null;
+  if (method === "blue" || method === "free") return null;
   return accountBlocks(sessionId, own) ? { sessionId, method: "card", scope: "account" } : null;
 }
 
@@ -683,7 +685,7 @@ export function acquirePaymentAttempt(
   if (binding && (binding.sessionId !== sessionId || !isCardAttemptBindingLive(binding))) {
     return Promise.resolve({ ok: false, reason: "blocked" });
   }
-  // Method-aware: an account-scope card marker never blocks a BLUE attempt.
+  // Method-aware: an account-scope card marker never blocks a BLUE or free attempt.
   if (readPaymentOutcomeLock(sessionId, own, method) || readPaymentAttempt(sessionId)) {
     return Promise.resolve({ ok: false, reason: "blocked" });
   }

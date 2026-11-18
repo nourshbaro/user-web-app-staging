@@ -378,19 +378,23 @@ re-check). Not user-scoped (public data).
 
 Responses must contain `cart` and `checkout_session_id` or the client throws.
 `expires_at` drives the reservation timer. Items come from `cart.items` or are
-flattened from `cart.matches[].items`. `total` is coerced to number; `currency`
-defaults to `USD`.
+flattened from `cart.matches[].items`. `total` is parsed by `parseCartTotal`
+(`src/lib/cartTotal.ts`): only a finite number or a plain decimal string
+(`"0"`, `"12.50"`) is a total; a missing, `null`, empty or malformed value
+stays `NaN` (shown as "Price unavailable"), never 0, because a zero total
+makes Checkout submit a free order (§9a). `currency` defaults to `USD`.
 
 ### Checkout and payment — `src/services/checkout.ts` (`checkoutService`)
 | Method & path | Body | Notes |
 | ------------- | ---- | ----- |
 | `POST /payments/cybersource/capture-context` | `checkout_session_id, target_origins[], locale: "en-us"` | Returns `capture_context` (root or `data`) |
-| `POST /checkout/mobile/submit` | `CheckoutSubmitRequest` (`src/types.ts`) | Both payment methods |
+| `POST /checkout/mobile/submit` | `CheckoutSubmitRequest` (`src/types.ts`) | Card, BLUE and free (zero-total) orders |
 
 `CheckoutSubmitRequest`: `checkout_session_id`, `billing { name, email?, phone,
 country: "LB" }` (`email` omitted for a phone-only account), `tickets_by_match: { [matchId]: [{ holder_name }] }`,
-`payment_method: "cybersource" | "blue"`, and for card
-`payment.transient_token`.
+`payment_method: "cybersource" | "blue" | "free"`, and for card
+`payment.transient_token`. `"free"` is sent only for a zero-total cart and
+carries no `payment` object (§9a).
 `CheckoutSubmitResponse` (all optional): `order_id`, `order_number`,
 `reference`, `payment_reference`, `status`, `payment { payment_url, reference,
 payment_reference, status }`. It identifies **no ticket**. "View my ticket"
@@ -431,7 +435,8 @@ per-ticket QR fallback, orders and PDF are not cached.
 ## 6. Cart and reservation behavior
 
 - The server owns contents, prices, totals, seat locks, and expiry. The client
-  never computes totals authoritatively (`cart.total` is displayed as returned).
+  never computes totals authoritatively (`cart.total` is displayed as returned;
+  an unavailable total stays `NaN`, never 0).
 - The client persists only `{ version: 1, sessionId, expiresAt }` under
   `lfa_cart_session_id`, and only while authenticated.
 - A rejected session on add (404) is dropped and the add is retried once
@@ -564,6 +569,29 @@ Full state model: `docs/ARCHITECTURE.md` §8.
   `lfa-app://checkout/success|failed` (optional `provider=blue`).
 - No client call verifies payment status with the backend after the terminal
   redirect. Tickets and orders shown later come from the portal API.
+
+---
+
+## 9a. Free (zero-total) orders
+
+Tickets priced at 0 are ordinary cart lines; the backend prices them and
+owns `cart.total`. Two cases:
+
+- **Whole cart free** (`isFreeCartTotal`: at least one item and a validated
+  backend `cart.total` of exactly 0). Checkout shows no payment method and
+  submits `/checkout/mobile/submit` with `payment_method: "free"` (same
+  `checkout_session_id`, `billing`, `tickets_by_match`; no `payment`).
+- **Mixed cart** (total > 0). Paid normally by Card or BLUE; the backend
+  issues the free tickets with the order. The client changes only the label:
+  a line whose backend price is exactly 0 reads "Free" (`formatLinePrice`);
+  a missing price never does, and totals keep the amount.
+
+Free-order response, as stated by the product owner (2026-11-18), **not
+verified against backend source or staging**: `order_id` / `order_number`
+with `status: "paid"` and no `payment.payment_url`. The client judges it
+with `freeSubmitCompletion`, the same rule as a completed card order
+(`docs/SECURITY.md` §2.6). Anything else is unresolved: the order may exist,
+so the session is locked (check My Tickets) and the cart is kept.
 
 ---
 
@@ -700,6 +728,11 @@ read cache either: it is asked once per launch (memoized in `appUpdate.ts`).
 - Whether `/checkout/mobile/submit` returns non-2xx for declined or failed card
   payments.
 - Server-side idempotency of `/checkout/mobile/submit` for a repeated session.
+- **Free orders (§9a):** the success response (`order_id`/`order_number`,
+  `status: "paid"`, no `payment_url`) was stated by the product owner, not
+  observed; whether the backend rejects `payment_method: "free"` for a cart
+  whose total is not 0, and rejects `"cybersource"`/`"blue"` for a zero
+  total, is not established.
 - Backend behavior on BLUE callback, and how web BLUE results are finalized.
 - The meaning of the `password` header and of `remember` on login.
 - **Password recovery by phone for an account that has an email** (§5.2,

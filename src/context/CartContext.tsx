@@ -11,6 +11,7 @@ import {
 import { classifyCartRefreshFailure, createCartRefreshGuard } from "@/lib/cartRefreshPolicy";
 import { discardStaleCardPaymentRetry, hasHeldCardResult } from "@/lib/cardPaymentHandoff";
 import { createCartOperationQueue } from "@/lib/cartOperationQueue";
+import { parseCartTotal } from "@/lib/cartTotal";
 import {
   clearPendingBluePaymentAttempt,
   invalidatePendingBluePaymentAttemptUnlessSession,
@@ -307,7 +308,7 @@ export function CartProvider({ children }: PropsWithChildren) {
     const nextItems = getCartItems(response.cart);
     expiryHandledRef.current = false;
     setItems(nextItems);
-    setTotal(Number(response.cart.total ?? 0));
+    setTotal(parseCartTotal(response.cart.total));
     setCurrency(response.cart.currency ?? "USD");
     setExpiresAt(response.expires_at ? new Date(response.expires_at) : null);
     setCartRefreshError(null);

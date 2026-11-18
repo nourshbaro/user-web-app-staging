@@ -4,7 +4,7 @@ import { useI18n } from "@/i18n/I18nProvider";
 import type { CartDisplayItem } from "@/lib/cartDisplay";
 import { groupLinesByMatch, groupSubtotal } from "@/lib/cartPresentation";
 import { radius, spacing } from "@/lib/designTokens";
-import { formatMoney } from "@/lib/format";
+import { formatLinePrice, formatMoney } from "@/lib/format";
 import { View } from "react-native";
 
 /**
@@ -43,7 +43,7 @@ export function OrderSummary({ lines, totalLabel }: { lines: CartDisplayItem[]; 
                       <AppText variant="caption" tone="muted">{i18n.t("cart.line.seats", { seats: seats.join(", ") })}</AppText>
                     ) : null}
                   </View>
-                  <AppText variant="bodyStrong" style={local.amount}>{formatMoney(line.subtotal, line.currency)}</AppText>
+                  <AppText variant="bodyStrong" style={local.amount}>{formatLinePrice(line.subtotal, line.currency)}</AppText>
                 </View>
               );
             })}

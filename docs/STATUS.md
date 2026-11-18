@@ -55,6 +55,8 @@
   FINDINGS; the MEDIUM finding fixed); committed (`3836c81`).
 - ✅ **Phone recovery branching correction: implemented, Codex PASS.**
   Uncommitted on `39ea18d`.
+- ✅ **Free (zero-total) checkout: implemented, Codex findings fixed.**
+  Uncommitted on `0837fa4`.
 - ▶ **Next:** commit approval; the backend dependencies below.
 
 ## Confirmed payment retries and notice deletion (2026-11-18)
@@ -84,6 +86,25 @@
   restart and language changes), backend acceptance of a new payment on the
   same reservation, reconciliation and idempotency. Another charge remains
   possible; consent does not establish the earlier payment's outcome.
+
+## Free (zero-total) checkout (2026-11-18)
+
+- **Whole cart free:** a validated backend `cart.total` of exactly 0 with
+  items → no method shown; `/checkout/mobile/submit` with
+  `payment_method: "free"` under the shared payment gate (method `"free"`).
+  Cart cleared and success ("Order confirmed") only after
+  `freeSubmitCompletion` proves the order for the current session and
+  submission; an unproven or unknown outcome locks the session.
+- **Mixed cart:** paid normally; zero-priced lines read "Free".
+- **Codex corrections:** (1) a missing / `null` / empty / malformed total is
+  `NaN` (`parseCartTotal`), never 0, so it cannot select free checkout;
+  (2) the submission authority is re-checked after the cart clear, so an
+  unmounted Checkout never navigates to success.
+- **Checks:** TypeScript passes; lint 0 errors, 2 existing warnings; Node
+  suite 1,145/1,145 (new `src/lib/freeCheckout.test.mjs`).
+- **NOT VERIFIED:** the backend free-order response (product-owner statement:
+  order id + `status: "paid"`), backend rejection of mismatched methods, and
+  native/web runtime of the free flow.
 
 ## Phone recovery branching correction (2026-10-07)
 

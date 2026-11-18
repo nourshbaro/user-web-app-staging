@@ -103,3 +103,16 @@ export function cardResultReference(result: string): string | null {
     return null;
   }
 }
+
+/**
+ * Whether a 2xx `/checkout/mobile/submit` response for `payment_method:
+ * "free"` proves the order was created. Same rule as a completed card order
+ * (`cardSubmitCompletion`): an order id or number, status `paid`, no
+ * `payment_url`. The free response shape (order id + status `paid`) was
+ * stated by the product owner (2026-11-18); it is not verified against
+ * backend source. "unresolved" means "not proven": the order may exist, so
+ * the cart is kept and the session is locked against a second submission.
+ */
+export function freeSubmitCompletion(response: unknown): "complete" | "unresolved" {
+  return cardSubmitCompletion(response);
+}

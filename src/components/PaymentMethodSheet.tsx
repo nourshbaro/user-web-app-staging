@@ -4,7 +4,8 @@ import type { CheckoutSubmitRequest } from "@/types";
 import { SymbolView } from "expo-symbols";
 import { Image, Pressable, Text, View } from "react-native";
 
-export type PaymentMethodOption = CheckoutSubmitRequest["payment_method"];
+/** A method the payer chooses; "free" is never chosen, it follows from a zero total. */
+export type PaymentMethodOption = Exclude<CheckoutSubmitRequest["payment_method"], "free">;
 
 const OPTIONS: {
   id: PaymentMethodOption;

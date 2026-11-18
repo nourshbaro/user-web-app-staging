@@ -23,7 +23,12 @@ import {
   readPendingBluePaymentAttempt,
   savePendingBluePaymentAttempt,
 } from "@/lib/bluePaymentHandoff";
-import { singlePurchasedMatchId } from "@/lib/checkoutResultParams";
+import { freeSubmitCompletion } from "@/lib/cardPaymentResult";
+import {
+  checkoutResultRouteParams,
+  parseCheckoutResultParams,
+  singlePurchasedMatchId,
+} from "@/lib/checkoutResultParams";
 import { validateBluePaymentUrl } from "@/lib/bluePaymentRedirect";
 import {
   beginCaptureContextRequest,
@@ -38,6 +43,7 @@ import {
 } from "@/lib/cardPaymentHandoff";
 import { isAuthenticationSnapshotCurrent } from "@/services/api";
 import { groupCartItems } from "@/lib/cartDisplay";
+import { isFreeCartTotal } from "@/lib/cartTotal";
 import {
   buildTicketsByMatch,
   checkoutAttemptBlocks,
@@ -76,6 +82,7 @@ import { PAYMENT_RECOVERY_TICKETS_ROUTE } from "@/lib/paymentRecoveryTickets";
 import { getUserScopedCacheGeneration } from "@/lib/userScopedCache";
 import { paymentError, reasonWithGuidance, userFacingError } from "@/lib/userFacingError";
 import { checkoutService } from "@/services/checkout";
+import type { CheckoutSubmitRequest } from "@/types";
 import { router, Stack, useFocusEffect, useIsFocused } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import {
@@ -155,6 +162,9 @@ function CheckoutScreen() {
   );
   const submitInFlightRef = useRef(false);
   const blueHandoffStartedRef = useRef(false);
+  // A confirmed free order is clearing its cart: the empty-cart redirect
+  // must not race the success navigation.
+  const freeOrderCompletingRef = useRef(false);
   const accountId = auth.user ? String(auth.user.id) : null;
   const name = auth.user?.name.trim() ?? "";
   const email = auth.user?.email?.trim() ?? "";
@@ -173,6 +183,11 @@ function CheckoutScreen() {
     cart.sessionId !== null &&
     (activeCaptureState === null || activeCaptureState.status === "loading");
   const groupedItems = groupCartItems(cart.items);
+  // Case 1: the backend cart total is exactly 0. No method is chosen; the
+  // order is submitted with payment_method "free". A mixed cart (total > 0)
+  // pays normally and the backend issues its free tickets with the order.
+  const isFreeCart = isFreeCartTotal(cart.total, cart.items.length);
+  const effectiveMethod: CheckoutSubmitRequest["payment_method"] | null = isFreeCart ? "free" : paymentMethod;
   const holders = holderCompleteness(ticketSlots, holderNames);
   // Two columns (summary | payment) on wide screens instead of a stretched phone column.
   const twoColumn = responsive.width >= 1024;
@@ -254,6 +269,8 @@ function CheckoutScreen() {
   }, [onHardwareBack]);
 
   useEffect(() => {
+    // A confirmed free order clears its own cart and opens the success screen.
+    if (freeOrderCompletingRef.current) return;
     // After expiry the owner has already routed Home under its sheet.
     if (isFocused && !cart.isLoading && !cart.sessionId && !cart.items.length && !cart.expiredHold)
       router.replace("/cart");
@@ -323,7 +340,7 @@ function CheckoutScreen() {
 
   useEffect(() => {
     const sessionId = cart.sessionId;
-    if (!shouldInitializeCaptureContext(paymentMethod ?? "", sessionId)) return;
+    if (!shouldInitializeCaptureContext(effectiveMethod ?? "", sessionId)) return;
 
     let active = true;
     void Promise.resolve().then(() => {
@@ -332,7 +349,7 @@ function CheckoutScreen() {
     return () => {
       active = false;
     };
-  }, [cart.sessionId, loadCaptureContext, paymentMethod]);
+  }, [cart.sessionId, effectiveMethod, loadCaptureContext]);
 
   // Ticket-holder names are collected in the dedicated step-by-step flow
   // before checkout (see /checkout/ticket-holders). If the cart changed
@@ -357,6 +374,172 @@ function CheckoutScreen() {
       capturePromiseRef.current = null;
     };
   }, [captureRequestAuthority, checkoutSubmissionAuthority, newPaymentRequest]);
+
+  /**
+   * Zero-total order (case 1): `/checkout/mobile/submit` with
+   * `payment_method: "free"`. No provider and no payment payload. It holds
+   * the session's one payment attempt like BLUE and card, so it can never
+   * run beside another payment or be sent twice. The cart is cleared only
+   * after a response that proves the order (`freeSubmitCompletion`) for the
+   * same cart session. An unproven 2xx or an unknown failure may have
+   * created the order, so the session is locked (check My Tickets); a
+   * definite rejection releases the attempt.
+   */
+  const submitFree = async () => {
+    if (!cart.sessionId || submitInFlightRef.current || blueHandoffStartedRef.current) return;
+
+    const cartSessionTicket = cart.captureCartSession();
+    if (!cartSessionTicket) return;
+
+    const missingHolder = ticketSlots.find(
+      (slot) => !holderNames[slot.key]?.trim(),
+    );
+    if (missingHolder) {
+      toast.showToast({
+        variant: "warning",
+        title: i18n.t("checkout.holderRequired.title"),
+        message: i18n.t("checkout.holderRequired.message", { ticket: missingHolder.label }),
+      });
+      router.replace("/checkout/ticket-holders");
+      return;
+    }
+
+    const billing = createCheckoutBilling(name, email, canonicalPhone);
+    if (!billing) {
+      toast.showToast({
+        variant: "warning",
+        title: i18n.t("checkout.phoneRequired.title"),
+        message: i18n.t("checkout.phoneRequired.message"),
+      });
+      return;
+    }
+
+    const submissionTicket = checkoutSubmissionAuthority.begin(
+      cartSessionTicket.sessionId as string,
+    );
+    const sessionId = submissionTicket.sessionId;
+    let attempt: PaymentAttempt | null = null;
+    try {
+      submitInFlightRef.current = true;
+      setLoading(true);
+
+      const ticketsByMatch = buildTicketsByMatch(ticketSlots, holderNames);
+
+      const acquisition = await acquirePaymentAttempt(sessionId, "free");
+      if (!acquisition.ok) {
+        if (checkoutSubmissionAuthority.isCurrent(submissionTicket)) {
+          toast.showToast({
+            variant: "error",
+            title: i18n.t("payment.unavailable.title"),
+            message: i18n.t(acquisition.reason === "blocked" ? "checkout.blocker.attemptInProgress" : "payment.notStarted"),
+          });
+        }
+        return;
+      }
+      attempt = acquisition.attempt;
+      const owner = cart.readCartGuardState();
+      const blocker = paymentSubmitBlocker({
+        sessionId,
+        owner: {
+          ...owner,
+          paymentOutcomeUnknown: readPaymentOutcomeLock(sessionId, null, "free") !== null,
+          paymentAttemptInProgress: isPaymentAttemptHeldByOther(sessionId, attempt),
+        },
+      });
+      if (blocker || !cart.isCartSessionCurrent(cartSessionTicket)) {
+        await settlePaymentAttempt(sessionId, attempt.id);
+        return;
+      }
+
+      const response = await checkoutService.submit({
+        checkout_session_id: sessionId,
+        billing,
+        tickets_by_match: ticketsByMatch,
+        payment_method: "free",
+      });
+
+      if (freeSubmitCompletion(response) !== "complete") {
+        // A 2xx that does not prove the order: it may exist. Never resubmit.
+        if (cart.isCartSessionCurrent(cartSessionTicket)) markPaymentOutcomeUnknown(sessionId, "free");
+        if (checkoutSubmissionAuthority.isCurrent(submissionTicket) && cart.isCartSessionCurrent(cartSessionTicket)) {
+          setPaymentLockSession(sessionId);
+          toast.showToast({
+            variant: "error",
+            title: i18n.t("checkout.submitFailed.title"),
+            message: i18n.t("checkout.free.unconfirmed"),
+            duration: 6200,
+          });
+        }
+        return;
+      }
+
+      if (!cart.isCartSessionCurrent(cartSessionTicket)) return;
+      if (!checkoutSubmissionAuthority.isCurrent(submissionTicket)) {
+        // Confirmed, but this screen is gone and cannot reconcile the cart:
+        // the session is never submitted again (as the card screen does).
+        markPaymentOutcomeUnknown(sessionId, "free");
+        return;
+      }
+
+      const resultParams = checkoutResultRouteParams(
+        parseCheckoutResultParams({
+          provider: "free",
+          // Display-only: which match's tickets "View my ticket" opens.
+          match_id: singlePurchasedMatchId(ticketsByMatch),
+          order_id: response.order_id,
+          order_number: response.order_number,
+          reference: response.reference,
+          status: response.status,
+        }),
+      );
+      freeOrderCompletingRef.current = true;
+      const cleared = await cart.clearCartIfSession(cartSessionTicket);
+      // The clear awaits storage: Checkout may have unmounted or started
+      // another submission meanwhile. Only the live submission navigates.
+      if (!cleared || !checkoutSubmissionAuthority.isCurrent(submissionTicket)) {
+        freeOrderCompletingRef.current = false;
+        return;
+      }
+      const resetRouter = router as typeof router & { dismissAll?: () => void };
+      resetRouter.dismissAll?.();
+      router.replace({ pathname: "/checkout/success", params: resultParams });
+    } catch (err) {
+      const failure = paymentFailureKind(errorFacts(err));
+      // Decided for the attempt's own session even if this screen is gone.
+      if (cart.isCartSessionCurrent(cartSessionTicket)) {
+        if (failure === "unknown") markPaymentOutcomeUnknown(sessionId, "free");
+        else if (attempt) void settlePaymentAttempt(sessionId, attempt.id);
+      }
+      if (
+        checkoutSubmissionAuthority.isCurrent(submissionTicket) &&
+        cart.isCartSessionCurrent(cartSessionTicket)
+      ) {
+        if (failure === "unknown") setPaymentLockSession(sessionId);
+        toast.showToast({
+          variant: "error",
+          title: i18n.t("checkout.submitFailed.title"),
+          message:
+            failure === "unknown"
+              ? reasonWithGuidance(err, i18n.t("checkout.free.unconfirmed"))
+              : userFacingError(
+                  err,
+                  failure === "notCompleted"
+                    ? i18n.t("checkout.submitFailed.notCompleted")
+                    : failure === "session"
+                      ? i18n.t("payment.failed.session")
+                      : i18n.t("ticketError.maintenance"),
+                ),
+          duration: 6200,
+        });
+      }
+    } finally {
+      if (checkoutSubmissionAuthority.finish(submissionTicket)) {
+        submitInFlightRef.current = false;
+        setLoading(false);
+        setGateVersion((version) => version + 1);
+      }
+    }
+  };
 
   const submitBlue = async () => {
     if (
@@ -577,7 +760,7 @@ function CheckoutScreen() {
   // gateVersion keeps the module read fresh (focus, marker load).
   const cardPausedForAccount = gateVersion >= 0 && !sessionPaymentUnknown
     && readPaymentOutcomeLock(cart.sessionId)?.scope === "account";
-  const paymentOutcomeUnknown = sessionPaymentUnknown || (paymentMethod === "cybersource" && cardPausedForAccount);
+  const paymentOutcomeUnknown = sessionPaymentUnknown || (effectiveMethod === "cybersource" && cardPausedForAccount);
   // This session existed before the app started and the device's record of
   // earlier card results cannot be read: a card result for it cannot be ruled
   // out, so it is blocked for every method until a retried read succeeds.
@@ -662,7 +845,7 @@ function CheckoutScreen() {
   const attemptBlocksCheckout = (sessionId: string | null) =>
     checkoutAttemptBlocks({
       heldMethod: readPaymentAttempt(sessionId)?.method ?? null,
-      paymentMethod,
+      paymentMethod: effectiveMethod,
       hasReusableBlueAttempt: sessionId !== null && readPendingBluePaymentAttempt(sessionId) !== null,
     });
   // gateVersion is part of the expression so a memoizing compiler re-reads the
@@ -676,7 +859,7 @@ function CheckoutScreen() {
     paymentAttemptInProgress,
     locked: isCheckoutLocked,
     holdersComplete: holders.allComplete,
-    paymentMethod,
+    paymentMethod: effectiveMethod,
     profileComplete: !!name,
     phoneValid: !!canonicalPhone,
   });
@@ -689,7 +872,11 @@ function CheckoutScreen() {
     // unconfirmed or has an unknown payment can never start a handoff.
     const ownerState = cart.readCartGuardState();
     // Method-aware: an account-scope card marker blocks only card.
-    const lock = readPaymentOutcomeLock(ownerState.sessionId, null, paymentMethod === "blue" ? "blue" : "card");
+    const lock = readPaymentOutcomeLock(
+      ownerState.sessionId,
+      null,
+      effectiveMethod === "blue" ? "blue" : effectiveMethod === "free" ? "free" : "card",
+    );
     const guard = submissionGuard({
       renderedSessionId: cart.sessionId,
       owner: {
@@ -699,7 +886,7 @@ function CheckoutScreen() {
       },
       inFlight: submitInFlightRef.current || blueHandoffStartedRef.current || isCheckoutLocked,
       holdersComplete: holderCompleteness(ticketSlots, holderNames).allComplete,
-      paymentMethod,
+      paymentMethod: effectiveMethod,
       profileComplete: !!name,
       phoneValid: !!canonicalPhone,
     });
@@ -715,7 +902,11 @@ function CheckoutScreen() {
       }
       return;
     }
-    if (paymentMethod === "cybersource") {
+    if (effectiveMethod === "free") {
+      void submitFree();
+      return;
+    }
+    if (effectiveMethod === "cybersource") {
       const cartSessionTicket = cart.captureCartSession();
       const checkoutBilling = createCheckoutBilling(
         name,
@@ -752,13 +943,17 @@ function CheckoutScreen() {
   };
 
   const payLabel =
-    paymentMethod === "cybersource"
+    effectiveMethod === "free"
+      ? i18n.t("checkout.pay.free")
+      : effectiveMethod === "cybersource"
       ? i18n.t("checkout.pay.card", { total: formatMoney(cart.total, cart.currency) })
       : paymentMethod === "blue"
         ? i18n.t("checkout.pay.blue")
         : i18n.t("checkout.pay.choose");
   const payNote =
-    paymentMethod === "cybersource"
+    effectiveMethod === "free"
+      ? i18n.t("checkout.pay.freeNote")
+      : effectiveMethod === "cybersource"
       ? i18n.t("checkout.pay.cardNote")
       : paymentMethod === "blue"
         ? i18n.t("checkout.pay.blueNote")
@@ -846,7 +1041,7 @@ function CheckoutScreen() {
                     },
                   }}
                 />
-              ) : cardPausedForAccount && !cardRetryHandoffId ? (
+              ) : cardPausedForAccount && !cardRetryHandoffId && !isFreeCart ? (
                 // Card only: BLUE stays available (the copy says so).
                 <StatePanel
                   variant="info"
@@ -910,6 +1105,15 @@ function CheckoutScreen() {
 
             <View style={[local.column, twoColumn && local.sideColumn]}>
               <View style={local.section}>
+                {isFreeCart ? (
+                  // Zero total: nothing to choose; the order is submitted as "free".
+                  <StatePanel
+                    variant="info"
+                    title={i18n.t("checkout.free.title")}
+                    message={i18n.t("checkout.free.message")}
+                  />
+                ) : (
+                  <>
                 <AppText variant="overline" tone="muted" accessibilityRole="header">{i18n.t("checkout.payment.title")}</AppText>
                 <PaymentMethodOptions
                   selected={paymentMethod}
@@ -936,6 +1140,8 @@ function CheckoutScreen() {
                     ) : null,
                   }}
                 />
+                  </>
+                )}
               </View>
               <AppText variant="caption" tone="muted" align="center" style={local.terms}>
                 {i18n.t("checkout.terms")}
@@ -969,7 +1175,7 @@ function CheckoutScreen() {
               disabled: !canContinue,
               busy: loading,
               accessibilityHint: blockerMessage ?? i18n.t("checkout.pay.hint"),
-              icon: paymentMethod ? (
+              icon: effectiveMethod && effectiveMethod !== "free" ? (
                 <SymbolView
                   name={{ ios: "lock.fill", android: "lock", web: "lock" }}
                   size={16}
@@ -992,10 +1198,10 @@ function CheckoutScreen() {
             style={[local.overlayPanel, { backgroundColor: theme.colors.surface, boxShadow: theme.colors.shadowRaised }]}
             accessible
             accessibilityRole="progressbar"
-            accessibilityLabel={`${i18n.t("checkout.blue.preparing.title")}. ${i18n.t("checkout.blue.preparing.message")}`}
+            accessibilityLabel={`${i18n.t(isFreeCart ? "checkout.free.confirming.title" : "checkout.blue.preparing.title")}. ${i18n.t("checkout.blue.preparing.message")}`}
           >
             <ActivityIndicator color={theme.colors.actionPrimary} />
-            <AppText variant="bodyStrong" align="center">{i18n.t("checkout.blue.preparing.title")}</AppText>
+            <AppText variant="bodyStrong" align="center">{i18n.t(isFreeCart ? "checkout.free.confirming.title" : "checkout.blue.preparing.title")}</AppText>
             <AppText variant="meta" tone="muted" align="center">{i18n.t("checkout.blue.preparing.message")}</AppText>
           </View>
         </View>

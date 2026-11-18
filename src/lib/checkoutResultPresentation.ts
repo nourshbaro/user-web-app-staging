@@ -11,7 +11,19 @@ export type CheckoutResultOutcome = "success" | "failed";
  * claims more than that: success never promises fields the backend did not
  * send, and failure never states that no order exists.
  */
-export function getCheckoutResultPresentation(outcome: CheckoutResultOutcome) {
+export function getCheckoutResultPresentation(
+  outcome: CheckoutResultOutcome,
+  provider: CheckoutResultParams["provider"] = "unknown",
+) {
+  // A free order took no payment: it never reads as "Payment confirmed".
+  if (outcome === "success" && provider === "free") {
+    return {
+      titleKey: "result.free.title",
+      messageKey: "result.free.message",
+      primaryAction: { labelKey: "result.success.tickets", href: "/tickets" as const },
+      secondaryAction: { labelKey: "result.home", href: "/" as const },
+    } as const;
+  }
   if (outcome === "success") {
     return {
       titleKey: "result.success.title",
@@ -44,7 +56,7 @@ export function purchasedTicketsAction(result: CheckoutResultParams) {
   };
 }
 
-/** "Paid with" label key, only when the provider is known. */
+/** "Paid with" label key, only when a payment provider is known (never for a free order). */
 export function getCheckoutResultProviderKey(provider: CheckoutResultParams["provider"]) {
   if (provider === "blue") return "result.provider.blue" as const;
   if (provider === "cybersource") return "result.provider.card" as const;

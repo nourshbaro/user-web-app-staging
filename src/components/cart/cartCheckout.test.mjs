@@ -136,8 +136,11 @@ test("the holder form keeps its rule and navigation, and focuses the first incom
 test("checkout readiness includes expiry, the payload builder is shared, and nothing clears the cart", () => {
   assert.match(checkout, /const readiness = checkoutReadiness\(\{\s*itemCount: cart\.items\.length,\s*secondsLeft: cart\.secondsLeft,/);
   assert.match(checkout, /const canContinue = readiness\.ready;/);
-  assert.equal((checkout.match(/buildTicketsByMatch\(ticketSlots, holderNames\)/g) ?? []).length, 2, "BLUE and card use the same payload");
-  assert.doesNotMatch(checkout, /clearCart/);
+  assert.equal((checkout.match(/buildTicketsByMatch\(ticketSlots, holderNames\)/g) ?? []).length, 3, "BLUE, card and free use the same payload");
+  // The only clear on Checkout is a confirmed free order's (it has no payment
+  // screen); its conditions are pinned in freeCheckout.test.mjs.
+  const submitFree = section(checkout, "const submitFree = async", "const submitBlue = async");
+  assert.doesNotMatch(checkout.replace(submitFree, ""), /clearCart/);
   assert.match(checkout, /busy: loading/);
   assert.match(checkout, /disabled: !canContinue/);
 });
@@ -450,8 +453,11 @@ test("choosing a payment method never starts a payment; only the explicit action
   assert.match(checkout, /onSelect=\{setPaymentMethod\}/);
   // Both handoffs live only in the explicit action's handler.
   const handle = section(checkout, "const handleContinue = () => {", "const payLabel");
-  assert.match(handle, /if \(paymentMethod === "cybersource"\) \{[\s\S]*?pathname: "\/checkout\/card\/payment"/);
+  assert.match(handle, /if \(effectiveMethod === "cybersource"\) \{[\s\S]*?pathname: "\/checkout\/card\/payment"/);
   assert.match(handle, /void submitBlue\(\);/);
+  // A zero-total cart has no method to choose; it submits from the same action.
+  assert.match(handle, /if \(effectiveMethod === "free"\) \{\s*void submitFree\(\);\s*return;\s*\}/);
+  assert.equal((checkout.match(/void submitFree\(\)/g) ?? []).length, 1, "a free order starts from one place");
   assert.equal((checkout.match(/void submitBlue\(\)/g) ?? []).length, 1, "BLUE starts from one place");
   assert.equal((checkout.match(/createCardPaymentHandoff\(/g) ?? []).length, 1, "Card starts from one place");
   assert.equal((checkout.match(/onPress: handleContinue/g) ?? []).length, 1, "one explicit Pay action");

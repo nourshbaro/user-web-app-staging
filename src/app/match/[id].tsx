@@ -37,7 +37,7 @@ import { PHYSICAL_LAYOUT_STYLE } from "@/i18n/direction";
 import { useI18n } from "@/i18n/I18nProvider";
 import { storageUrl } from "@/lib/config";
 import { layout, radius, spacing } from "@/lib/designTokens";
-import { formatMoney } from "@/lib/format";
+import { formatLinePrice } from "@/lib/format";
 import {
   createSeatLayout,
   getContainRect,
@@ -847,7 +847,7 @@ export default function MatchDetail() {
   );
 
   if (showSeatPicker && selectedZone) {
-    const unitPrice = formatMoney(selectedZone.price, selectedZone.currency);
+    const unitPrice = formatLinePrice(selectedZone.price, selectedZone.currency);
     return (
       <View style={[local.root, { backgroundColor: theme.colors.background }]}>
         <Stack.Screen options={{ headerShown: false }} />
@@ -962,8 +962,8 @@ export default function MatchDetail() {
           <AppText variant="bodyStrong" numberOfLines={1} style={local.barTitle}>{selectedZone.name}</AppText>
           <AppText variant="body" tone="muted" numberOfLines={2}>
             {pendingSeatCount
-              ? `${i18n.t("tickets.perSeatPrice", { price: formatMoney(selectedZone.price, selectedZone.currency) })} · ${i18n.plural("tickets.selected", pendingSeatCount)}`
-              : i18n.t("tickets.perSeatPrice", { price: formatMoney(selectedZone.price, selectedZone.currency) })}
+              ? `${i18n.t("tickets.perSeatPrice", { price: formatLinePrice(selectedZone.price, selectedZone.currency) })} · ${i18n.plural("tickets.selected", pendingSeatCount)}`
+              : i18n.t("tickets.perSeatPrice", { price: formatLinePrice(selectedZone.price, selectedZone.currency) })}
           </AppText>
         </View>
       }
@@ -984,7 +984,7 @@ export default function MatchDetail() {
             <View style={local.barInfo}>
               <AppText variant="bodyStrong" numberOfLines={1} style={local.barTitle}>{selectedZone.name}</AppText>
               <AppText variant="meta" tone="muted" numberOfLines={2}>
-                {i18n.t("tickets.eachGa", { price: formatMoney(selectedZone.price, selectedZone.currency) })}
+                {i18n.t("tickets.eachGa", { price: formatLinePrice(selectedZone.price, selectedZone.currency) })}
               </AppText>
             </View>
             <GaZoneStepper
@@ -1098,7 +1098,7 @@ export default function MatchDetail() {
                 {zones.map((zone, index) => {
                   const selected = selectedZone?.id === zone.id;
                   const cartLine = cartByZone.get(zone.id);
-                  const price = formatMoney(zone.price, zone.currency);
+                  const price = formatLinePrice(zone.price, zone.currency);
                   const kindLabel = zone.has_seats
                     ? i18n.t("tickets.kind.reserved")
                     : i18n.t("tickets.kind.ga");
