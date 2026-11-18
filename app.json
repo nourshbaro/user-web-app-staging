@@ -3,7 +3,7 @@
     "name": "LFA Tickets",
     "slug": "lfa-app",
     "owner": "jasquare",
-    "version": "2.0.2",
+    "version": "2.0.3",
     "orientation": "default",
     "icon": "./assets/images/app-icon-ios.png",
     "scheme": "lfa-app",
