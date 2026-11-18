@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { useTheme } from "@/components/ui";
 import { config } from "@/lib/config";
+import type { CardFormErrorDetails } from "@/lib/cardFormErrors";
 import {
   createCybersourceWebLifecycle,
   type CybersourceClient,
@@ -20,11 +21,13 @@ declare global {
 type Props = {
   captureContext: string;
   onSuccess: (token: string) => void;
-  onError: (message: string) => void;
+  onError: (message: string, details: CardFormErrorDetails) => void;
   fullscreen?: boolean;
+  /** Blocks new input without unmounting the form (see the native bridge). */
+  locked?: boolean;
 };
 
-export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError, fullscreen = false }: Props) {
+export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError, fullscreen = false, locked = false }: Props) {
   const theme = useTheme();
   const { t } = useI18n();
   const currentLifecycleRef = useRef<symbol | null>(null);
@@ -37,6 +40,13 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
     onSuccessRef.current = onSuccess;
     onErrorRef.current = onError;
   }, [onSuccess, onError]);
+
+  useEffect(() => {
+    // Locked: move focus out of the card fields (an iframe keeps keyboard input otherwise).
+    if (!locked || typeof document === "undefined") return;
+    const focused = document.activeElement as HTMLElement | null;
+    focused?.blur?.();
+  }, [locked]);
 
   useEffect(() => {
     if (!captureContext) return;
@@ -53,11 +63,11 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
       onSuccess: (token) => {
         if (currentLifecycleRef.current === lifecycle.identity) onSuccessRef.current(token);
       },
-      onError: (message) => {
+      onError: (message, details) => {
         if (currentLifecycleRef.current !== lifecycle.identity) return;
         setStatus("error");
         setError(message);
-        onErrorRef.current(message);
+        onErrorRef.current(message, { afterShown: details?.afterShown ?? false, terminated: false });
       },
     });
     currentLifecycleRef.current = lifecycle.identity;
@@ -84,7 +94,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
   }, [captureContext]);
 
   return (
-    <View style={[local.wrap, fullscreen && local.fullscreen]}>
+    <View style={[local.wrap, fullscreen && local.fullscreen]} aria-hidden={locked}>
       {status === "loading" ? <Text style={theme.styles.muted}>{t("payment.form.loading")}</Text> : null}
       {status === "error" && error ? <Text style={[local.errorText, { color: theme.colors.danger }]}>{error}</Text> : null}
       <View nativeID="uc-payment-buttons" style={local.buttons} />

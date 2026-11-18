@@ -14,10 +14,18 @@ import { TeamCrest } from "@/components/match/TeamCrest";
 import { Button, Screen, useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
+import { useCart } from "@/context/CartContext";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useI18n } from "@/i18n/I18nProvider";
+import { findCardPaymentRetry } from "@/lib/cardPaymentHandoff";
 import { layout, size, spacing } from "@/lib/designTokens";
 import { formatDate, formatDateTime, formatTime } from "@/lib/format";
+import {
+  readPaymentAttempt,
+  readUnresolvedCardResults,
+  selectPaymentAccount,
+  type UnresolvedCardResult,
+} from "@/lib/paymentOutcomeLock";
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import {
   purchasedTicketFocus,
@@ -36,10 +44,11 @@ import {
 } from "@/lib/ticketPresentation";
 import { failureReason } from "@/lib/userFacingError";
 import { getUserScopedCacheGeneration } from "@/lib/userScopedCache";
+import { isAuthenticationSnapshotCurrent } from "@/services/api";
 import { profileService } from "@/services/auth";
 import { beginTicketsVisit, portalReads } from "@/services/cachedReads";
 import type { PortalMatch, PortalTicket } from "@/types";
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import { router, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -245,6 +254,7 @@ function TicketsScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={reload} />
           }
         >
+          <UnresolvedCardPayments />
           {view === "loading" ? (
             <SkeletonGroup label={i18n.t("myTickets.loading")}>
               {[0, 1, 2].map((key) => (
@@ -316,6 +326,70 @@ function TicketsScreen() {
       ) : null}
     </Screen>
   );
+}
+
+function UnresolvedCardPayments() {
+  const auth = useAuth();
+  const cart = useCart();
+  const i18n = useI18n();
+  const accountId = auth.isAuthenticated && auth.user ? String(auth.user.id) : null;
+  const [markers, setMarkers] = useState<readonly UnresolvedCardResult[]>([]);
+
+  useFocusEffect(useCallback(() => {
+    if (!accountId) return;
+    let focused = true;
+    void selectPaymentAccount(accountId).then(() => {
+      if (focused) setMarkers(readUnresolvedCardResults().filter((marker) => marker.accountId === accountId));
+    });
+    return () => { focused = false; };
+  }, [accountId]));
+
+  // A held-back card result that was never sent (see CardPaymentScreen):
+  // sending it once is a first submission, never a replay.
+  // Not gated on the client timer: the cart owner keeps the session while the
+  // result is held, and the backend decides whether the reservation is valid.
+  const retryHandoff = (key: string) => {
+    const owner = cart.readCartGuardState();
+    if (owner.itemCount === 0) return null;
+    return findCardPaymentRetry(
+      cart.sessionId,
+      accountId,
+      (snapshot, ticket, attempt) => isAuthenticationSnapshotCurrent(snapshot)
+        && cart.isCartSessionCurrent(ticket)
+        && readPaymentAttempt(cart.sessionId)?.id === attempt.id,
+      key,
+    );
+  };
+
+  return markers.filter((marker) => marker.accountId === accountId).map((marker) => {
+    const canRetry = retryHandoff(marker.key) !== null;
+    const message = i18n.t(canRetry
+      ? marker.reference ? "payment.card.unresolved.retryWithReference" : "payment.card.unresolved.retryMessage"
+      : "myTickets.paymentPending.message");
+    const reference = marker.reference
+      ? i18n.t("payment.card.unresolved.reference", { reference: marker.reference })
+      : null;
+    return (
+      <StatePanel
+        key={marker.key}
+        variant="info"
+        title={i18n.t("myTickets.paymentPending.title")}
+        message={reference ? `${message} ${reference}` : message}
+        action={canRetry ? {
+          label: i18n.t("payment.card.unresolved.retrySubmit"),
+          onPress: () => {
+            const handoff = retryHandoff(marker.key);
+            if (handoff) {
+              router.navigate({ pathname: "/checkout/card/payment", params: { handoff, from: "tickets" } });
+            }
+          },
+        } : {
+          label: i18n.t("myTickets.paymentPending.support"),
+          onPress: () => router.push("/contact"),
+        }}
+      />
+    );
+  });
 }
 
 /** v3 ticket stub: match on the left, ticket count on the perforated stub. */

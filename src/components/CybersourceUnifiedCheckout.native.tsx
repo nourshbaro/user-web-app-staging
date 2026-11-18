@@ -5,6 +5,7 @@ import { config } from "@/lib/config";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import type { CardFormErrorDetails } from "@/lib/cardFormErrors";
 
 const CHECKOUT_LOADING_HEIGHT = 320;
 const CHECKOUT_MAX_HEIGHT = 2200;
@@ -12,9 +13,23 @@ const CHECKOUT_MAX_HEIGHT = 2200;
 type Props = {
   captureContext: string;
   onSuccess: (token: string) => void;
-  onError: (message: string) => void;
+  onError: (message: string, details: CardFormErrorDetails) => void;
   fullscreen?: boolean;
+  /**
+   * Blocks new input in the form without unmounting it (an authorization
+   * already running inside it can still deliver its result): the focused
+   * field is blurred, which closes the keyboard, and a transparent shield
+   * covers the page.
+   */
+  locked?: boolean;
 };
+
+/** Injected into the card page: blur the focused field and cover the page, or remove the cover. */
+function lockScript(locked: boolean) {
+  return locked
+    ? `(function(){try{var a=document.activeElement;if(a&&a.blur)a.blur();}catch(e){}if(!document.getElementById("lfa-input-lock")){var s=document.createElement("div");s.id="lfa-input-lock";s.setAttribute("style","position:fixed;top:0;right:0;bottom:0;left:0;z-index:2147483647;background:transparent");document.body.appendChild(s);}})();true;`
+    : `(function(){var s=document.getElementById("lfa-input-lock");if(s)s.remove();})();true;`;
+}
 
 type CheckoutMessage =
   | { type: "ready" }
@@ -160,13 +175,17 @@ function buildCheckoutHtml(captureContext: string) {
 </html>`;
 }
 
-export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError, fullscreen = false }: Props) {
+export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError, fullscreen = false, locked = false }: Props) {
   const theme = useTheme();
   const { t } = useI18n();
   const onSuccessRef = useRef(onSuccess);
   const onErrorRef = useRef(onError);
   const completedRef = useRef(false);
+  const webViewRef = useRef<WebView>(null);
+  const lockedRef = useRef(locked);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  // The form was shown to the payer: from then on a payment may be in progress inside it.
+  const shownRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [webViewHeight, setWebViewHeight] = useState(CHECKOUT_LOADING_HEIGHT);
   const [attempt, setAttempt] = useState(0);
@@ -178,7 +197,13 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
   }, [onSuccess, onError]);
 
   useEffect(() => {
+    lockedRef.current = locked;
+    webViewRef.current?.injectJavaScript(lockScript(locked));
+  }, [locked]);
+
+  useEffect(() => {
     completedRef.current = false;
+    shownRef.current = false;
     const resetTimer = setTimeout(() => {
       setStatus("loading");
       setError(null);
@@ -194,7 +219,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
       const message = translate("payment.card.prepareFailed");
       setStatus("error");
       setError(message);
-      onErrorRef.current(message);
+      onErrorRef.current(message, { afterShown: shownRef.current, terminated: false });
     }, 20000);
     return () => clearTimeout(timeout);
   }, [attempt, status]);
@@ -208,7 +233,10 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
     }
 
     if (message.type === "ready") {
+      shownRef.current = true;
       setStatus("ready");
+      // A page (re)loaded while locked starts locked.
+      if (lockedRef.current) webViewRef.current?.injectJavaScript(lockScript(true));
       return;
     }
 
@@ -235,12 +263,29 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
         : message.message ?? translate("payment.form.generic");
       setStatus("error");
       setError(nextError);
-      onErrorRef.current(nextError);
+      onErrorRef.current(nextError, { afterShown: shownRef.current, terminated: false });
     }
   };
 
+  // The WebView's content process died (killed in the background, or
+  // crashed): no result can arrive from it any more. Reported, never
+  // reloaded silently: if the form had been shown, a payment may have been
+  // in progress.
+  const handleTerminated = () => {
+    if (completedRef.current) return;
+    const message = translate("payment.form.generic");
+    setStatus("error");
+    setError(message);
+    onErrorRef.current(message, { afterShown: shownRef.current, terminated: true });
+  };
+
   return (
-    <View style={[local.wrap, fullscreen && local.fullscreenWrap]}>
+    <View
+      style={[local.wrap, fullscreen && local.fullscreenWrap]}
+      // Locked: hidden from screen readers too (TalkBack could otherwise reach the form beneath the cover).
+      importantForAccessibility={locked ? "no-hide-descendants" : "auto"}
+      aria-hidden={locked}
+    >
       {/* <View style={local.heading}>
         <View style={[local.secureMark, { backgroundColor: theme.colors.success }]}>
           <Text style={local.secureMarkText}>✓</Text>
@@ -254,6 +299,7 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
       <View style={[local.frame, fullscreen && local.fullscreenFrame, { borderColor: theme.colors.line, backgroundColor: theme.colors.panel }]}>
         {status !== "error" ? (
           <WebView
+            ref={webViewRef}
             key={`${captureContext}-${attempt}`}
             originWhitelist={["https://*", "http://*"]}
             // Must be the same origin sent as the capture context's target origin.
@@ -262,6 +308,8 @@ export function CybersourceUnifiedCheckout({ captureContext, onSuccess, onError,
             domStorageEnabled
             mixedContentMode="never"
             onMessage={handleMessage}
+            onRenderProcessGone={handleTerminated}
+            onContentProcessDidTerminate={handleTerminated}
             scrollEnabled={fullscreen}
             style={[local.webview, fullscreen ? local.fullscreenWebView : { height: webViewHeight }, { opacity: status === "ready" ? 1 : 0 }]}
           />

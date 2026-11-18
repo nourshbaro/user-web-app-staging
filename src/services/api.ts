@@ -1,7 +1,7 @@
 import { config } from "@/lib/config";
 import { backendHeaders } from "../i18n/backendHeaders.ts";
 import { translate } from "../i18n/runtime.ts";
-import { createAuthenticationAuthority, type AuthenticationSnapshot } from "@/lib/authSessionOwnership";
+import { createAuthenticationAuthority, requestAuthentication, type AuthenticationSnapshot } from "@/lib/authSessionOwnership";
 import { Platform } from "react-native";
 import { authTokenStorage } from "@/lib/authTokenStorage";
 import { createMaintenanceAuthority, type AvailabilityProbeResult } from "@/lib/maintenanceAuthority";
@@ -17,7 +17,21 @@ type ApiRequestInit = RequestInit & {
    * session is current when the request fires.
    */
   overrideAuthorizationToken?: string | null;
+  /**
+   * Pins the request to this authentication: its token is sent, a 401/403
+   * invalidates only it, and if it is no longer current nothing is sent
+   * (`StaleAuthenticationError`). See `requestAuthentication`.
+   */
+  authenticationSnapshot?: AuthenticationSnapshot;
 };
+
+/** The pinned authentication was replaced (sign-out or sign-in) before the request was sent; nothing was sent. */
+export class StaleAuthenticationError extends Error {
+  constructor() {
+    super("The session changed before the request was sent.");
+    this.name = "StaleAuthenticationError";
+  }
+}
 export type PersistedAuthenticationValue<T> =
   | { status: "missing" }
   | { status: "valid"; value: T }
@@ -333,10 +347,18 @@ export function recheckMaintenance() {
 }
 
 export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
-  const authentication = await captureAuthenticationSnapshot();
+  const live = await captureAuthenticationSnapshot();
   const hasAuthorizationOverride = "overrideAuthorizationToken" in init;
-  const { skipUnauthenticatedNotify, overrideAuthorizationToken, ...requestInit } = init;
-  const token = hasAuthorizationOverride ? overrideAuthorizationToken : authentication.token;
+  const { skipUnauthenticatedNotify, overrideAuthorizationToken, authenticationSnapshot, ...requestInit } = init;
+  // A 401/403 may only end the authentication whose token is actually sent.
+  const { token, invalidates, stale } = requestAuthentication({
+    live,
+    pinned: authenticationSnapshot,
+    hasOverride: hasAuthorizationOverride,
+    override: overrideAuthorizationToken,
+    isCurrent: (snapshot) => authenticationAuthority.isCurrent(snapshot),
+  });
+  if (stale) throw new StaleAuthenticationError();
   const controller = new AbortController();
   let didTimeout = false;
   const timeout = setTimeout(() => {
@@ -375,8 +397,8 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
 
     if (!response.ok) {
       if (response.status === 503) activateMaintenance();
-      if (!skipUnauthenticatedNotify && (response.status === 401 || response.status === 403)) {
-        await invalidateAuthentication(authentication);
+      if (!skipUnauthenticatedNotify && invalidates && (response.status === 401 || response.status === 403)) {
+        await invalidateAuthentication(invalidates);
       }
       const message = body?.message ?? body?.error ?? `Request failed with ${response.status}`;
       throw new ApiError(message, response.status, body);

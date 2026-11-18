@@ -145,7 +145,7 @@ test("card payment is a dedicated route rather than a Checkout modal", async () 
   assert.match(cardScreen, /i18n\.t\("payment\.card\.loading"\)/);
   assert.match(cardScreen, /handoff\.prepareCaptureContext\(force\)/);
   assert.match(cardScreen, /action=\{\{ label: i18n\.t\("payment\.retry"\), onPress: \(\) => void preparePayment\(true\) \}\}/);
-  assert.match(cardScreen, /router\.dismissTo\("\/checkout"\)/);
+  assert.match(cardScreen, /router\.dismissTo\(fromTickets \? "\/tickets" : "\/checkout"\)/);
 });
 test("payment cancellation preserves cart and success owns conditional cleanup", async () => {
   const cardScreen = await readFile(new URL("../components/CardPaymentScreen.tsx", import.meta.url), "utf8");

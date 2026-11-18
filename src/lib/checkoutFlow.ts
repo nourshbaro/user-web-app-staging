@@ -254,6 +254,66 @@ export function paymentSubmitBlocker({
   return null;
 }
 
+/**
+ * The gate for submitting a card result the CyberSource form already
+ * returned (with autoProcessing it may have charged the card). Same as
+ * `paymentSubmitBlocker`, except the client-side expiry timer does not stop
+ * it: not sending the result guarantees a charge without an order, while the
+ * backend stays the authority on whether the reservation is still valid and
+ * rejects the submit if it is not. A changed or cleared session, an
+ * unconfirmed cart, another payment's unknown outcome or another attempt
+ * still block it.
+ */
+export function cardResultSubmitBlocker({
+  sessionId,
+  owner,
+}: {
+  sessionId: string;
+  owner: CheckoutOwnerSnapshot;
+}): PaymentSubmitBlocker | null {
+  return paymentSubmitBlocker({ sessionId, owner: { ...owner, expired: false } });
+}
+
+/**
+ * How long, after the client-side reservation timer ends, an open card form
+ * is kept mounted (covered, so no new payment can be started in it) so that
+ * an authorization CyberSource is already processing can still hand its
+ * result to the app and be submitted.
+ */
+export const CARD_FORM_EXPIRY_GRACE_MS = 90_000;
+
+/**
+ * What the card screen does with its form once the reservation timer has
+ * ended: keep waiting while a result is being handled or the grace period
+ * runs, otherwise close it (which lets the cart owner run its expiry).
+ */
+export function expiredCardFormAction({
+  resultReceived,
+  elapsedMs,
+}: {
+  /** The form already returned a result (it is being, or was, submitted). */
+  resultReceived: boolean;
+  /** Time since this screen saw the reservation timer end. */
+  elapsedMs: number;
+}): "wait" | "close" {
+  if (resultReceived) return "wait";
+  return elapsedMs >= CARD_FORM_EXPIRY_GRACE_MS ? "close" : "wait";
+}
+
+/** The most one grace-timer tick may add (ticks are 1 s apart while the app runs). */
+export const GRACE_TICK_CAP_MS = 2_000;
+
+/**
+ * Advances the post-expiry grace period by one timer tick. Time the app spent
+ * in the background (timers suspended or throttled, the WebView paused) is
+ * not counted: a gap longer than `GRACE_TICK_CAP_MS` adds only the cap. So a
+ * result the paused WebView delivers on resume still has the remaining grace
+ * period, instead of the form being closed on the first tick after resume.
+ */
+export function advanceGraceElapsed(elapsedMs: number, lastTickAt: number, now: number) {
+  return elapsedMs + Math.min(Math.max(0, now - lastTickAt), GRACE_TICK_CAP_MS);
+}
+
 /* ------------------------------------------------------------------------ *
  * BLUE terminal success completion
  * ------------------------------------------------------------------------ */

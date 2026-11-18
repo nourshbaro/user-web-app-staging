@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  clearCardPaymentHandoff,
+  createCardPaymentHandoff,
+  discardStaleCardPaymentRetry,
+  findCardPaymentRetry,
+  readCardPaymentHandoff,
+  saveCardPaymentRetry,
+  takeCardPaymentRetry,
+} from "../../lib/cardPaymentHandoff.ts";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 // Contracts apply to code, not to comments that describe forbidden things.
@@ -151,10 +160,15 @@ test("submit failures show the backend's reason, and unknown outcomes are never 
   assert.match(blueCatch, /failure === "unknown"\s*\? reasonWithGuidance\(err, i18n\.t\("checkout\.submitFailed\.unknown"\)\)\s*: userFacingError\(/);
   const cardCatch = section(card, "} catch (submissionError) {", "} finally {");
   assert.doesNotMatch(cardCatch, /submissionError\.message/);
-  assert.match(cardCatch, /paymentFailureKind\(errorFacts\(submissionError\)\)/);
   assert.match(cardCatch, /reason: failureReason\(submissionError\)/);
+  // After a card result (autoProcessing may already have charged the card),
+  // no status, 4xx included, is presented as "not completed": it is unresolved.
+  assert.doesNotMatch(cardCatch, /paymentFailureKind|notCompleted|payment\.failed\.title/);
+  assert.match(cardCatch, /kind: "unresolved",[\s\S]*?submitted,/);
   assert.match(card, /return failure\.kind === "unknown" \? `\$\{reason\} \$\{i18n\.t\("payment\.failed\.unknown"\)\}` : reason;/);
-  assert.match(card, /failure\?\.kind === "unknown" \|\| failure\?\.kind === "locked"\s*\? \{ label: i18n\.t\("payment\.viewTickets"\)/);
+  // A card form that ended without a result after the payer could use it is uncertain too.
+  assert.match(card, /const outcomeUncertain = failure\?\.kind === "unknown" \|\| failure\?\.kind === "locked" \|\| failure\?\.kind === "unresolved" \|\| failure\?\.kind === "formEnded";/);
+  assert.match(card, /outcomeUncertain\s*\? \{ label: i18n\.t\("payment\.viewTickets"\)/);
 });
 
 test("an unknown payment outcome locks that session's payment on both methods", () => {
@@ -163,17 +177,37 @@ test("an unknown payment outcome locks that session's payment on both methods", 
   // Locked for the attempt's own session, even if Checkout is no longer mounted.
   assert.match(blueCatch, /if \(cart\.isCartSessionCurrent\(cartSessionTicket\)\) \{\s*if \(failure === "unknown"\) markPaymentOutcomeUnknown\(submissionTicket\.sessionId, "blue"\);\s*else if \(attempt\) void settlePaymentAttempt\(submissionTicket\.sessionId, attempt\.id\);/);
   const cardCatch = section(card, "} catch (submissionError) {", "} finally {");
-  assert.match(cardCatch, /if \(kind === "unknown"\) markPaymentOutcomeUnknown\(cartTicket\.sessionId as string, "card"\);\s*else if \(attempt\) void settlePaymentAttempt\(sessionId, attempt\.id\);/);
-  assert.ok(cardCatch.indexOf("markPaymentOutcomeUnknown(") < cardCatch.indexOf("if (!activeRef.current) return;"), "the lock does not depend on the screen still being mounted");
+  // Card retains the held attempt for a manual retry or locks the handoff's
+  // session while it is still current. Neither path settles it.
+  assert.match(cardCatch, /lockHandoffSession\(\);/);
+  assert.doesNotMatch(cardCatch, /settlePaymentAttempt|markPaymentOutcomeUnknown\(/);
+  assert.ok(cardCatch.indexOf("lockHandoffSession(") < cardCatch.indexOf("if (!activeRef.current) return;"), "the lock does not depend on the screen still being mounted");
+  assert.match(card, /const lockHandoffSession = \(\) => \{\s*if \(binding\) markPaymentOutcomeUnknownIfLive\(binding, "card"\);\s*\};/);
+  assert.doesNotMatch(card, /markPaymentOutcomeUnknown\(/, "no unguarded session-lock write anywhere on the card screen");
   // The card screen refuses to submit (and opens locked) for a changed,
   // expired, gated or locked session, from the owner's current state.
   const block = section(card, "const submitBlock = useCallback(", "const handleSuccess = useCallback(");
   assert.match(block, /const owner = cart\.readCartGuardState\(\);/);
-  assert.match(block, /paymentOutcomeUnknown: readPaymentOutcomeLock\(sessionId\) !== null/);
+  assert.match(block, /paymentOutcomeUnknown: readPaymentOutcomeLock\(sessionId, result\) !== null/);
   assert.match(block, /paymentAttemptInProgress: isPaymentAttemptHeldByOther\(sessionId, own\)/);
-  const handle = section(card, "const handleSuccess = useCallback(", "submittingRef.current = true;");
-  assert.match(handle, /const blockedAtToken = submitBlock\(sessionId, null\);\s*if \(blockedAtToken\) \{\s*setFailure\(blockedAtToken\);\s*return;\s*\}/);
-  assert.match(card, /: readPaymentOutcomeLock\(handoff\.sessionId\)\s*\? \{ kind: "locked" \}/);
+  const handle = section(card, "const handleSuccess = useCallback(", "} catch (submissionError) {");
+  // The card result is recorded (in memory, synchronously) before any check can refuse it.
+  const recordIndex = handle.indexOf("recordUnresolvedCardResult(");
+  assert.ok(recordIndex >= 0 && recordIndex < handle.indexOf("submitBlock("), "recorded before the first check");
+  // Its durable write is started there but never awaited before the submit:
+  // waiting would only widen the gap between a possible charge and the order.
+  const mainPath = section(handle, "ownResultRef.current = claim;", "await checkoutService.submit(");
+  assert.doesNotMatch(mainPath, /await persisted|await savedKnown/, "the marker write never delays the submit");
+  const savedStart = handle.indexOf("const savedKnown = persisted ? persisted.then(");
+  assert.ok(savedStart > recordIndex && savedStart < handle.indexOf("const blockedAtToken"), "its outcome is tracked, then reported");
+  // A refused result is kept and reported, never silently dropped. Only the
+  // cart's "re-read first" gate lets the attempt be held (nothing is sent).
+  assert.match(handle, /const blockedAtToken = submitBlock\(sessionId, null, claim\);[\s\S]*?if \(blockedAtToken && blockedAtToken\.kind !== "reconcile"\) \{\s*keepUnsubmitted\(blockedAtToken\);\s*return;\s*\}/);
+  assert.doesNotMatch(handle, /settlePaymentAttempt/);
+  // Every refusal reports the outcome. Reconciliation preserves the unsent result.
+  const beforeSubmit = handle.slice(savedStart, handle.indexOf("await checkoutService.submit("));
+  assert.equal((beforeSubmit.match(/return;/g) ?? []).length, (beforeSubmit.match(/keepUnsubmitted\(|saveCardPaymentRetry\(/g) ?? []).length);
+  assert.match(card, /return lock\s*\? \{ kind: "locked", scope: lock\.scope, unreadable: lock\.reason === "unreadable" \}/);
   // BLUE's already-known pending URL behaviour is preserved.
   assert.match(checkout, /readPendingBluePaymentAttempt\(\s*cartSessionTicket\.sessionId as string,?\s*\)/);
 });
@@ -181,11 +215,13 @@ test("an unknown payment outcome locks that session's payment on both methods", 
 test("both methods record the attempt, then re-check the owner, immediately before the submit", () => {
   const cardAttempt = section(card, "submittingRef.current = true;", "} catch (submissionError) {");
   const blueAttempt = section(section(checkout, "const submitBlue = async", "const reconciliationRequired ="), "const submissionTicket = checkoutSubmissionAuthority.begin(", "} catch (err) {");
-  for (const [name, source, record, recheck] of [
-    ["card", cardAttempt, 'await acquirePaymentAttempt(sessionId, "card")', "submitBlock(sessionId, attempt)"],
-    ["blue", blueAttempt, 'await acquirePaymentAttempt(submissionTicket.sessionId, "blue")', "cart.readCartGuardState()"],
+  // BLUE settles a blocked attempt (nothing was charged); Card keeps it as
+  // the session's lock (the card form may already have charged the card).
+  for (const [name, source, record, recheck, blocked, awaits] of [
+    ["card", cardAttempt, 'await acquirePaymentAttempt(sessionId, "card", claim, binding)', "submitBlock(sessionId, attempt, claim)", "keepUnsubmitted(blockedBeforeSubmit", 0],
+    ["blue", blueAttempt, 'await acquirePaymentAttempt(submissionTicket.sessionId, "blue")', "cart.readCartGuardState()", "settlePaymentAttempt(", 1],
   ]) {
-    const order = [record, recheck, "settlePaymentAttempt(", "await checkoutService.submit("];
+    const order = [record, recheck, blocked, "await checkoutService.submit("];
     let last = -1;
     for (const marker of order) {
       const index = source.indexOf(marker);
@@ -194,9 +230,10 @@ test("both methods record the attempt, then re-check the owner, immediately befo
     }
     // Nothing between the re-check and the submit can await (no expiry window).
     const tail = source.slice(source.indexOf(recheck), source.indexOf("await checkoutService.submit("));
-    assert.equal((tail.match(/await /g) ?? []).length, 1, `${name}: only the settle of a blocked attempt awaits`);
+    assert.equal((tail.match(/await /g) ?? []).length, awaits, `${name}: awaits between the re-check and the submit`);
     assert.match(tail, /return;\s*\}\s*(const response = )?$/m, `${name}: a blocked attempt returns before submitting`);
   }
+  assert.doesNotMatch(cardAttempt, /settlePaymentAttempt/, "card never settles after a card result");
   assert.match(blueAttempt, /paymentSubmitBlocker\(\{/);
   assert.match(card, /case "expired":\s*return i18n\.t\("payment\.reservationGone"\);/);
 });
@@ -204,7 +241,7 @@ test("both methods record the attempt, then re-check the owner, immediately befo
 test("one shared attempt gate: each surface passes only its own acquisition identity", () => {
   // Final guards pass the surface's own attempt, never null, right before the submit.
   assert.match(checkout, /paymentAttemptInProgress: isPaymentAttemptHeldByOther\(submissionTicket\.sessionId, attempt\)/);
-  assert.match(card, /const blockedBeforeSubmit = submitBlock\(sessionId, attempt\)/);
+  assert.match(card, /const blockedBeforeSubmit = submitBlock\(sessionId, attempt, claim\)/);
   // A refused acquisition never submits.
   assert.match(card, /if \(!acquisition\.ok\) \{[\s\S]*?return;\s*\}\s*attempt = acquisition\.attempt;/);
   assert.match(checkout, /if \(!acquisition\.ok\) \{[\s\S]*?return;\s*\}\s*attempt = acquisition\.attempt;/);
@@ -248,7 +285,7 @@ test("Checkout re-validates against the owner's current state inside the Pay han
 });
 
 test("card success still requires a submit response for the current session before clearing", () => {
-  const success = section(card, "const response = await checkoutService.submit", "} catch (submissionError)");
+  const success = section(card, "response = await checkoutService.submit", "} catch (submissionError)");
   const order = ["cart.isCartSessionCurrent(cartTicket)", "await cart.clearCartIfSession(cartTicket)", 'pathname: "/checkout/success"'];
   let last = -1;
   for (const marker of order) {
@@ -256,14 +293,115 @@ test("card success still requires a submit response for the current session befo
     assert.ok(index > last, marker);
     last = index;
   }
-  // An accepted submit this screen can no longer reconcile locks the session instead of being dropped.
-  assert.match(success, /if \(!activeRef\.current\) \{\s*markPaymentOutcomeUnknown\(sessionId, "card"\);\s*return;\s*\}/);
-  assert.ok(success.indexOf("markPaymentOutcomeUnknown(") < success.indexOf("await cart.clearCartIfSession(cartTicket)"));
-  // Hardware and header back share one synchronous (ref) guard; the header is also visibly disabled.
-  assert.match(card, /if \(canLeavePayment\(submittingRef\)\) returnToCheckout\(\);\s*return true;/, "hardware back");
-  assert.match(card, /onBack=\{\(\) => \{\s*if \(canLeavePayment\(submittingRef\)\) returnToCheckout\(\);\s*\}\}/, "header back");
-  assert.match(card, /backDisabled=\{processing\}/);
+  // A completed submit this screen can no longer reconcile locks the session
+  // (through the live binding only) instead of being dropped.
+  assert.match(success, /if \(!activeRef\.current\) \{\s*lockHandoffSession\(\);\s*return;\s*\}/);
+  // One completion decision gates the marker release, the cart clearing and the success screen.
+  const completionGuard = 'if (cardSubmitCompletion(response) !== "complete") {';
+  const decision = success.indexOf(completionGuard);
+  assert.ok(decision > 0, "single completion decision");
+  for (const consumer of ["await resolveUnresolvedCardResult(claim);", "await cart.clearCartIfSession(cartTicket)", 'pathname: "/checkout/success"']) {
+    assert.ok(success.indexOf(consumer) > decision, `${consumer} follows the decision`);
+  }
+  assert.match(section(success, completionGuard, "await resolveUnresolvedCardResult(claim);"), /return;\s*\}\s*$/);
+  // Hardware and header back share one synchronous (ref) guard: a submit in
+  // flight, or the post-expiry grace period (leaving would tear down a form
+  // that may still deliver a result). Both go through requestLeave, which
+  // asks first while the form is on screen. The header is also visibly disabled.
+  assert.match(card, /if \(canLeavePayment\(submittingRef\) && !expiryGraceRef\.current\) requestLeave\(\);\s*return true;/, "hardware back");
+  assert.match(card, /onBack=\{\(\) => \{\s*if \(canLeavePayment\(submittingRef\) && !expiryGraceRef\.current\) requestLeave\(\);\s*\}\}/, "header back");
+  assert.match(card, /backDisabled=\{processing \|\| formExpired \|\| rechecking\}/);
+  const leave = section(card, "const requestLeave = useCallback(() => {", "}, [i18n, returnToCheckout]);");
+  assert.match(leave, /if \(!canLeavePayment\(submittingRef\) \|\| expiryGraceRef\.current\) return;\s*if \(!cardFormVisibleRef\.current\) \{\s*returnToCheckout\(\);\s*return;\s*\}/, "no form on screen: leave at once");
+  assert.match(leave, /Alert\.alert\(title, message, \[/, "form on screen: ask first (native)");
+  assert.match(leave, /window\.confirm\(/, "form on screen: ask first (web)");
+  assert.match(leave, /const leave = \(\) => \{\s*if \(canLeavePayment\(submittingRef\) && !expiryGraceRef\.current\) returnToCheckout\(\);/, "re-checked when confirmed");
   assert.doesNotMatch(card, /onBack=\{processing \?/, "no render-state-only guard");
+});
+
+test("a submitted card result is never sent again; only an unsent (held-back) result is sent later, once, on an explicit press", () => {
+  const handle = section(card, "const handleSuccess = useCallback(", "} finally {");
+  const retry = section(handle, "const blockedBeforeSubmit", 'if (cardSubmitCompletion(response) !== "complete")');
+  assert.match(handle, /const snapshot = retry\?\.snapshot \?\? authSnapshot/);
+  assert.match(handle, /let attempt: PaymentAttempt \| null = retry\?\.attempt \?\? null/);
+  assert.match(handle, /const cartTicket = retry\?\.cartTicket \?\? cart\.captureCartSession\(\)/);
+  assert.match(retry, /submitBlock\(sessionId, attempt, claim\)[\s\S]*?isCardAttemptBindingLive\(binding\)[\s\S]*?readPaymentAttempt\(sessionId\)\?\.id === attempt\.id/);
+  assert.match(retry, /await checkoutService\.submit\(\s*\{ \.\.\.handoff\.request, payment: \{ transient_token: cardResult \} \},\s*\{ authentication: snapshot \}/);
+  assert.doesNotMatch(retry, /acquirePaymentAttempt|resolveUnresolvedCardResult|clearCartIfSession/);
+  // No replay: a transport error or timeout after the submit is never turned
+  // into a retry (backend idempotency for the same result is not established).
+  assert.doesNotMatch(card, /cardSubmitRetryEnabled|errorFacts|transport === null/);
+  const afterSubmit = section(handle, "await checkoutService.submit(", "} catch (submissionError) {");
+  assert.doesNotMatch(afterSubmit, /saveCardPaymentRetry/, "nothing after a submit is kept for sending again");
+  assert.equal((handle.match(/await checkoutService\.submit\(/g) ?? []).length, 1, "one submit call");
+  assert.equal((handle.match(/submitted = true;/g) ?? []).length, 1);
+  assert.match(handle, /let submitted = false;/, "a retry is never a resubmission");
+  // The only kept result is one the cart's "re-read first" gate held back before sending.
+  const guardBlock = section(retry, "if (blockedBeforeSubmit || !snapshot) {", "submitted = true;");
+  assert.match(guardBlock, /if \(snapshot && blockedBeforeSubmit\?\.kind === "reconcile"\) \{[\s\S]*?saveCardPaymentRetry\(handoffId, pending\);/);
+  assert.match(guardBlock, /const pending = retry \?\? \{ cardResult, snapshot, cartTicket, claim, attempt,/);
+  assert.equal((card.match(/saveCardPaymentRetry\(/g) ?? []).length, 1, "saved from that one place only");
+  // Sending a held result: the cart is re-read first while its gate is up;
+  // only a confirmed read (gate released, nothing in flight) takes the result.
+  const press = section(card, "const retrySubmission = useCallback(", "}, [cart, handleSuccess, handoffId]);");
+  assert.match(press, /if \(!activeRef\.current \|\| submittingRef\.current \|\| recheckingRef\.current\) return;/);
+  assert.match(press, /confirmed = \(await cart\.refreshCart\(\)\)\.confirmed;/);
+  assert.match(press, /if \(!confirmed \|\| !activeRef\.current \|\| submittingRef\.current \|\| cart\.readCartGuardState\(\)\.reconciliationRequired\) return;\s*\}\s*const retry = takeCardPaymentRetry\(handoffId\);\s*if \(retry\) void handleSuccess\(retry\.cardResult, retry\);/);
+  assert.match(card, /retrySubmit"\), onPress: \(\) => void retrySubmission\(\) \}/);
+  // Sent automatically once, only for a result held on its first delivery.
+  assert.match(guardBlock, /if \(!retry\) autoSendHeldRef\.current = true;/);
+  assert.match(card, /if \(!autoSendHeldRef\.current \|\| failure\?\.kind !== "unresolved" \|\| !failure\.canRetry \|\| processing\) return;\s*autoSendHeldRef\.current = false;\s*void retrySubmission\(\);/);
+  assert.match(card, /const returnToCheckout = useCallback\(\(\) => \{\s*if \(!readCardPaymentHandoff\(handoffId\)\?\.retry\) clearCardPaymentHandoff\(handoffId\)/);
+  assert.match(checkout, /cardRetryHandoffId && !reconciliationRequired[\s\S]*?onPress: openCardRetry/);
+});
+
+test("a card retry can reopen from checkout, is taken once and is discarded when ownership changes", () => {
+  const id = createCardPaymentHandoff({
+    sessionId: "session-1",
+    accountId: "account-1",
+    captureContext: null,
+    prepareCaptureContext: () => { throw new Error("retry must not request card entry"); },
+    request: { checkout_session_id: "session-1", payment_method: "cybersource" },
+  });
+  try {
+    const retry = {
+      cardResult: "test-result",
+      snapshot: { generation: 3, token: "test-auth" },
+      cartTicket: { generation: 4, sessionId: "session-1" },
+      claim: { key: "test-result-key", accountId: "account-1", sessionId: "session-1" },
+      attempt: { id: 5, sessionId: "session-1", method: "card" },
+      reference: "test-reference",
+      reason: "Connection lost",
+      saved: true,
+    };
+    const isCurrent = (snapshot, ticket, attempt) =>
+      snapshot.generation === 3 && ticket.generation === 4 && attempt.id === 5;
+    saveCardPaymentRetry(id, retry);
+    assert.equal(findCardPaymentRetry("session-1", "account-1", isCurrent), id);
+    assert.equal(findCardPaymentRetry("session-1", "account-1", isCurrent, retry.claim.key), id);
+    assert.equal(findCardPaymentRetry("session-1", "account-1", isCurrent, "different-result"), null);
+    assert.equal(findCardPaymentRetry("session-1", "account-2", isCurrent), null);
+    assert.equal(findCardPaymentRetry("session-2", "account-1", isCurrent), null);
+    assert.equal(findCardPaymentRetry("session-1", "account-1", () => false), null);
+    assert.strictEqual(readCardPaymentHandoff(id).retry, retry);
+    assert.strictEqual(takeCardPaymentRetry(id), retry);
+    assert.equal(takeCardPaymentRetry(id), undefined);
+    assert.equal(findCardPaymentRetry("session-1", "account-1", isCurrent), null);
+    saveCardPaymentRetry(id, retry);
+    discardStaleCardPaymentRetry(() => false);
+    assert.equal(readCardPaymentHandoff(id), null);
+  } finally {
+    clearCardPaymentHandoff(id);
+  }
+});
+
+test("My Tickets offers sending a held result while its session lives (not gated on the client timer), and support otherwise", async () => {
+  const tickets = strip(await read("../../app/tickets.tsx"));
+  const recovery = section(tickets, "function UnresolvedCardPayments()", "function PortalMatchCard(");
+  assert.match(recovery, /if \(owner\.itemCount === 0\) return null;/);
+  assert.doesNotMatch(recovery, /owner\.expired/, "the backend, not the client timer, decides on the reservation");
+  assert.match(recovery, /const canRetry = retryHandoff\(marker\.key\) !== null;/);
+  assert.match(recovery, /action=\{canRetry \? \{\s*label: i18n\.t\("payment\.card\.unresolved\.retrySubmit"\)[\s\S]*?\} : \{\s*label: i18n\.t\("myTickets\.paymentPending\.support"\),\s*onPress: \(\) => router\.push\("\/contact"\)/);
 });
 
 test("BLUE keeps its WebView policy and never clears for an unmatched result", () => {
@@ -294,7 +432,7 @@ test("the payment screens use the v3 flow header; its backDisabled makes Back in
   assert.match(header, /disabled=\{backDisabled\}/);
   assert.match(header, /aria-disabled=\{backDisabled\}/);
   // Card keeps its in-flight guard on Back; BLUE keeps its leave confirmation.
-  assert.match(card, /<FlowHeader[\s\S]*?onBack=\{\(\) => \{\s*if \(canLeavePayment\(submittingRef\)\) returnToCheckout\(\);\s*\}\}\s*backDisabled=\{processing\}/);
+  assert.match(card, /<FlowHeader[\s\S]*?onBack=\{\(\) => \{\s*if \(canLeavePayment\(submittingRef\) && !expiryGraceRef\.current\) requestLeave\(\);\s*\}\}\s*backDisabled=\{processing \|\| formExpired \|\| rechecking\}/);
   assert.match(blue, /<FlowHeader[^>]*onBack=\{confirmLeave\}/);
   assert.doesNotMatch(card + blue, /AppHeader|showTimer|CartTimer/);
 });

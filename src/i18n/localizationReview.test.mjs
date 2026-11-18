@@ -154,10 +154,12 @@ test("native SDK-load reason selects localized copy while all payment events ret
     ts.forEachChild(node, visit);
   };
   visit(ast);
-  const errors = [], successes = [], statuses = [], heights = [];
+  const errors = [], errorDetails = [], successes = [], statuses = [], heights = [];
+  // shownRef/lockedRef/webViewRef: the form-shown flag and the input lock the handler also maintains.
   const context = vm.createContext({ translate, CHECKOUT_MAX_HEIGHT: 2200, completedRef: { current: false },
+    shownRef: { current: false }, lockedRef: { current: false }, webViewRef: { current: null },
     setStatus: value => statuses.push(value), setError: () => {}, setWebViewHeight: value => heights.push(value),
-    onErrorRef: { current: value => errors.push(value) }, onSuccessRef: { current: value => successes.push(value) } });
+    onErrorRef: { current: (value, details) => { errors.push(value); errorDetails.push(details); } }, onSuccessRef: { current: value => successes.push(value) } });
   vm.runInContext(compile(`const handler = ${handler};`), context);
   const send = payload => { context.event = { nativeEvent: { data: JSON.stringify(payload) } }; vm.runInContext("handler(event)", context); };
   for (const locale of ["en", "ar"]) {
@@ -166,7 +168,11 @@ test("native SDK-load reason selects localized copy while all payment events ret
     send(messages[1]); assert.equal(errors.at(-1), (locale === "ar" ? ar : en)["payment.form.generic"]);
     send({ type: "error", message: "legacy provider message" }); assert.equal(errors.at(-1), "legacy provider message");
   }
+  assert.ok(errorDetails.every((details) => details.afterShown === false && details.terminated === false), "errors before the form was shown");
   send({ type: "ready" }); assert.equal(statuses.at(-1), "ready");
+  send({ type: "error", message: "declined or failed after the form was shown" });
+  assert.equal(errorDetails.at(-1).afterShown, true, "an error after the form was shown is reported as such");
+  assert.equal(errorDetails.at(-1).terminated, false);
   send({ type: "height", height: 300 }); send({ type: "height", height: 9000 }); assert.deepEqual(heights, [300]);
   send({ type: "success", token: "same-real-token" }); send({ type: "success", token: "same-real-token" });
   assert.deepEqual(successes, ["same-real-token"], "success remains at most once");

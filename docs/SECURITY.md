@@ -125,11 +125,15 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
     cart owner's current state: session, **reservation expiry** (from
     `expires_at`, not the last render or tick), cart re-read gate,
     unknown-outcome lock, and competing attempt. Only the acquiring attempt
-    passes; a blocked attempt sends nothing and is settled;
+    passes; a blocked attempt sends nothing and is settled. Exception: a
+    card result the CyberSource form already returned is not stopped by
+    the client expiry alone (`cardResultSubmitBlocker`; it may already be
+    charged, and the backend decides on the reservation), and a blocked
+    card result is kept unresolved, never settled (§2.8);
   - the Pay handler re-validates the same state before either handoff.
 - **Unknown outcomes never become payable again in the same session**:
   - a transport failure, timeout or 5xx (except 503) on submit, a BLUE
-    success whose cart clear did not happen, or a card 2xx that the closed
+    success whose cart clear did not happen, or a completed card submit that the closed
     card screen could not reconcile locks the session for every method;
   - after a restart, a persisted unfinished attempt for the restored session
     becomes that lock; an unreadable record or storage read failure locks the
@@ -141,7 +145,9 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
 ### 2.6 Payment completion authority and cart clearing
 - The cart is cleared **only** via `clearCartIfSession(ticket)` for the session
   captured at payment start, and only after:
-  - card: a 2xx `/checkout/mobile/submit` response, or
+  - card: a submit response that the single completion decision
+    (`cardSubmitCompletion`) calls complete: a 2xx without
+    `payment.payment_url`, the rule `user-web` uses (§2.8, §3.5), or
   - BLUE: a terminal success URL classified by `decideBlueNavigation`.
 - BLUE failure and user "Leave" keep the reservation active; expiry is left to
   `CartContext`. "Leave" keeps the BLUE attempt held (§2.5), so Card cannot
@@ -171,6 +177,143 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
   `success` with a token, and `error` are acted on.
 - Web lifecycle (`src/lib/cybersourceWebLifecycle.ts`) ignores callbacks from
   superseded capture contexts.
+
+#### Unresolved card results (autoProcessing)
+With `autoProcessing: true`, CyberSource's form may authorize the payment
+before `mount()` resolves, so its result can exist without an LFA order.
+- **Recording.** `CardPaymentScreen` records every result before any check
+  (`recordUnresolvedCardResult` in `src/lib/paymentOutcomeLock.ts`).
+- **What is persisted.** Only a marker: the account and cart session from
+  the handoff that opened the form, the time, a support reference when one
+  was readable, and a key. The payment JWT, billing details and holder names
+  are never persisted. The key is a 64-bit fingerprint of the result
+  (`cardResultKey`), so it is unique per payment result across tabs and
+  processes, and the same for a repeated callback.
+- **Resolved stays resolved.** A marker resolved in this process is never
+  shown as unresolved again here, whatever a later read, stale load or
+  account switch returns (`resolvedKeys`). A resolution that lands while the
+  marker's write is still pending queues its removal behind that write
+  (`writesInFlight`), so a write that reaches storage late cannot revive the
+  marker after a relaunch. A write still queued when the marker is resolved
+  skips itself. Remaining window: the app dying between the late write and
+  the queued removal; the marker then blocks again after relaunch (fails
+  closed).
+- **Superseded chunks.** Rewriting a record leaves its old chunk generation
+  to delete; a version-1 generation can hold the JWT and personal details.
+  A failed deletion is recorded (`<slot>.gc`, or in memory if even that
+  write fails) and retried on every account selection and on relaunch.
+- **Older records.** Records written by the first version, which held the
+  JWT and checkout context, are still read and still block. They are
+  rewritten as markers once read (they stay as they are, and keep blocking,
+  until a rewrite succeeds).
+- **Storage** (`src/lib/unresolvedCardResultStorage*.ts`). Native uses
+  SecureStore, chunked below the historical ~2048-byte iOS value ceiling, plus
+  an AsyncStorage ledger. Web uses `localStorage` only, never the app's
+  memory-fallback `storage` adapter. The ledger takes markers whose primary
+  write failed and "resolved" tombstones for removals the primary could not
+  apply:
+  - a marker counts as saved only when a durable store accepted it;
+  - a removal counts only when the primary applied it or the ledger
+    recorded it;
+  - anything else is reported: "not saved" on screen, `notSaved` from the
+    resolve call.
+  Unsaved writes and removals are retried when the account is selected
+  again (for example on Checkout focus).
+- **Relaunch.**
+  - A saved marker blocks again after a relaunch.
+  - A tombstoned removal stays resolved after a relaunch.
+  - Known gaps:
+    - a marker no store accepted is gone after a relaunch (the user was
+      told it was not saved);
+    - a removal no store accepted makes the result block again after a
+      relaunch, until a retry succeeds (this fails closed).
+- **Blocking** (`readPaymentOutcomeLock`). Until resolved, a marker:
+  - blocks **every method** (card and BLUE) on its own checkout session:
+    that checkout may already be paid;
+  - blocks new **card** payments for that account on every other session
+    (`scope: "account"`), after a restart and after signing out and back
+    in;
+  - never blocks BLUE on an unrelated checkout session (a separate backend
+    checkout).
+  Markers never expire and no customer action releases them. Another
+  account's markers are not loaded or shown.
+- **Unreadable marker storage.** While the markers are being read, every
+  method is blocked briefly. If they cannot be read, card stays paused for
+  the account, and a checkout session **restored from an earlier launch** is
+  blocked for every method with `reason: "unreadable"` (a marker for it
+  cannot be ruled out). Checkout explains this and offers a retried read
+  (`selectPaymentAccount`); a successful read replaces the uncertainty with
+  what is actually stored. A session first seen in this process cannot have
+  a marker the process does not already hold in memory, so BLUE stays
+  available on a new checkout. Known gap: on web, a second tab sharing the
+  same cart session is not covered by this reasoning.
+- **Binding.** A card attempt is bound to the handoff's cart session and to
+  the authentication snapshot captured, for the handoff's account, before
+  the form opens (`CardAttemptBinding`). It is live only while that session
+  is the **mounted** cart owner's (`registerCartOwner`; a retired provider is
+  never consulted) and the snapshot is still current. The card attempt
+  acquisition, every card session-lock write
+  (`markPaymentOutcomeUnknownIfLive`, including from an inactive screen) and
+  the final pre-submit guard all require a live binding. A late callback, a
+  retired provider or an earlier sign-in therefore never acquires, submits,
+  or replaces a newer session's lock, attempt or persisted record.
+- **401/403 attribution.** The submit is pinned to that snapshot
+  (`apiRequest` `authenticationSnapshot`, `requestAuthentication`). Its
+  token is sent, a 401/403 can end only that authentication, and nothing is
+  sent once it is no longer current (`StaleAuthenticationError`). A bare
+  override token without a snapshot invalidates nothing on a 401/403.
+- **Completion (one decision).** `cardSubmitCompletion` alone decides the
+  success screen, clearing the matching cart (`clearCartIfSession`) and
+  marker release. The backend success contract is **not confirmed**, so the
+  rule is a conservative frontend narrowing (§3.5). A 2xx completes only
+  when the body is a JSON object, `success` is absent or exactly `true`,
+  `payment` (if present) is an object without a truthy `payment_url`, a
+  valid `order_id` or `order_number` is named, the order `status` is
+  `paid`, and `payment.status` (if present) is one of paid / authorized /
+  captured / completed / succeeded / success / settled / approved. Anything
+  else, including an empty or non-JSON body (null from `apiRequest`; this
+  app's web proxy passes bodies through unchanged), `{}`, `success: false`,
+  or a declined or pending status, is **unresolved, not failed**: no success
+  screen, the cart is kept, the session is locked through the live binding,
+  and the marker keeps blocking. An order the response named is shown as the
+  support reference. Every non-2xx is unresolved (below).
+- **Failures.** Every other ending (not submitted, 4xx, 5xx, 401/403, 503,
+  timeout, network) keeps the marker: no backend contract makes any of them
+  final. The copy says the card may have been charged; it never says
+  "nothing was charged" or "payment received".
+- **Claims.** Decoded claims (status, id) are unverified. Only the `id` is
+  shown, as a support reference; no status decides anything.
+- **No replay.** A result that reached the submit call is never sent again
+  (no automatic or manual resubmission): backend idempotency is not
+  established. The only result sent later is one that was **never sent**:
+  held back before the submit by the cart's "re-read first" gate. It is kept
+  in memory only (never persisted), the cart is re-read at once, and it is
+  sent once when the read confirms the same session (otherwise from "Send
+  order" on the card screen, Checkout or My Tickets). A backend answer that
+  ends the session leaves it unresolved (marker kept).
+- **Reservation expiry.** The client timer never tears down a card payment
+  in progress. `CartContext.expireCart` defers (the countdown calls it
+  again each second) while the form is open, a result is being handled
+  (`markCardFormOpen`, taken synchronously when a result arrives), or a
+  never-sent result is held (`hasHeldCardResult`). After the timer ends,
+  the open form is locked (an overlay, focus removed so the keyboard closes,
+  a page shield in the WebView, hidden from screen readers) but stays
+  mounted for `CARD_FORM_EXPIRY_GRACE_MS` (90 s) of foreground time, so a
+  result CyberSource is already processing still arrives and is submitted.
+  The backend decides whether the reservation is still valid. Without a
+  result the form closes and expiry runs; its notice says a payment may have
+  been taken.
+- **Form lifecycle.** Leaving an open card form asks first (it destroys any
+  payment in progress in it). An error after the form was shown (the
+  provider rejected `mount()`) or the WebView process dying
+  (`onRenderProcessGone` / `onContentProcessDidTerminate`) is shown as an
+  unknown outcome ("check My Tickets before paying again"), never as a
+  cancellation, and the form is not reloaded in place. An error before the
+  form was shown (SDK load failure) keeps the in-form retry.
+- **Not covered by the client:** if the app is killed, the form is left, the
+  grace period ends, or the WebView dies before CyberSource hands the result
+  to the app, nothing is recorded. Only backend reconciliation with
+  CyberSource can recover that payment.
 
 #### Vendor SDK limitation: `createTrigger("PANENTRY")` (verified 2026-10-05)
 This is a CyberSource Unified Checkout SDK defect, not an LFA backend or
@@ -305,10 +448,22 @@ backend afterwards. Server-side finalization is not visible in this repo.
 Tickets shown later come from the portal API, so the effect is limited to UI
 state and cart clearing.
 
-### 3.5 Card success on any 2xx — LOW/MEDIUM (contract-dependent)
-`CardPaymentScreen` treats any 2xx submit response as success and does not
-evaluate `status`. This is safe only if the backend returns non-2xx for
-declined payments (unverified).
+### 3.5 Card completion is a conservative narrowing, not a verified backend contract — MEDIUM (backend-dependent)
+One decision (`cardSubmitCompletion`, §2.8) drives the success screen, cart
+clearing and marker release. The backend handlers are not in this workspace
+and `user-web` accepts any 2xx, which is not evidence of the contract. The
+app therefore requires a named order with status `paid` (evidence: the
+order status set `pending_payment | paid | failed | cancelled | expired`,
+the staging card payment of 2026-11-02, order 1105, status `paid`, and the
+same narrowing in pos-web). Risks either way:
+- if the real success body lacks `order_id`/`order_number` or a top-level
+  `status: "paid"` (or is wrapped in `data`), **every successful card
+  payment shows as unconfirmed**: the cart is kept and card stays paused for
+  the account on that device. A real staging success body must be captured
+  and checked against the rule before release;
+- `user-web` still shows success for any 2xx, including one that might
+  describe a declined or pending payment.
+The open questions are listed in `docs/API_INTEGRATION.md` §8.
 
 ### 3.6 BLUE WebView allows any http(s) navigation — LOW/MEDIUM
 After the validated initial URL, `decideBlueNavigation` allows any http/https
@@ -404,6 +559,34 @@ as enforcement. The backend should enforce (or explicitly drop) the
 `confirmed` rule.
 
 ---
+
+### 3.20 Card payments the client cannot reconcile — HIGH (backend)
+- A CyberSource result lost before it reaches the app (process killed, form
+  left, post-expiry grace period ended, WebView process gone, `mount()`
+  rejected after an authorization) leaves a possible authorization with no
+  order and no client record. Only backend reconciliation can recover it.
+- An unresolved card result blocks its checkout (every method) and new card
+  payments for the account on that device, with no in-app resolution path.
+  That includes a result the backend would reject as declined, because the
+  status is unverified. Resolving one requires a backend contract
+  (idempotent resubmission, or an order or payment lookup) that does not
+  exist yet.
+- Backend idempotency for resubmitting the same result is not established, so
+  the app never resubmits a result that reached the submit call.
+- Card completion is a frontend narrowing not verified against the backend
+  handlers (§3.5).
+- **Backend requirements** (not implemented; see `docs/API_INTEGRATION.md`
+  §8): a stable payment identifier tied to the order; idempotent submit for
+  the same payment result; an authoritative status lookup by that
+  identifier or checkout session; server-side reconciliation of
+  authorizations without an order (fulfil or void); a defined policy for an
+  authorization completed before reservation expiry but submitted after; a
+  documented success and failure response contract.
+- Web: two tabs writing the same `localStorage` slot are reconciled by
+  reading each write back (up to three retries); an unbroken run of
+  conflicting writes still fails as "not saved".
+- On iOS, the SecureStore marker can survive uninstalling and reinstalling the
+  app (Keychain behavior).
 
 ## 4. Rules for redesign work
 

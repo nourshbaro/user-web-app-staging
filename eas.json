@@ -10,7 +10,8 @@
       "env": {
         "EXPO_PUBLIC_LFA_SITE_URL": "https://lfa.matrixvert.com",
         "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api-lfa.matrixvert.com/api",
-        "EXPO_PUBLIC_LFA_API_ORIGIN": "https://api-lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_API_ORIGIN": "https://lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_CARD_SUBMIT_RETRY": "true",
         "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api-lfa.matrixvert.com/storage",
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
@@ -24,7 +25,8 @@
       "env": {
         "EXPO_PUBLIC_LFA_SITE_URL": "https://lfa.matrixvert.com",
         "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api-lfa.matrixvert.com/api",
-        "EXPO_PUBLIC_LFA_API_ORIGIN": "https://api-lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_API_ORIGIN": "https://lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_CARD_SUBMIT_RETRY": "true",
         "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api-lfa.matrixvert.com/storage",
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
@@ -39,6 +41,7 @@
         "EXPO_PUBLIC_LFA_SITE_URL": "https://lfa-ticketing.com",
         "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api.lfa-ticketing.com/api",
         "EXPO_PUBLIC_LFA_API_ORIGIN": "https://api.lfa-ticketing.com",
+        "EXPO_PUBLIC_LFA_CARD_SUBMIT_RETRY": "true",
         "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api.lfa-ticketing.com/storage",
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
@@ -51,7 +54,8 @@
       "env": {
         "EXPO_PUBLIC_LFA_SITE_URL": "https://lfa.matrixvert.com",
         "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api-lfa.matrixvert.com/api",
-        "EXPO_PUBLIC_LFA_API_ORIGIN": "https://api-lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_API_ORIGIN": "https://lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_CARD_SUBMIT_RETRY": "true",
         "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api-lfa.matrixvert.com/storage",
         "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
         "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",

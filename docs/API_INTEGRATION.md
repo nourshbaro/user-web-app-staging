@@ -470,14 +470,73 @@ Full state model: `docs/ARCHITECTURE.md` §8.
 
 - The client never sees card data. Unified Checkout (Visa Acceptance SDK,
   loaded from `EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL`) runs in a WebView
-  (native) or the page (web) and returns a **transient token**.
+  (native) or the page (web). It is created with `autoProcessing: true`, so
+  `mount()` resolves with the **completed payment-result JWT**: CyberSource
+  may already have authorized the payment before the app has an order.
 - The capture context is requested per cart session with `target_origins` =
   `config.apiOrigin` (native) or `window.location.origin` (web). Stale responses
   are discarded via `createRequestAuthority`.
-- The transient token is sent once to `/checkout/mobile/submit`. Only the
-  backend authorizes the charge.
-- Success is inferred from a **2xx** submit response for the current cart
-  session. The response `status` is displayed, not evaluated.
+- That result is sent once, as `payment.transient_token`, to
+  `/checkout/mobile/submit`, under the account and cart session that opened
+  the form. The request is pinned to that authentication snapshot
+  (`authenticationSnapshot`): its token is sent, a 401/403 ends only that
+  authentication, and nothing is sent once a sign-out or sign-in has replaced
+  it. Before anything else, a marker for it is recorded. It
+  blocks every method on that checkout session and new card payments for the
+  account; it never blocks BLUE on an unrelated checkout session
+  (`docs/SECURITY.md` §2.8). A result that reached the submit call is never
+  sent again. Only a result held back before sending (the cart's "re-read
+  first" gate) is sent later, once, after a confirmed cart re-read.
+- The client reservation timer does not end a card payment in progress: the
+  cart owner defers its expiry while the form is open, a result is being
+  handled, or a never-sent result is held; after expiry the form is locked
+  but kept for 90 s of foreground time. The backend decides whether the
+  reservation is still valid for the submit (`docs/SECURITY.md` §2.8).
+- One completion decision (`cardSubmitCompletion` in
+  `src/lib/cardPaymentResult.ts`) drives the success screen, clearing the
+  matching cart and marker release. It is a **conservative frontend
+  narrowing**, not a backend contract. A 2xx completes only if:
+  - the body is a JSON object (an empty or non-JSON body arrives as null
+    from `apiRequest`; this app's `/api` proxy passes bodies through
+    unchanged);
+  - `success` is absent or exactly `true`;
+  - `payment`, if present, is an object without a truthy `payment_url`;
+  - a valid `order_id` or `order_number` is named;
+  - the order `status` is `paid`;
+  - `payment.status`, if present, is one of paid, authorized, captured,
+    completed, succeeded, success, settled, approved.
+
+  Anything else (`{}`, `success: false`, a declined or pending status, a
+  malformed field, an empty or non-JSON body) and every non-2xx is
+  **unresolved, not failed**: the cart and the marker are kept and paying
+  again stays blocked. Evidence for `paid`: the order status set
+  `pending_payment | paid | failed | cancelled | expired`, the staging card
+  payment of 2026-11-02 (order 1105, status `paid`), and pos-web's
+  identical narrowing. **Release dependency:** capture a real staging success
+  body for `/checkout/mobile/submit` and confirm it satisfies this rule; if
+  it does not (for example no top-level `status`, or a `data` wrapper), every
+  successful card payment would show as unconfirmed.
+- **Response contract that still needs backend confirmation.** No status
+  lookup exists, and the client does not assume:
+  - which `/checkout/mobile/submit` response proves that the order was
+    created **and** the CyberSource payment was accepted for it: HTTP status,
+    the presence of `order_id` / `order_number`, and the values of `status` /
+    `payment.status`. In particular, whether a 2xx can describe a declined,
+    pending-review or failed payment;
+  - which non-2xx responses are final ("no order, and the authorization was
+    voided or never taken") versus uncertain. Today every non-2xx after a card
+    result is treated as uncertain;
+  - whether resubmitting the same result for the same checkout session is
+    idempotent (same order, no second order or charge). Replay of a result
+    that reached the submit call stays disabled until this is confirmed;
+  - whether the backend accepts a card submit for an authorization completed
+    before the reservation expired but submitted after it, and what it does
+    with the authorization if it rejects the submit;
+  - how a decline is delivered by Unified Checkout with `autoProcessing`
+    (a rejected `mount()` or a result JWT with a declined status). The app
+    treats any error after the form was shown as an unknown outcome;
+  - how an authorization that never reached the submit endpoint (app killed
+    before the result arrived) is reconciled on the backend.
 - Card entry uses `createCheckout()` (with CyberSource's own "Checkout with
   card" selection step). `createTrigger("PANENTRY")` does not work with the
   card-only capture context in SDK 1.0.0–1.3.0 because of a vendor SDK defect;

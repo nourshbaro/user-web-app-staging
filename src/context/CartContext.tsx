@@ -9,6 +9,7 @@ import {
   serializePersistedCartSession,
 } from "@/lib/cartPersistence";
 import { classifyCartRefreshFailure, createCartRefreshGuard } from "@/lib/cartRefreshPolicy";
+import { discardStaleCardPaymentRetry, hasHeldCardResult } from "@/lib/cardPaymentHandoff";
 import { createCartOperationQueue } from "@/lib/cartOperationQueue";
 import {
   clearPendingBluePaymentAttempt,
@@ -42,14 +43,19 @@ import {
 import { errorFacts } from "@/lib/apiErrorFacts";
 import {
   configurePaymentOutcomeStore,
+  configureUnresolvedCardResultStore,
   discardPaymentOutcomeUnlessSession,
+  isCardFormOpen,
   readPaymentAttempt,
   readPaymentOutcomeLock,
+  registerCartOwner,
   restorePaymentOutcomeLock,
+  selectPaymentAccount,
 } from "@/lib/paymentOutcomeLock";
 import { storage } from "@/lib/storage";
+import { unresolvedCardResultStorage } from "@/lib/unresolvedCardResultStorage";
 import { userFacingError } from "@/lib/userFacingError";
-import { ApiError } from "@/services/api";
+import { ApiError, isAuthenticationSnapshotCurrent } from "@/services/api";
 import { cartService, getCartItems } from "@/services/cart";
 import type { AddCartRequest, CartItem } from "@/types";
 
@@ -63,6 +69,9 @@ configurePaymentOutcomeStore({
   set: (value) => storage.set(PAYMENT_OUTCOME_KEY, value),
   remove: () => storage.remove(PAYMENT_OUTCOME_KEY),
 });
+// Unresolved card results are account-scoped and outlive cart sessions,
+// restarts and sign-out; they are not a user-scoped cache.
+configureUnresolvedCardResultStore(unresolvedCardResultStorage);
 
 /**
  * Resolved by addItem/updateItem/removeItem/refreshCart: whether the resulting
@@ -154,6 +163,8 @@ export function CartProvider({ children }: PropsWithChildren) {
   const itemsRef = useRef<CartItem[]>([]);
   const expiresAtRef = useRef<Date | null>(null);
   const expiryHandledRef = useRef(false);
+  // The session whose client-side expiry was deferred for an active card payment.
+  const expiryDeferredForCardRef = useRef<string | null>(null);
   const refreshGuardRef = useRef(createCartRefreshGuard());
   const addMutationGuardRef = useRef(createSingleFlight());
   const mountedRef = useRef(true);
@@ -331,6 +342,18 @@ export function CartProvider({ children }: PropsWithChildren) {
     const expected = sessionAuthorityRef.current.capture();
     if (!expected) return;
 
+    // A card payment is active (the CyberSource form is open or its result is
+    // being submitted), or a card result that was never sent is held for this
+    // session: the client timer must not destroy it. Deferred, not skipped:
+    // the countdown calls this again every second, and the hold ends when the
+    // card flow ends, its post-expiry grace period passes, or the held result
+    // is sent or dropped with its session or authentication. The backend
+    // still decides whether the reservation is valid for the submit.
+    if (isCardFormOpen(expected.sessionId) || hasHeldCardResult(expected.sessionId)) {
+      expiryDeferredForCardRef.current = expected.sessionId;
+      return;
+    }
+
     expiryHandledRef.current = true;
     refreshGuardRef.current.invalidate();
     // Captured before the clear destroys it (the clear also drops the pending BLUE request).
@@ -339,9 +362,14 @@ export function CartProvider({ children }: PropsWithChildren) {
       Boolean(
         readPaymentOutcomeLock(expected.sessionId)
           || readPaymentAttempt(expected.sessionId)
-          || readPendingBluePaymentAttempt(expected.sessionId ?? ""),
+          || readPendingBluePaymentAttempt(expected.sessionId ?? "")
+          // A card form was open: it may have completed a payment just before the hold ended.
+          || isCardFormOpen(expected.sessionId)
+          // The expiry waited for a card payment: it may have gone through.
+          || expiryDeferredForCardRef.current === expected.sessionId,
       ),
     );
+    expiryDeferredForCardRef.current = null;
     const cleared = await clearCartSessionIfCurrent({
       authority: sessionAuthorityRef.current,
       expected,
@@ -360,6 +388,11 @@ export function CartProvider({ children }: PropsWithChildren) {
     // sheet is presented over Home by AppChrome.
     dismissEverythingAndGoHome();
   }, [resetCartDisplayState]);
+
+  // This provider is the live cart owner for payment guards while mounted.
+  // Unmounting retires it: a screen still holding this context can no longer
+  // pass a card attempt or a session-lock write with its stale session.
+  useEffect(() => registerCartOwner(() => sessionAuthorityRef.current.currentSessionId()), []);
 
   const dismissExpiredHold = useCallback(() => setExpiredHold(null), []);
 
@@ -480,6 +513,21 @@ export function CartProvider({ children }: PropsWithChildren) {
       refreshGuard.invalidate();
     };
   }, [auth.isReady, auth.isAuthenticated, resetCartState]);
+
+  // The account whose unresolved card results gate payments. Its records are
+  // read (and block until read) per account; signing out or switching
+  // accounts never deletes them, and never shows one account another's.
+  const paymentAccountId = auth.isReady && auth.isAuthenticated && auth.user ? String(auth.user.id) : null;
+  const signedOut = auth.isReady && !auth.isAuthenticated;
+  useEffect(() => {
+    if (paymentAccountId !== null) void selectPaymentAccount(paymentAccountId);
+    else if (signedOut) void selectPaymentAccount(null);
+  }, [paymentAccountId, signedOut]);
+
+  useEffect(() => {
+    discardStaleCardPaymentRetry((snapshot, ticket) =>
+      paymentAccountId !== null && isAuthenticationSnapshotCurrent(snapshot) && isCartSessionCurrent(ticket));
+  }, [auth.userCacheKey, isCartSessionCurrent, paymentAccountId, sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;

@@ -32,7 +32,9 @@ import {
 import {
   clearCardPaymentHandoff,
   createCardPaymentHandoff,
+  findCardPaymentRetry,
 } from "@/lib/cardPaymentHandoff";
+import { isAuthenticationSnapshotCurrent } from "@/services/api";
 import { groupCartItems } from "@/lib/cartDisplay";
 import {
   buildTicketsByMatch,
@@ -52,6 +54,7 @@ import {
   markPaymentOutcomeUnknown,
   readPaymentAttempt,
   readPaymentOutcomeLock,
+  selectPaymentAccount,
   settlePaymentAttempt,
   type PaymentAttempt,
 } from "@/lib/paymentOutcomeLock";
@@ -122,11 +125,13 @@ function CheckoutScreen() {
   const [loading, setLoading] = useState(false);
   const [barHeight, setBarHeight] = useState(0);
   const [refreshingCart, setRefreshingCart] = useState(false);
-  // Session whose payment has an unknown outcome (see paymentOutcomeLock).
-  // Mirrored into state so the screen re-renders; the lock itself is the
-  // session-scoped module state and survives leaving this screen.
+  // Session whose payment has an unknown outcome (see paymentOutcomeLock):
+  // a lock that blocks every method on it (read with the BLUE view, which
+  // ignores an account-scope card marker). Mirrored into state so the screen
+  // re-renders; the lock itself is module state and survives leaving this
+  // screen.
   const [paymentLockSession, setPaymentLockSession] = useState<string | null>(
-    () => readPaymentOutcomeLock(cart.sessionId)?.sessionId ?? null,
+    () => readPaymentOutcomeLock(cart.sessionId, null, "blue")?.sessionId ?? null,
   );
   // Bumped to re-render after the shared attempt gate may have changed.
   const [gateVersion, setGateVersion] = useState(0);
@@ -143,6 +148,7 @@ function CheckoutScreen() {
   );
   const submitInFlightRef = useRef(false);
   const blueHandoffStartedRef = useRef(false);
+  const accountId = auth.user ? String(auth.user.id) : null;
   const name = auth.user?.name.trim() ?? "";
   const email = auth.user?.email?.trim() ?? "";
   const canonicalPhone = initializePhoneValue(
@@ -186,10 +192,18 @@ function CheckoutScreen() {
       blueHandoffStartedRef.current = false;
       // Returning from a payment screen may have locked this session or
       // changed its attempt gate: re-read both from their owner.
-      setPaymentLockSession(readPaymentOutcomeLock(cart.sessionId)?.sessionId ?? null);
+      setPaymentLockSession(readPaymentOutcomeLock(cart.sessionId, null, "blue")?.sessionId ?? null);
       setGateVersion((version) => version + 1);
       void refreshUser().catch(() => {});
-    }, [cart.sessionId, refreshUser]),
+      // Retries a failed read of this account's unresolved card results
+      // (a no-op once read). Never called with null: that is the owner's call.
+      if (accountId !== null) {
+        void selectPaymentAccount(accountId).then(() => {
+          setPaymentLockSession(readPaymentOutcomeLock(cart.sessionId, null, "blue")?.sessionId ?? null);
+          setGateVersion((version) => version + 1);
+        });
+      }
+    }, [accountId, cart.sessionId, refreshUser]),
   );
 
   const launchBluePayment = useCallback(
@@ -451,7 +465,7 @@ function CheckoutScreen() {
         sessionId: submissionTicket.sessionId,
         owner: {
           ...owner,
-          paymentOutcomeUnknown: readPaymentOutcomeLock(submissionTicket.sessionId) !== null,
+          paymentOutcomeUnknown: readPaymentOutcomeLock(submissionTicket.sessionId, null, "blue") !== null,
           paymentAttemptInProgress: isPaymentAttemptHeldByOther(submissionTicket.sessionId, attempt),
         },
       });
@@ -548,7 +562,47 @@ function CheckoutScreen() {
   };
 
   const reconciliationRequired = reconciliationActive(cart.cartReconciliation, cart.sessionId);
-  const paymentOutcomeUnknown = paymentLockSession !== null && paymentLockSession === cart.sessionId;
+  const sessionPaymentUnknown = paymentLockSession !== null && paymentLockSession === cart.sessionId;
+  // An unresolved card result from another session (or unreadable markers):
+  // new card payments are paused for the account; BLUE stays available.
+  // gateVersion keeps the module read fresh (focus, marker load).
+  const cardPausedForAccount = gateVersion >= 0 && !sessionPaymentUnknown
+    && readPaymentOutcomeLock(cart.sessionId)?.scope === "account";
+  const paymentOutcomeUnknown = sessionPaymentUnknown || (paymentMethod === "cybersource" && cardPausedForAccount);
+  // This session existed before the app started and the device's record of
+  // earlier card results cannot be read: a card result for it cannot be ruled
+  // out, so it is blocked for every method until a retried read succeeds.
+  const sessionRecordUnreadable = gateVersion >= 0 && sessionPaymentUnknown
+    && readPaymentOutcomeLock(cart.sessionId, null, "blue")?.reason === "unreadable";
+  const [recheckingRecord, setRecheckingRecord] = useState(false);
+  const recheckPaymentRecord = () => {
+    if (accountId === null || recheckingRecord) return;
+    setRecheckingRecord(true);
+    void selectPaymentAccount(accountId).finally(() => {
+      setRecheckingRecord(false);
+      setPaymentLockSession(readPaymentOutcomeLock(cart.sessionId, null, "blue")?.sessionId ?? null);
+      setGateVersion((version) => version + 1);
+    });
+  };
+  const currentCardRetry = () => findCardPaymentRetry(
+    cart.sessionId,
+    accountId,
+    (snapshot, ticket, attempt) => isAuthenticationSnapshotCurrent(snapshot)
+      && cart.isCartSessionCurrent(ticket)
+      && readPaymentAttempt(cart.sessionId)?.id === attempt.id,
+  );
+  // A returning checkout re-reads the handoff when its focus gate changes.
+  // Not gated on the client timer: the held result was never sent, the cart
+  // owner keeps the session while it is held, and the backend decides whether
+  // the reservation is still valid.
+  const cardRetryHandoffId = gateVersion >= 0 ? currentCardRetry() : null;
+  const openCardRetry = () => {
+    const handoff = currentCardRetry();
+    const owner = cart.readCartGuardState();
+    if (handoff && !owner.reconciliationRequired && owner.itemCount > 0) {
+      router.navigate({ pathname: "/checkout/card/payment", params: { handoff } });
+    }
+  };
   // The shared session gate, read from its owner (re-read on focus via gateVersion).
   const attemptBlocksCheckout = (sessionId: string | null) =>
     checkoutAttemptBlocks({
@@ -579,7 +633,8 @@ function CheckoutScreen() {
     // state (not the last render): a cart that changed, expired, became
     // unconfirmed or has an unknown payment can never start a handoff.
     const ownerState = cart.readCartGuardState();
-    const lock = readPaymentOutcomeLock(ownerState.sessionId);
+    // Method-aware: an account-scope card marker blocks only card.
+    const lock = readPaymentOutcomeLock(ownerState.sessionId, null, paymentMethod === "blue" ? "blue" : "card");
     const guard = submissionGuard({
       renderedSessionId: cart.sessionId,
       owner: {
@@ -594,7 +649,8 @@ function CheckoutScreen() {
       phoneValid: !!canonicalPhone,
     });
     if (!guard.ok) {
-      if (lock) setPaymentLockSession(lock.sessionId);
+      if (lock && lock.scope !== "account") setPaymentLockSession(lock.sessionId);
+      else if (lock) setGateVersion((version) => version + 1);
       if (guard.blocker && guard.blocker !== "busy") {
         toast.showToast({
           variant: "warning",
@@ -615,6 +671,7 @@ function CheckoutScreen() {
       const ticketsByMatch = buildTicketsByMatch(ticketSlots, holderNames);
       const handoffId = createCardPaymentHandoff({
         sessionId: cartSessionTicket.sessionId as string,
+        accountId,
         captureContext,
         prepareCaptureContext: (force = false) =>
           loadCaptureContext(cartSessionTicket.sessionId as string, force),
@@ -696,7 +753,22 @@ function CheckoutScreen() {
             <View style={[local.column, twoColumn && local.mainColumn]}>
               <StepBar step={2} />
               <AppText variant="displayPrompt" accessibilityRole="header">{i18n.t("checkout.prompt")}</AppText>
-              {paymentOutcomeUnknown ? (
+              {cardRetryHandoffId && !reconciliationRequired ? (
+                <StatePanel
+                  variant="info"
+                  title={i18n.t("payment.card.unresolved.title")}
+                  message={i18n.t("payment.card.unresolved.retryMessage")}
+                  action={{ label: i18n.t("payment.card.unresolved.retrySubmit"), onPress: openCardRetry }}
+                />
+              ) : sessionRecordUnreadable && !cardRetryHandoffId ? (
+                <StatePanel
+                  variant="info"
+                  title={i18n.t("checkout.paymentUnknown.title")}
+                  message={i18n.t("checkout.paymentUnknown.unreadableMessage")}
+                  action={{ label: i18n.t("common.retry"), onPress: recheckPaymentRecord }}
+                  secondaryAction={{ label: i18n.t("payment.viewTickets"), onPress: () => router.replace(PAYMENT_RECOVERY_TICKETS_ROUTE) }}
+                />
+              ) : sessionPaymentUnknown && !cardRetryHandoffId ? (
                 <StatePanel
                   variant="info"
                   title={i18n.t("checkout.paymentUnknown.title")}
@@ -717,6 +789,14 @@ function CheckoutScreen() {
                         .finally(() => setRefreshingCart(false));
                     },
                   }}
+                />
+              ) : cardPausedForAccount && !cardRetryHandoffId ? (
+                // Card only: BLUE stays available (the copy says so).
+                <StatePanel
+                  variant="info"
+                  title={i18n.t("checkout.paymentUnknown.title")}
+                  message={i18n.t("checkout.paymentUnknown.accountMessage")}
+                  action={{ label: i18n.t("payment.viewTickets"), onPress: () => router.replace(PAYMENT_RECOVERY_TICKETS_ROUTE) }}
                 />
               ) : null}
 
@@ -776,7 +856,7 @@ function CheckoutScreen() {
                 <AppText variant="overline" tone="muted" accessibilityRole="header">{i18n.t("checkout.payment.title")}</AppText>
                 <PaymentMethodOptions
                   selected={paymentMethod}
-                  disabled={isCheckoutLocked}
+                  disabled={isCheckoutLocked || cardRetryHandoffId !== null}
                   onSelect={setPaymentMethod}
                   status={{
                     cybersource: captureError ? (
@@ -811,7 +891,7 @@ function CheckoutScreen() {
       {/* Presentation-only TransactionBar: the total is the owner's
           cart.total; readiness and submission stay owned by this screen.
           Choosing a method above never pays — only this explicit action does. */}
-      {hasItems ? (
+      {hasItems && !cardRetryHandoffId ? (
         <View
           style={local.actionBar}
           onLayout={(event) => setBarHeight(event.nativeEvent.layout.height)}

@@ -20,7 +20,8 @@ type LifecycleOptions = {
   unifiedCheckout: (captureContext: string) => Promise<CybersourceClient>;
   onReady: () => void;
   onSuccess: (token: string) => void;
-  onError: (message: string) => void;
+  /** `afterShown`: the failure came after the form was mounted for the payer (a payment may have been in progress). */
+  onError: (message: string, details?: { afterShown: boolean }) => void;
 };
 
 // Kept as the English compatibility export; live UI messages resolve at event time.
@@ -35,6 +36,8 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
   let clientDestroyed = false;
   let checkoutDestroyed = false;
   let removeScriptListeners: (() => void) | null = null;
+  // mount() was called: the form is (or was) on screen for the payer.
+  let mounted = false;
 
   const destroyClient = (ownedClient: CybersourceClient | null) => {
     if (!ownedClient || clientDestroyed) return;
@@ -58,7 +61,7 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
     if (!active) return;
     const record = err && typeof err === "object" ? (err as { message?: unknown; reason?: unknown }) : null;
     const reason = record ? (typeof record.message === "string" && record.message.trim() ? record.message : record.reason) : null;
-    options.onError(typeof reason === "string" && reason.trim() ? reason : translate("payment.form.generic"));
+    options.onError(typeof reason === "string" && reason.trim() ? reason : translate("payment.form.generic"), { afterShown: mounted });
   };
 
   const start = async () => {
@@ -83,6 +86,7 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
         if (active) options.onReady();
       });
 
+      mounted = true;
       const transientToken = await createdCheckout.mount({
         paymentSelection: "#uc-payment-buttons",
         paymentScreen: "#uc-payment-form",
@@ -106,7 +110,7 @@ export function createCybersourceWebLifecycle(options: LifecycleOptions) {
     const onError = () => {
       removeScriptListeners?.();
       removeScriptListeners = null;
-      if (active) options.onError(translate("payment.form.sdkFailed"));
+      if (active) options.onError(translate("payment.form.sdkFailed"), { afterShown: false });
     };
     script.addEventListener("load", onLoad, { once: true });
     script.addEventListener("error", onError, { once: true });
