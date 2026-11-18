@@ -131,7 +131,7 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
     charged, and the backend decides on the reservation), and a blocked
     card result is kept unresolved, never settled (§2.8);
   - the Pay handler re-validates the same state before either handoff.
-- **Unknown outcomes never become payable again in the same session**:
+- **Unknown outcomes require explicit consent before another payment**:
   - a transport failure, timeout or 5xx (except 503) on submit, a BLUE
     success whose cart clear did not happen, or a completed card submit that the closed
     card screen could not reconcile locks the session for every method;
@@ -140,7 +140,12 @@ Related: `docs/ARCHITECTURE.md`, `docs/API_INTEGRATION.md`.
     restored session (fail closed);
   - only a definite non-completion (4xx, 401/403, 503, BLUE failure redirect,
     or a submit blocked before sending) releases the attempt;
-  - a lock or attempt never applies to a different cart session.
+  - Checkout's "Pay again" confirmation may enable a separate attempt for
+    the same reservation after a confirmed cart re-read (§2.8). It does not
+    settle the earlier attempt as uncharged or resolve its result. Active
+    attempts/open card forms remain protected; no automatic replay occurs;
+  - a session lock or attempt never applies to a different cart session;
+    unresolved card markers can still pause card payments across sessions.
 
 ### 2.6 Payment completion authority and cart clearing
 - The cart is cleared **only** via `clearCartIfSession(ticket)` for the session
@@ -227,7 +232,8 @@ before `mount()` resolves, so its result can exist without an LFA order.
       told it was not saved);
     - a removal no store accepted makes the result block again after a
       relaunch, until a retry succeeds (this fails closed).
-- **Blocking** (`readPaymentOutcomeLock`). Until resolved, a marker:
+- **Default blocking** (`readPaymentOutcomeLock`). Unless acknowledged by the
+  explicit new-payment consent below, an unresolved marker:
   - blocks **every method** (card and BLUE) on its own checkout session:
     that checkout may already be paid;
   - blocks new **card** payments for that account on every other session
@@ -235,8 +241,33 @@ before `mount()` resolves, so its result can exist without an LFA order.
     in;
   - never blocks BLUE on an unrelated checkout session (a separate backend
     checkout).
-  Markers never expire and no customer action releases them. Another
-  account's markers are not loaded or shown.
+  Markers never expire; neither consent nor notice deletion resolves or
+  removes them. Another account's markers are not loaded or shown.
+- **User-authorized new payment** (product decision, 2026-11-18).
+  Checkout's session/account warning offers "Pay again", including for the
+  same reservation. `prepareNewPaymentAfterUnknown` captures the observed
+  lock, parked attempt, marker keys, account/generation and checkout authority
+  before the confirmation dialog. The dialog warns that the earlier payment
+  may have succeeded and another charge is possible. Acceptance must be
+  followed by a confirmed, non-empty cart publication for that same session.
+  The one-use consent refuses stale authority, new markers/replacement locks,
+  active attempts or any open card form. Account-marker storage must be ready;
+  unreadable storage still offers a retried read, not this override.
+  Consent clears only the observed in-memory session lock/parked attempt and
+  acknowledges the existing keys for this account + session in memory. The
+  old markers and durable session record stay intact; a restart or account
+  change requires consent again, and a new result blocks again. Checkout
+  clears the pending BLUE URL and resets capture context. No payment is sent
+  by the confirmation: a new attempt still acquires/persists the shared gate
+  and passes the normal final guards. A submitted token is never replayed.
+- **Delete notice** on My Tickets is a separate presentation action. After
+  confirmation it saves `lfa_card_notice_hidden:<accountId>:<markerKey>`
+  through the existing `storage` adapter. It hides that account's notice on
+  this device only, without deleting/resolving its marker, clearing the cart,
+  or granting retry consent. A never-sent held result keeps "Send order"
+  instead of deletion. Preference read failures keep the warning visible;
+  write failures show an error. This visibility preference has the ordinary
+  web adapter's memory fallback and is not a durable payment authority.
 - **Unreadable marker storage.** While the markers are being read, every
   method is blocked briefly. If they cannot be read, card stays paused for
   the account, and a checkout session **restored from an earlier launch** is
@@ -275,7 +306,8 @@ before `mount()` resolves, so its result can exist without an LFA order.
   app's web proxy passes bodies through unchanged), `{}`, `success: false`,
   or a declined or pending status, is **unresolved, not failed**: no success
   screen, the cart is kept, the session is locked through the live binding,
-  and the marker keeps blocking. An order the response named is shown as the
+  and the marker blocks by default until explicit new-payment consent. An
+  order the response named is shown as the
   support reference. Every non-2xx is unresolved (below).
 - **Failures.** Every other ending (not submitted, 4xx, 5xx, 401/403, 503,
   timeout, network) keeps the marker: no backend contract makes any of them
@@ -358,9 +390,11 @@ frontend requirement.
   when no attempt, pending BLUE request or unknown outcome existed.
 - Switching payment method: a BLUE request whose page was left is parked
   (`parkPaymentAttempt`), so Other may start its own card attempt and BLUE
-  resumes its stored URL without resubmitting. In-progress attempts and
-  unknown outcomes still block every method; a restart with an unsettled
-  record still fails closed. A BLUE order left open may be approved later in
+  resumes its stored URL without resubmitting. In-progress attempts always
+  block competing payments. Unknown outcomes block every method until explicit
+  Checkout retry consent;
+  a restart with an unsettled record still fails closed and requires consent
+  again. A BLUE order left open may be approved later in
   the BLUE app even after a card success (backend reconciliation, not
   visible to the app).
 - Login / Register never impose a client-side OTP; the backend decides by
@@ -515,18 +549,22 @@ Staging BLUE is HTTP. The Android cleartext policy for non-debug staging builds
 client configs, not secrets, but they identify the Firebase project.
 Restrictions for those keys belong in the Firebase console.
 
-### 3.15 A locked payment session cannot be unlocked in-app — LOW (availability, backend-dependent)
-There is no API to look up a payment result and backend idempotency of
-`/checkout/mobile/submit` is not established, so after an unknown outcome the
-session stays blocked until a different cart session exists (in practice,
-until the reservation expires). The user is pointed to My Tickets. A backend
-status/idempotency contract would allow a narrower rule.
+### 3.15 Confirmed retries do not reconcile unknown payments — LOW (backend-dependent)
+There is no payment-status lookup or established idempotency contract for
+`/checkout/mobile/submit`. The user may explicitly choose "Pay again" after
+the duplicate-charge warning and confirmed cart re-read (§2.8), including on
+the same reservation. That enables a separate attempt; it does not prove the
+earlier attempt failed, cancel its authorization/order, or prevent another
+charge. Only backend reconciliation/status and idempotency can close that gap.
+The backend's acceptance of a fresh payment on the same reservation remains
+NOT VERIFIED.
 
 ### 3.16 Web BLUE returns to a locked session — NOTE (intentional)
 Web BLUE leaves the app by full-page redirect and has no in-app terminal
 handling, so the restored session is locked on return, including after a
-BLUE failure. Conservative by design; a user must start a new session to pay
-differently.
+BLUE failure. The default is conservative; Checkout now offers explicit
+"Pay again" consent for a separate attempt on the still-current reservation
+(§2.8), with no reconciliation of the earlier BLUE payment.
 
 ### 3.17 A 503 on submit is treated as definite non-completion — LOW
 `paymentFailureKind` classifies 503 as maintenance, not unknown, so it does
@@ -565,11 +603,12 @@ as enforcement. The backend should enforce (or explicitly drop) the
   left, post-expiry grace period ended, WebView process gone, `mount()`
   rejected after an authorization) leaves a possible authorization with no
   order and no client record. Only backend reconciliation can recover it.
-- An unresolved card result blocks its checkout (every method) and new card
-  payments for the account on that device, with no in-app resolution path.
-  That includes a result the backend would reject as declined, because the
-  status is unverified. Resolving one requires a backend contract
-  (idempotent resubmission, or an order or payment lookup) that does not
+- An unresolved card result blocks its checkout and new card payments for
+  the account by default, including a result the backend would reject as
+  declined (the status is unverified). Explicit Checkout consent can permit
+  a separate payment; deleting the My Tickets notice only hides it. Neither
+  action confirms or resolves the earlier result. Resolving one requires a
+  backend contract (idempotent resubmission, or an order or payment lookup) that does not
   exist yet.
 - Backend idempotency for resubmitting the same result is not established, so
   the app never resubmits a result that reached the submit call.

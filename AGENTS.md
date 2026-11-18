@@ -118,6 +118,12 @@ Do not create a second owner for state that already has one. Current owners
 - Ticket-holder names: `src/context/TicketHoldersContext.tsx`.
 - Checkout submission and capture context: `src/app/checkout.tsx` with `src/lib/checkoutSubmissionAuthority.ts` and `src/lib/requestAuthority.ts`.
 - Payment handoffs: `src/lib/bluePaymentHandoff.ts`, `src/lib/cardPaymentHandoff.ts`.
+- Payment retry consent: `src/lib/paymentOutcomeLock.ts` owns the gate;
+  Checkout offers explicit "Pay again" confirmation after an unknown result,
+  including for the same reservation. Re-read and confirm the current cart
+  before enabling a new attempt. Consent never resolves the earlier payment,
+  replays its submitted token, or bypasses an active attempt. Deleting a
+  My Tickets notice is presentation only (`docs/SECURITY.md` §2.8).
 - Maintenance: `src/services/api.ts` (503 → `MaintenanceGuard`).
 - Theme: `ThemeProvider` in `src/components/ui.tsx`.
 - Scheduled-match discovery:

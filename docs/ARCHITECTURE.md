@@ -211,6 +211,8 @@ profile) and go through contexts for shared state (auth, cart, holders).
 | Cart / reservation | `CartContext` + `cartSessionAuthority` | `lfa_cart_session_id` = `{version, sessionId, expiresAt}` |
 | Cart re-read ("reconciliation") gate, shared by every cart and payment surface | `CartContext` over `src/lib/cartReconciliation.ts` | memory |
 | Payment gate per cart session: the one in-progress attempt, and the unknown-outcome lock | `src/lib/paymentOutcomeLock.ts` (storage injected by `CartContext`) | `lfa_payment_outcome_lock` = `{version, sessionId, method}` |
+| Confirmed new-payment consent | `src/lib/paymentOutcomeLock.ts` (`prepareNewPaymentAfterUnknown`, called by Checkout) | memory only; acknowledged marker keys scoped to account + cart session |
+| Hidden My Tickets payment notices | `UnresolvedCardPayments` in `src/app/tickets.tsx`; presentation preference only | `storage`: `lfa_card_notice_hidden:<accountId>:<markerKey>` = `"1"`; no payment lock or marker is removed |
 | Cart-line busy state (Cart screen, cart sheet) | `useCartLineActions` — busy line only, never cart data | memory |
 | Ticket-holder names | `TicketHoldersContext` (slots derived from cart items) | memory only |
 | Cart sheet visibility | `CartSheetContext` | memory |
@@ -722,10 +724,27 @@ payment status; the backend and portal remain the authority.
     every method; Checkout and the card screen point to My Tickets;
   - trusted success → the cart session is cleared (`clearCartIfSession`),
     which ends the session and its gate.
-- **Release.** A lock is released only by a materially different cart session
-  (`discardPaymentOutcomeUnlessSession` when `CartContext` publishes a new
-  session id). There is no API to look up a payment result, so there is no
-  in-app "unlock".
+- **New payment after an unknown result.** A different cart session discards
+  the old session lock (`discardPaymentOutcomeUnlessSession`); account-scoped
+  card markers still apply by default. Checkout also offers "Pay again" for
+  either a session lock or an account-scoped card warning, including on the
+  same reservation. `confirmNewPayment` prepares a one-use consent closure
+  (`prepareNewPaymentAfterUnknown`) before showing the duplicate-charge
+  confirmation. On acceptance, it re-reads the cart and requires a confirmed,
+  non-empty publication for the same current session before invoking consent.
+  The gate refuses a changed account/generation, checkout, lock, new marker,
+  parked attempt, or an active attempt/open card form. It requires readable
+  account markers; the unreadable-record panel still offers a retried read.
+  Consent clears the observed in-memory session lock/parked attempt and
+  acknowledges only the observed marker keys for this account + checkout;
+  it does not resolve or delete those markers. A new result blocks again.
+  Account changes clear acknowledgements. The old session record remains
+  durable until a fresh attempt overwrites it, so restart still fails closed.
+  Checkout drops the old pending BLUE URL and resets card capture context.
+  Confirmation sends no payment: the normal Pay action, fresh card form/result
+  where applicable, durable acquisition, and final guards still apply.
+  This permits another charge; it provides no backend reconciliation or
+  idempotency guarantee.
 - **Restart.** `CartContext` calls `restorePaymentOutcomeLock` before
   publishing a restored session: a persisted record for that session becomes
   the lock (an unfinished attempt after a restart is an unknown outcome); a
@@ -785,8 +804,8 @@ production state that routed there:
 - success only after the existing trusted, matched completion;
 - "didn't go through" only for the provider's failure return, never claiming
   that no order exists;
-- unknown outcomes stay inside the Card/BLUE screens and Checkout (locked),
-  never as a failure.
+- unknown outcomes stay inside the Card/BLUE screens and Checkout (initially
+  locked, with Checkout's explicit "Pay again" option), never as a failure.
 Detail rows show backend-provided values only.
 
 **Checkout Back:** header and Android hardware Back share one policy
@@ -825,8 +844,9 @@ entry is always CyberSource's own form.
     attempt and record; an unknown card outcome locks the session for every
     method; a card success clears the session (and the pending BLUE record).
 - Still blocking: an in-progress attempt (card submit in flight, BLUE page
-  open), an unknown outcome, and a restart with an unsettled record (the
-  stored BLUE URL lived only in memory, so it fails closed).
+  open). Unknown outcomes and restarts with an unsettled record block by
+  default (the stored BLUE URL lived only in memory); Checkout's explicit
+  "Pay again" consent can permit a separate attempt as described in §10.
 - BLUE deep-link results (`/checkout/blue/success|failed`) are display-only;
   only the live BLUE WebView for the handoff's own session can clear a cart.
   **Backend dependency:** a BLUE order left open can still be approved in the
@@ -873,6 +893,15 @@ entry is always CyberSource's own form.
 - **After a purchase:** `/tickets?match=…&order=…` opens that match's viewer
   once (from the screen's own list) at the order's first ticket
   (`purchasedTicketFocus`, `ticketFocusIndex`).
+- **Unresolved payment notices:** `UnresolvedCardPayments` reads only the
+  current account's markers. A never-sent held result offers "Send order";
+  otherwise the card offers "Contact support" and "Delete notice". Deletion
+  asks first and saves an account/marker-specific visibility preference via
+  `storage`; it neither resolves a payment nor releases its gate. Preference
+  read failures keep the notice visible; write failures show an error. Native
+  storage uses AsyncStorage; web uses the existing localStorage adapter and
+  its memory fallback when unavailable. A payment retry needs the separate
+  Checkout confirmation (§10), even after hiding the notice.
 - Payment details / PDF: the v3 screen has no entry point (the previous UI had
   already commented them out). `profileService.order`, `orderPdf` and
   `downloadProfileOrderPdf` are unchanged for a future caller.
@@ -1306,7 +1335,7 @@ changes, and authenticated backend translation support are not yet verified.**
 17. Ticket-selection drafts stay transient screen state; a reserved-seat draft is confirmable only against the current successful seat snapshot, and the preflight runs before the first cart mutation (§7).
 18. The cart re-read gate is shared and owned by `CartContext`; no surface keeps its own copy, and only a confirmed re-read of the gated session releases it (§8).
 19. Every payment submission acquires the session's single payment attempt and persists it before sending, and runs the final owner guard (expiry included) immediately before `/checkout/mobile/submit`; only the acquiring attempt passes it (§10).
-20. An unknown payment outcome, or an unfinished attempt found after a restart, locks that cart session for every payment method until a different session exists; a stale lock or attempt never applies to another session (§10).
+20. An unknown payment outcome, or an unfinished attempt found after a restart, locks that cart session by default. Checkout may enable a separate attempt only after explicit "Pay again" consent and a confirmed cart re-read; previous results remain unresolved, active attempts remain exclusive, and restart requires consent again (§10).
 21. `expo-notifications` is imported at runtime only by `src/lib/notifications.ts`, behind the Expo Go guard (§12).
 22. Notification permission is never requested at startup; the native prompt follows only an explicit user action, and an already granted permission keeps registering as before (§12).
 23. The global reservation indicator is presentation only: it shows `CartContext.secondsLeft` and has no clock, timestamp or reservation state of its own; it is the one countdown on Match Details, holders, Checkout and the Card / BLUE payment screens (Cart shows the same value in its v3 card). Expiry stays with `CartContext`; `HoldExpiredSheet` presents its snapshot (§8).

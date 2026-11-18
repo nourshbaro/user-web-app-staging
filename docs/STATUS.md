@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-10-21 · Arabic/English localization and review corrections (uncommitted)
+**As of:** 2026-11-18 · Confirmed payment retries and notice deletion committed (`f6d5e05`)
 
 ---
 
@@ -56,6 +56,34 @@
 - ✅ **Phone recovery branching correction: implemented, Codex PASS.**
   Uncommitted on `39ea18d`.
 - ▶ **Next:** commit approval; the backend dependencies below.
+
+## Confirmed payment retries and notice deletion (2026-11-18)
+
+- **Committed:** `f6d5e05` contains only the six payment-feature files;
+  pre-existing free-checkout changes remain uncommitted and were excluded.
+- **Pay again:** Checkout offers explicit duplicate-charge confirmation for
+  session-level unknown outcomes and account-level card pauses, including
+  the same reservation. A confirmed cart re-read and current account/session
+  are required before `prepareNewPaymentAfterUnknown` enables a separate
+  attempt. Confirmation itself sends no payment; active attempts/open card
+  forms remain exclusive. A fresh attempt still persists its gate first.
+- Earlier markers remain unresolved and durable. Consent covers only the
+  observed marker keys for this account + checkout in memory; a new result,
+  restart or account change requires consent again. Old BLUE URLs are cleared
+  and card capture context reset. No submitted token is replayed.
+- **Delete notice:** My Tickets asks first and hides the reminder through an
+  account/marker-specific device preference. It never resolves the result or
+  enables another payment. Never-sent held results keep "Send order".
+  English/Arabic copy is maintained for both actions.
+- **CONFIRMED checks for the isolated committed snapshot:** TypeScript clean;
+  lint 0 errors, 2 existing unused-variable warnings; Node suite
+  **1,141/1,141 passing**, including six new consent regressions; staged diff
+  check clean. The combined working tree previously passed 1,152 tests;
+  that larger count includes unrelated, uncommitted free-checkout work.
+- **NOT VERIFIED:** web/native UI and payment runtime (including RTL,
+  restart and language changes), backend acceptance of a new payment on the
+  same reservation, reconciliation and idempotency. Another charge remains
+  possible; consent does not establish the earlier payment's outcome.
 
 ## Phone recovery branching correction (2026-10-07)
 
@@ -792,7 +820,8 @@ Runtime checks still owed for Phase 4:
 ## Deferred (non-blocking) findings
 
 - **Payments** (`docs/SECURITY.md` §3.15–§3.17):
-  - a locked session cannot be unlocked in-app (no status/idempotency API);
+  - a locked session now offers explicit "Pay again" consent after a confirmed
+    cart re-read; status lookup/idempotency and reconciliation remain missing;
   - web BLUE returns to a locked session (intentional);
   - a 503 on submit counts as definite non-completion.
 - **BLUE retry:** after a failure redirect, retrying reopens the same stored

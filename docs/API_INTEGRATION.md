@@ -483,8 +483,12 @@ Full state model: `docs/ARCHITECTURE.md` §8.
   authentication, and nothing is sent once a sign-out or sign-in has replaced
   it. Before anything else, a marker for it is recorded. It
   blocks every method on that checkout session and new card payments for the
-  account; it never blocks BLUE on an unrelated checkout session
-  (`docs/SECURITY.md` §2.8). A result that reached the submit call is never
+  account by default; it never blocks BLUE on an unrelated checkout session.
+  Checkout can enable a separate attempt after explicit "Pay again" consent
+  and a confirmed cart re-read, while keeping the earlier marker unresolved
+  (`docs/SECURITY.md` §2.8). This adds no endpoint or idempotency guarantee;
+  the backend still decides whether the reservation accepts another submit.
+  A result that reached the submit call is never
   sent again. Only a result held back before sending (the cart's "re-read
   first" gate) is sent later, once, after a confirmed cart re-read.
 - The client reservation timer does not end a card payment in progress: the
@@ -508,8 +512,10 @@ Full state model: `docs/ARCHITECTURE.md` §8.
 
   Anything else (`{}`, `success: false`, a declined or pending status, a
   malformed field, an empty or non-JSON body) and every non-2xx is
-  **unresolved, not failed**: the cart and the marker are kept and paying
-  again stays blocked. Evidence for `paid`: the order status set
+  **unresolved, not failed**: the cart and the marker are kept; another
+  payment requires the explicit Checkout consent described above. Hiding a
+  My Tickets notice changes neither the result nor the gate. Evidence for
+  `paid`: the order status set
   `pending_payment | paid | failed | cancelled | expired`, the staging card
   payment of 2026-11-02 (order 1105, status `paid`), and pos-web's
   identical narrowing. **Release dependency:** capture a real staging success

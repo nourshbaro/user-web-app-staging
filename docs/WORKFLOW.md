@@ -141,6 +141,14 @@ the existing owners. It preserved:
 - the authoritative payment-completion rules: the cart is cleared only after
   a trusted terminal result for the same session.
 
+**Payment retry policy update (2026-11-18, `f6d5e05`):** Checkout now offers
+"Pay again" after an unknown result, including on the same reservation.
+Explicit duplicate-charge confirmation and a confirmed cart re-read enable
+another attempt through the existing payment gate; no payment is submitted by
+that confirmation itself. Earlier results remain unresolved. "Delete notice"
+on My Tickets only hides the reminder. Preserve this distinction during
+presentation work (`docs/ARCHITECTURE.md` §10, `docs/SECURITY.md` §2.8).
+
 A change to *when* the cart is cleared, or to payment completion, is a
 separate transaction-boundary task (§3).
 

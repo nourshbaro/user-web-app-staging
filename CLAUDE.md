@@ -67,6 +67,10 @@ fine; behavior changes need explicit scope, focused inspection, and tests:
   the `captureCartSession` / `isCartSessionCurrent` / `clearCartIfSession` pattern.
 - `BluePaymentScreen.native.tsx` navigation policy and terminal handling.
 - `CardPaymentScreen.tsx` / `CybersourceUnifiedCheckout.*` token flow.
+- Unknown-payment retries: preserve Checkout's explicit "Pay again" consent,
+  confirmed cart re-read, and `prepareNewPaymentAfterUnknown` gate. Consent
+  enables a separate attempt; it never confirms the earlier payment or replays
+  a submitted result. "Delete notice" only hides the My Tickets reminder.
 - When the cart is cleared: only after a trusted terminal result for the same
   cart session (see `docs/SECURITY.md` §2.6). Never earlier.
 - Ticket QR rendering: backend `qr_image` data URIs only.
