@@ -11,8 +11,8 @@
  *    may have reached the backend or provider but no trustworthy result came
  *    back, or when a provider success could not be reconciled with the cart.
  *    Backend idempotency is not established and there is no API to look the
- *    result up, so the lock is released only by a materially new cart session
- *    (a different session id), never by navigation.
+ *    result up. Navigation never releases the lock; an explicit user
+ *    confirmation may allow a new payment without resolving the old result.
  *
  * 2. The attempt in progress. Every submission first *acquires* the session's
  *    attempt (synchronously, so two surfaces can never both hold it), and the
@@ -60,8 +60,9 @@
  * A resolution never races a pending marker write: its removal is queued
  * behind the write, so a write landing late cannot revive it. Its claims
  * (status, id) are decoded only for a support reference; they are unverified
- * and never decide anything. No marker expires, and no customer action
- * releases one. Writes and removals that did not reach storage are reported
+ * and never decide anything. No marker expires. A confirmed new-payment
+ * choice bypasses existing markers for that checkout in this process only;
+ * it never resolves them. Writes and removals that did not reach storage are reported
  * and retried in this process; a relaunch never silently unlocks a saved
  * marker or revives a resolved one (see `unresolvedCardResultStore.ts`).
  *
@@ -167,6 +168,11 @@ const writesInFlight = new Map<string, number>();
  * marker for a session first seen in this process is in memory.
  */
 const restoredSessions = new Set<string>();
+/** User-acknowledged marker keys, scoped to account + checkout; never persisted as payment success. */
+const acknowledgedMarkers = new Map<string, Set<string>>();
+const acknowledgementKey = (accountId: string | null, sessionId: string) => JSON.stringify([accountId, sessionId]);
+const markerAcknowledged = (sessionId: string, key: string) =>
+  acknowledgedMarkers.get(acknowledgementKey(paymentAccount.id, sessionId))?.has(key) ?? false;
 
 function trackWrite<T>(key: string, write: () => Promise<T>): Promise<T> {
   writesInFlight.set(key, (writesInFlight.get(key) ?? 0) + 1);
@@ -289,10 +295,10 @@ function accountResults(): UnresolvedCardResult[] {
 }
 
 /** Whether the current account may not start a payment; `own` is the one result its recorder may still submit. */
-function accountBlocks(own: CardResultClaim | null) {
+function accountBlocks(sessionId: string, own: CardResultClaim | null) {
   if (paymentAccount.id === null) return false;
   if (paymentAccount.status !== "ready") return true;
-  return accountResults().some((entry) => entry.key !== own?.key);
+  return accountResults().some((entry) => entry.key !== own?.key && !markerAcknowledged(sessionId, entry.key));
 }
 
 /**
@@ -334,7 +340,7 @@ async function addIfLive(current: UnresolvedCardResultStore, slot: string, entry
  */
 function sessionMarkerBlock(sessionId: string, own: CardResultClaim | null): "marker" | "loading" | "unreadable" | null {
   if (paymentAccount.id === null) return null;
-  if (accountResults().some((entry) => entry.key !== own?.key && entry.sessionId === sessionId)) return "marker";
+  if (accountResults().some((entry) => entry.key !== own?.key && entry.sessionId === sessionId && !markerAcknowledged(sessionId, entry.key))) return "marker";
   if (paymentAccount.status === "loading") return "loading";
   if (paymentAccount.status === "failed" && restoredSessions.has(sessionId)) return "unreadable";
   return null;
@@ -367,7 +373,47 @@ export function readPaymentOutcomeLock(
   if (markerBlock === "unreadable") return { sessionId, method: "card", reason: "unreadable" };
   if (markerBlock) return { sessionId, method: "card" };
   if (method === "blue") return null;
-  return accountBlocks(own) ? { sessionId, method: "card", scope: "account" } : null;
+  return accountBlocks(sessionId, own) ? { sessionId, method: "card", scope: "account" } : null;
+}
+
+/**
+ * Prepare BEFORE showing the pay-again confirmation, then invoke only if accepted.
+ * Consent covers exactly the observed lock/markers, account and live checkout.
+ * A new result, active payment or account change refuses it.
+ * Old markers stay unresolved and durable; a restart asks again. The next
+ * attempt still acquires and persists the normal shared single-flight gate.
+ */
+export function prepareNewPaymentAfterUnknown(
+  sessionId: string,
+  accountId: string,
+  isCurrent: () => boolean,
+): (() => Promise<boolean>) | null {
+  if (paymentAccount.id !== accountId || paymentAccount.status !== "ready" || !readPaymentOutcomeLock(sessionId)) return null;
+  const generation = paymentAccount.generation;
+  const previousLock = sessionLock(sessionId);
+  const previousParked = readParkedPaymentAttempt(sessionId);
+  const keys = accountResults().map((entry) => entry.key);
+  const currentStore = store;
+  let consumed = false;
+  const valid = () => isCurrent()
+    && paymentAccount.id === accountId && paymentAccount.generation === generation && paymentAccount.status === "ready"
+    && store === currentStore && sessionLock(sessionId) === previousLock
+    && !readPaymentAttempt(sessionId) && readParkedPaymentAttempt(sessionId) === previousParked && openCardForms.size === 0
+    && accountResults().every((entry) => keys.includes(entry.key));
+  if (!currentStore || !valid()) return null;
+  return () => {
+    if (consumed) return Promise.resolve(false);
+    consumed = true;
+    return enqueue(async () => {
+      if (!valid()) return false;
+      // Keep the durable record: a restart before the new attempt asks again.
+      // Acquisition must overwrite it successfully before any new submit.
+      if (previousLock) lock = null;
+      if (previousParked) parked = null;
+      acknowledgedMarkers.set(acknowledgementKey(accountId, sessionId), new Set(keys));
+      return true;
+    }).catch(() => false);
+  };
 }
 
 export function configureUnresolvedCardResultStore(next: UnresolvedCardResultStore | null) {
@@ -390,6 +436,7 @@ export function selectPaymentAccount(accountId: string | null): Promise<void> {
     return id !== null ? flushAccountStorage(id) : Promise.resolve();
   }
   if (id === paymentAccount.id && paymentAccount.status === "loading") return paymentAccountLoad;
+  if (id !== paymentAccount.id) acknowledgedMarkers.clear();
   const generation = paymentAccount.generation + 1;
   paymentAccount = { id, status: id === null ? "none" : "loading", stored: [], generation };
   const current = resultStore;

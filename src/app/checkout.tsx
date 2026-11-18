@@ -10,6 +10,7 @@ import { TicketHoldersBlock } from "@/components/TicketHoldersBlock";
 import { useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
+import { useAlertDialog } from "@/context/AlertDialogContext";
 import { useCart } from "@/context/CartContext";
 import { useTicketHolders } from "@/context/TicketHoldersContext";
 import { useToast } from "@/context/ToastContext";
@@ -17,6 +18,7 @@ import { useI18n } from "@/i18n/I18nProvider";
 import { errorFacts } from "@/lib/apiErrorFacts";
 import {
   clearBluePaymentHandoff,
+  clearPendingBluePaymentAttempt,
   createBluePaymentHandoff,
   readPendingBluePaymentAttempt,
   savePendingBluePaymentAttempt,
@@ -52,6 +54,7 @@ import {
   acquirePaymentAttempt,
   isPaymentAttemptHeldByOther,
   markPaymentOutcomeUnknown,
+  prepareNewPaymentAfterUnknown,
   readPaymentAttempt,
   readPaymentOutcomeLock,
   selectPaymentAccount,
@@ -70,6 +73,7 @@ import { formatMoney } from "@/lib/format";
 import { initializePhoneValue } from "@/lib/phoneNumber";
 import { createRequestAuthority } from "@/lib/requestAuthority";
 import { PAYMENT_RECOVERY_TICKETS_ROUTE } from "@/lib/paymentRecoveryTickets";
+import { getUserScopedCacheGeneration } from "@/lib/userScopedCache";
 import { paymentError, reasonWithGuidance, userFacingError } from "@/lib/userFacingError";
 import { checkoutService } from "@/services/checkout";
 import { router, Stack, useFocusEffect, useIsFocused } from "expo-router";
@@ -115,6 +119,9 @@ function CheckoutScreen() {
   const theme = useTheme();
   const i18n = useI18n();
   const toast = useToast();
+  const alert = useAlertDialog();
+  const [newPaymentRequest] = useState(createRequestAuthority);
+  const confirmingNewPaymentRef = useRef(false);
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const { ticketSlots, holderNames } = useTicketHolders();
@@ -340,14 +347,16 @@ function CheckoutScreen() {
   useEffect(() => {
     captureRequestAuthority.mount();
     checkoutSubmissionAuthority.mount();
+    newPaymentRequest.mount();
     return () => {
       captureRequestAuthority.unmount();
       checkoutSubmissionAuthority.unmount();
+      newPaymentRequest.unmount();
       captureSessionRef.current = null;
       captureRetrySessionRef.current = null;
       capturePromiseRef.current = null;
     };
-  }, [captureRequestAuthority, checkoutSubmissionAuthority]);
+  }, [captureRequestAuthority, checkoutSubmissionAuthority, newPaymentRequest]);
 
   const submitBlue = async () => {
     if (
@@ -584,6 +593,52 @@ function CheckoutScreen() {
       setGateVersion((version) => version + 1);
     });
   };
+  const confirmNewPayment = async () => {
+    if (confirmingNewPaymentRef.current || accountId === null) return;
+    const cartTicket = cart.captureCartSession();
+    if (!cartTicket?.sessionId) return;
+    const sessionId = cartTicket.sessionId;
+    const request = newPaymentRequest.begin(sessionId);
+    const generation = getUserScopedCacheGeneration();
+    const current = () => newPaymentRequest.isCurrent(request)
+      && generation === getUserScopedCacheGeneration() && cart.isCartSessionCurrent(cartTicket)
+      && !submitInFlightRef.current && !blueHandoffStartedRef.current;
+    const allowNewPayment = prepareNewPaymentAfterUnknown(sessionId, accountId, current);
+    if (!allowNewPayment) {
+      toast.showToast({ variant: "error", message: i18n.t("checkout.paymentUnknown.payAgainError") });
+      return;
+    }
+    confirmingNewPaymentRef.current = true;
+    try {
+      const accepted = await alert.showAlert({
+        variant: "confirm",
+        title: i18n.t("checkout.paymentUnknown.payAgainTitle"),
+        message: i18n.t("checkout.paymentUnknown.payAgainMessage"),
+        confirmLabel: i18n.t("checkout.paymentUnknown.payAgain"),
+      });
+      if (!accepted || !current()) return;
+      const publication = await cart.refreshCart();
+      if (!current()) return;
+      if (!publication.confirmed || publication.snapshot.sessionId !== sessionId || publication.snapshot.items.length === 0 || !(await allowNewPayment())) {
+        toast.showToast({ variant: "error", message: i18n.t("checkout.paymentUnknown.payAgainError") });
+        return;
+      }
+      if (!current()) return;
+      clearPendingBluePaymentAttempt(sessionId);
+      captureRequestAuthority.invalidate(sessionId);
+      captureSessionRef.current = null;
+      captureRetrySessionRef.current = null;
+      capturePromiseRef.current = null;
+      setCaptureState(null);
+      setPaymentLockSession(readPaymentOutcomeLock(sessionId, null, "blue")?.sessionId ?? null);
+      setGateVersion((version) => version + 1);
+      if (paymentMethod === "cybersource") void loadCaptureContext(sessionId, true).catch(() => {});
+    } catch {
+      if (current()) toast.showToast({ variant: "error", message: i18n.t("checkout.paymentUnknown.payAgainError") });
+    } finally {
+      confirmingNewPaymentRef.current = false;
+    }
+  };
   const currentCardRetry = () => findCardPaymentRetry(
     cart.sessionId,
     accountId,
@@ -774,6 +829,7 @@ function CheckoutScreen() {
                   title={i18n.t("checkout.paymentUnknown.title")}
                   message={i18n.t("checkout.paymentUnknown.message")}
                   action={{ label: i18n.t("payment.viewTickets"), onPress: () => router.replace(PAYMENT_RECOVERY_TICKETS_ROUTE) }}
+                  secondaryAction={{ label: i18n.t("checkout.paymentUnknown.payAgain"), onPress: () => { void confirmNewPayment(); } }}
                 />
               ) : reconciliationRequired ? (
                 <CartNotice
@@ -797,6 +853,7 @@ function CheckoutScreen() {
                   title={i18n.t("checkout.paymentUnknown.title")}
                   message={i18n.t("checkout.paymentUnknown.accountMessage")}
                   action={{ label: i18n.t("payment.viewTickets"), onPress: () => router.replace(PAYMENT_RECOVERY_TICKETS_ROUTE) }}
+                  secondaryAction={{ label: i18n.t("checkout.paymentUnknown.payAgain"), onPress: () => { void confirmNewPayment(); } }}
                 />
               ) : null}
 

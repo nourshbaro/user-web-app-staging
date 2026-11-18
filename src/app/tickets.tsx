@@ -14,7 +14,9 @@ import { TeamCrest } from "@/components/match/TeamCrest";
 import { Button, Screen, useResponsive, useTheme } from "@/components/ui";
 import { withAuthRequired } from "@/components/withAuthRequired";
 import { useAuth } from "@/context/AuthContext";
+import { useAlertDialog } from "@/context/AlertDialogContext";
 import { useCart } from "@/context/CartContext";
+import { useToast } from "@/context/ToastContext";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useI18n } from "@/i18n/I18nProvider";
 import { findCardPaymentRetry } from "@/lib/cardPaymentHandoff";
@@ -27,6 +29,7 @@ import {
   type UnresolvedCardResult,
 } from "@/lib/paymentOutcomeLock";
 import { createRequestAuthority } from "@/lib/requestAuthority";
+import { storage } from "@/lib/storage";
 import {
   purchasedTicketFocus,
   rawStatusLabel,
@@ -328,21 +331,59 @@ function TicketsScreen() {
   );
 }
 
+// Account-scoped presentation preference; the payment marker remains authoritative.
+function cardNoticeKey(marker: UnresolvedCardResult) {
+  return `lfa_card_notice_hidden:${marker.accountId}:${marker.key}`;
+}
+
 function UnresolvedCardPayments() {
   const auth = useAuth();
   const cart = useCart();
   const i18n = useI18n();
+  const alert = useAlertDialog();
+  const toast = useToast();
   const accountId = auth.isAuthenticated && auth.user ? String(auth.user.id) : null;
   const [markers, setMarkers] = useState<readonly UnresolvedCardResult[]>([]);
+  const [deletedNotices, setDeletedNotices] = useState<readonly string[]>([]);
+  const deletingNotice = useRef(false);
 
   useFocusEffect(useCallback(() => {
     if (!accountId) return;
     let focused = true;
-    void selectPaymentAccount(accountId).then(() => {
-      if (focused) setMarkers(readUnresolvedCardResults().filter((marker) => marker.accountId === accountId));
+    void selectPaymentAccount(accountId).then(async () => {
+      const ownMarkers = readUnresolvedCardResults().filter((marker) => marker.accountId === accountId);
+      const visible = await Promise.all(ownMarkers.map(async (marker) => {
+        // A preference read failure keeps the payment warning visible.
+        const hidden = await storage.get(cardNoticeKey(marker)).catch(() => null);
+        return hidden === "1" ? null : marker;
+      }));
+      if (focused) setMarkers(visible.filter((marker) => marker !== null));
     });
     return () => { focused = false; };
   }, [accountId]));
+
+  const deleteNotice = async (marker: UnresolvedCardResult) => {
+    if (deletingNotice.current || marker.accountId !== accountId) return;
+    deletingNotice.current = true;
+    const generation = getUserScopedCacheGeneration();
+    const current = () => generation === getUserScopedCacheGeneration();
+    try {
+      const accepted = await alert.showAlert({
+        variant: "destructive",
+        title: i18n.t("myTickets.paymentPending.deleteTitle"),
+        message: i18n.t("myTickets.paymentPending.deleteMessage"),
+        confirmLabel: i18n.t("myTickets.paymentPending.delete"),
+      });
+      if (!accepted || !current()) return;
+      // Presentation only: never resolve the marker or release a payment lock.
+      await storage.set(cardNoticeKey(marker), "1");
+      if (current()) setDeletedNotices((keys) => [...keys, marker.key]);
+    } catch {
+      if (current()) toast.showToast({ variant: "error", message: i18n.t("myTickets.paymentPending.deleteError") });
+    } finally {
+      deletingNotice.current = false;
+    }
+  };
 
   // A held-back card result that was never sent (see CardPaymentScreen):
   // sending it once is a first submission, never a replay.
@@ -361,7 +402,7 @@ function UnresolvedCardPayments() {
     );
   };
 
-  return markers.filter((marker) => marker.accountId === accountId).map((marker) => {
+  return markers.filter((marker) => marker.accountId === accountId && !deletedNotices.includes(marker.key)).map((marker) => {
     const canRetry = retryHandoff(marker.key) !== null;
     const message = i18n.t(canRetry
       ? marker.reference ? "payment.card.unresolved.retryWithReference" : "payment.card.unresolved.retryMessage"
@@ -386,6 +427,10 @@ function UnresolvedCardPayments() {
         } : {
           label: i18n.t("myTickets.paymentPending.support"),
           onPress: () => router.push("/contact"),
+        }}
+        secondaryAction={canRetry ? undefined : {
+          label: i18n.t("myTickets.paymentPending.delete"),
+          onPress: () => { void deleteNotice(marker); },
         }}
       />
     );

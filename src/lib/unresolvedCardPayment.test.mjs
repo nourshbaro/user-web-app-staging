@@ -84,6 +84,103 @@ async function boot(device = devices()) {
 const storeOf = (device) => createUnresolvedCardResultStore({ primary: device.primary.backend, ledger: device.ledger.backend });
 const storedMarkers = async (device, account = "7") => (await storeOf(device).read(account)).markers;
 
+test("explicit pay-again consent allows a new checkout without resolving the earlier card marker", async () => {
+  const { lock, device } = await boot();
+  await lock.selectPaymentAccount("7");
+  const result = lock.recordUnresolvedCardResult({ accountId: "7", sessionId: "old", result: "previous-result", reference: "ref" });
+  await result.persisted;
+  assert.ok(lock.readPaymentOutcomeLock("new"));
+  const accept = lock.prepareNewPaymentAfterUnknown("new", "7", () => true);
+  assert.equal(typeof accept, "function");
+  assert.ok(lock.readPaymentOutcomeLock("new"), "preparing a dialog is not consent");
+  assert.equal(await accept(), true);
+  assert.equal(lock.readPaymentOutcomeLock("new"), null);
+  assert.ok(lock.readPaymentOutcomeLock("another"), "consent covers only this checkout");
+  assert.equal(lock.readUnresolvedCardResults().length, 1);
+  assert.equal((await storedMarkers(device)).length, 1);
+  assert.equal(await accept(), false, "consent is single-use");
+  assert.equal((await lock.acquirePaymentAttempt("new", "card")).ok, true);
+  assert.equal((await lock.acquirePaymentAttempt("new", "blue")).ok, false, "concurrent payments remain blocked");
+});
+
+test("pay-again consent releases a same-reservation unknown lock, but new results and restart block again", async () => {
+  const { lock, device } = await boot();
+  await lock.selectPaymentAccount("7");
+  await lock.recordUnresolvedCardResult({ accountId: "7", sessionId: "S", result: "first-result", reference: null }).persisted;
+  lock.markPaymentOutcomeUnknown("S", "card");
+  const accept = lock.prepareNewPaymentAfterUnknown("S", "7", () => true);
+  assert.equal(await accept(), true);
+  assert.ok(device.session.peek(), "old lock stays durable until a new attempt is recorded");
+  assert.equal(lock.readPaymentOutcomeLock("S"), null);
+  await lock.recordUnresolvedCardResult({ accountId: "7", sessionId: "S", result: "second-result", reference: null }).persisted;
+  assert.ok(lock.readPaymentOutcomeLock("S"), "consent does not cover a new payment result");
+  const restarted = await boot(device);
+  await restarted.lock.selectPaymentAccount("7");
+  assert.ok(restarted.lock.readPaymentOutcomeLock("S"));
+  assert.equal(restarted.lock.readUnresolvedCardResults().length, 2);
+});
+
+test("pay-again consent refuses stale checkout, changed account, new result and replacement lock", async () => {
+  for (const change of ["checkout", "account", "result", "lock"]) {
+    const { lock } = await boot();
+    await lock.selectPaymentAccount("7");
+    await lock.recordUnresolvedCardResult({ accountId: "7", sessionId: "S", result: "first", reference: null }).persisted;
+    lock.markPaymentOutcomeUnknown("S", "card");
+    let current = true;
+    const accept = lock.prepareNewPaymentAfterUnknown("S", "7", () => current);
+    if (change === "checkout") current = false;
+    if (change === "account") await lock.selectPaymentAccount("8");
+    if (change === "result") await lock.recordUnresolvedCardResult({ accountId: "7", sessionId: "S", result: "second", reference: null }).persisted;
+    if (change === "lock") lock.markPaymentOutcomeUnknown("S", "blue");
+    assert.equal(await accept(), false, change);
+    assert.ok(lock.readPaymentOutcomeLock("S"), change);
+  }
+});
+
+test("pay-again acknowledgement is discarded on sign-out or account switching", async () => {
+  const { lock } = await boot();
+  await lock.selectPaymentAccount("7");
+  await lock.recordUnresolvedCardResult({ accountId: "7", sessionId: "S", result: "first", reference: null }).persisted;
+  assert.equal(await lock.prepareNewPaymentAfterUnknown("S", "7", () => true)(), true);
+  assert.equal(lock.readPaymentOutcomeLock("S"), null);
+  await lock.selectPaymentAccount(null);
+  await lock.selectPaymentAccount("7");
+  assert.ok(lock.readPaymentOutcomeLock("S"));
+});
+
+test("pay-again permits a separate payment after leaving a parked BLUE request", async () => {
+  const { lock } = await boot();
+  await lock.selectPaymentAccount("7");
+  const blue = await lock.acquirePaymentAttempt("S", "blue");
+  assert.equal(blue.ok, true);
+  lock.parkPaymentAttempt("S", blue.attempt.id);
+  await lock.recordUnresolvedCardResult({ accountId: "7", sessionId: "old", result: "first", reference: null }).persisted;
+  assert.equal(await lock.prepareNewPaymentAfterUnknown("S", "7", () => true)(), true);
+  assert.equal(lock.readParkedPaymentAttempt("S"), null);
+  const fresh = await lock.acquirePaymentAttempt("S", "blue");
+  assert.equal(fresh.ok, true);
+  assert.notEqual(fresh.attempt.id, blue.attempt.id);
+});
+
+test("pay-again refuses an active payment/form; a new attempt still requires durable recording", async () => {
+  const { lock, device } = await boot();
+  await lock.selectPaymentAccount("7");
+  assert.equal((await lock.acquirePaymentAttempt("S", "blue")).ok, true);
+  await lock.recordUnresolvedCardResult({ accountId: "7", sessionId: "S", result: "first", reference: null }).persisted;
+  assert.equal(lock.prepareNewPaymentAfterUnknown("S", "7", () => true), null);
+  lock.markPaymentOutcomeUnknown("S", "card");
+  const releaseForm = lock.markCardFormOpen("S");
+  assert.equal(lock.prepareNewPaymentAfterUnknown("S", "7", () => true), null);
+  releaseForm();
+  assert.equal(await lock.prepareNewPaymentAfterUnknown("S", "7", () => true)(), true);
+  device.session.set = async () => { throw new Error("storage unavailable"); };
+  assert.deepEqual(await lock.acquirePaymentAttempt("S", "card"), { ok: false, reason: "notRecorded" });
+  assert.equal(lock.readPaymentAttempt("S"), null);
+  const restarted = await boot(device);
+  await restarted.lock.restorePaymentOutcomeLock("S");
+  assert.ok(restarted.lock.readPaymentOutcomeLock("S"), "failed new attempt never erases restart protection");
+});
+
 function jwt(claims) {
   const part = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
   return `${part({ alg: "RS256", kid: "k1" })}.${part(claims)}.${"s".repeat(342)}`;
