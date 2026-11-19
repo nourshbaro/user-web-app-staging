@@ -14,7 +14,7 @@ Related: `docs/API_INTEGRATION.md` (requests and contracts), `docs/SECURITY.md`
 
 | Concern      | Current value (from `package.json`, `app.json`, `tsconfig.json`) |
 | ------------ | ---------------------------------------------------------------- |
-| Framework    | Expo SDK 57, React Native 0.86, React 19.2                        |
+| Framework    | Expo SDK 58, React Native 0.88, React 19.3                        |
 | Language     | TypeScript 6, `strict: true`, path alias `@/*` → `src/*`          |
 | Routing      | Expo Router, `src/app`, `experiments.typedRoutes: true`           |
 | Compiler     | `experiments.reactCompiler: true`                                 |
@@ -23,7 +23,7 @@ Related: `docs/API_INTEGRATION.md` (requests and contracts), `docs/SECURITY.md`
 | Orientation  | `default` (portrait and landscape allowed)                        |
 | Push         | `@react-native-firebase/messaging` (FCM tokens) + `expo-notifications` |
 | Animation    | `react-native-reanimated` 4, RN `Animated`, `react-native-gesture-handler` |
-| Build        | EAS (`eas.json` profiles: development, preview, production, apk)  |
+| Build        | EAS (`eas.json` profiles: development-simulator, development, preview, production, apk) |
 | Native dirs  | `/ios`, `/android` are generated (gitignored); config via plugins |
 
 Platform-specific modules use suffixes (`.native.ts(x)`, `.web.ts(x)`), declared
@@ -31,7 +31,24 @@ in `tsconfig.json` `moduleSuffixes` and in the ESLint resolver.
 
 `app.config.js` wraps `app.json`: it rejects production builds whose BLUE
 origin is not the configured HTTPS provider origin, and adds an iOS ATS
-exception for the staging BLUE host only for staging profiles.
+exception for the staging BLUE host only for staging profiles
+(`development`, `preview`, `apk`, or no profile). `development-simulator` is
+not in that list, so simulator builds from it do not get the exception.
+
+Firebase native initialization (iOS) is owned by config plugins:
+`@react-native-firebase/app` copies `GoogleService-Info.plist` into the app
+target and adds `import FirebaseCore`; `./plugins/withFirebaseModularHeaders.js`
+adds `use_modular_headers!` to the Podfile; and
+`./plugins/withFirebaseAppDelegateConfigure.js` inserts
+`FirebaseApp.configure()` in `AppDelegate.application(_:didFinishLaunchingWithOptions:)`
+before `super.application(...)`. The last plugin exists because on SDK 58
+React Native starts in `SceneDelegate`, and RNFirebase 26.4.0 cannot find its
+insertion anchor: it only warns ("Unable to determine correct Firebase
+insertion point in AppDelegate.swift") and skips the call, leaving no
+`[DEFAULT]` app. The local plugin is idempotent and fails prebuild if its own
+anchor disappears. Native config changes take effect only after a native
+rebuild (EAS build or `expo prebuild --clean` + `expo run:ios`); a reinstalled
+JS bundle on an older development client does not pick them up.
 
 Tests: `*.test.mjs` files run with `node --test` (Node type stripping imports
 `.ts` directly; current totals are in `docs/STATUS.md`). Pure modules they
@@ -1054,6 +1071,17 @@ cart) runs `handleContinue`. Card entry is always CyberSource's own form.
   Development and release builds load the module eagerly exactly as before.
   Push, FCM registration and notification taps must be verified in a
   development or release build, never in Expo Go.
+- **A build without a default Firebase app degrades, it does not crash.**
+  All Firebase messaging access goes through `getConfiguredMessaging()` in
+  `src/lib/notifications.ts` (`getMessaging(getApp())` inside a try/catch).
+  When native Firebase was never configured (stale development client,
+  missing plist, or the AppDelegate call missing — see §1), it logs one
+  `[push] Firebase is not configured in this native build…` warning per
+  launch and returns `null`: `subscribeToFcmTokenRefresh` returns a no-op
+  unsubscribe and `getFcmDeviceToken` returns `null`, so nothing is
+  registered and the rest of the app still opens. That warning in a build
+  means the native app must be rebuilt, not that permission or the backend
+  failed.
 
 ---
 

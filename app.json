@@ -62,6 +62,7 @@
       ],
       "@react-native-firebase/messaging",
       "./plugins/withFirebaseModularHeaders.js",
+      "./plugins/withFirebaseAppDelegateConfigure.js",
       [
         "expo-image-picker",
         {

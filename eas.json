@@ -4,6 +4,25 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "development-simulator": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_LFA_SITE_URL": "https://lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_API_BASE_URL": "https://api-lfa.matrixvert.com/api",
+        "EXPO_PUBLIC_LFA_API_ORIGIN": "https://lfa.matrixvert.com",
+        "EXPO_PUBLIC_LFA_CARD_SUBMIT_RETRY": "true",
+        "EXPO_PUBLIC_LFA_STORAGE_BASE": "https://api-lfa.matrixvert.com/storage",
+        "EXPO_PUBLIC_LFA_API_PASSWORD": "VfAphuykVVn)LD45648kkk",
+        "EXPO_PUBLIC_LFA_API_TIMEOUT_MS": "15000",
+        "EXPO_PUBLIC_CYBERSOURCE_UC_SCRIPT_URL": "https://apitest.cybersource.com/uc/v1/assets/1.0.0/UnifiedCheckout.js",
+        "EXPO_PUBLIC_BLUE_PAYMENT_ALLOWED_ORIGIN": "http://161.97.169.240:3015",
+        "EXPO_PUBLIC_BLUE_REDIRECT_ORIGIN": "https://lfa.matrixvert.com"
+      },
+      "ios": {
+        "simulator": true
+      }
+    },
     "development": {
       "developmentClient": true,
       "distribution": "internal",

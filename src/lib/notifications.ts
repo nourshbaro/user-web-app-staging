@@ -3,6 +3,7 @@ import * as Device from "expo-device";
 import { isRunningInExpoGo } from "expo";
 import type * as NotificationsModule from "expo-notifications";
 import { Platform } from "react-native";
+import { getApp } from "@react-native-firebase/app";
 import {
   getMessaging,
   getToken as getFcmRegistrationToken,
@@ -148,6 +149,33 @@ export async function getDevicePushToken(): Promise<string | null> {
     : JSON.stringify(token.data);
 }
 
+let missingFirebaseLogged = false;
+
+/**
+ * Messaging for the native default Firebase app, or null when the build has
+ * none (native `FirebaseApp.configure()` never ran: a dev client built before
+ * Firebase was configured, or a missing/broken GoogleService-Info.plist).
+ * Push then degrades to "no push" instead of throwing during startup, and the
+ * rest of the app still opens. Logged once per launch so it is not mistaken
+ * for a permission or backend problem.
+ */
+function getConfiguredMessaging(): ReturnType<typeof getMessaging> | null {
+  try {
+    return getMessaging(getApp());
+  } catch (error) {
+    if (!missingFirebaseLogged) {
+      missingFirebaseLogged = true;
+      console.warn(
+        "[push] Firebase is not configured in this native build; FCM token registration and refresh are disabled. "
+          + "Rebuild the native app after checking GoogleService-Info.plist / google-services.json and that "
+          + "FirebaseApp.configure() runs at launch.",
+        error,
+      );
+    }
+    return null;
+  }
+}
+
 export async function getFcmDeviceToken(): Promise<string | null> {
   if (!Device.isDevice || !pushRuntimeSupported) {
     return null;
@@ -159,7 +187,10 @@ export async function getFcmDeviceToken(): Promise<string | null> {
     return null;
   }
 
-  return getFcmRegistrationToken(getMessaging());
+  const messaging = getConfiguredMessaging();
+  if (!messaging) return null;
+
+  return getFcmRegistrationToken(messaging);
 }
 
 export function subscribeToFcmTokenRefresh(
@@ -175,7 +206,11 @@ export function subscribeToFcmTokenRefresh(
     return () => {};
   }
 
-  return onTokenRefresh(getMessaging(), onRefresh);
+  // Missing native Firebase: no subscription (diagnostic logged), app still opens.
+  const messaging = getConfiguredMessaging();
+  if (!messaging) return () => {};
+
+  return onTokenRefresh(messaging, onRefresh);
 }
 
 export async function getExpoPushToken(): Promise<string | null> {

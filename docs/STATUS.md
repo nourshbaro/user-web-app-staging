@@ -5,7 +5,7 @@
 > it. Like all docs here, it is edited only with explicit user authorization
 > (`AGENTS.md` §4).
 
-**As of:** 2026-11-18 · Confirmed payment retries and notice deletion committed (`f6d5e05`)
+**As of:** 2026-11-19 · iOS Firebase startup fix on the uncommitted Expo SDK 58 upgrade (pending native rebuild)
 
 ---
 
@@ -57,7 +57,51 @@
   Uncommitted on `39ea18d`.
 - ✅ **Free (zero-total) checkout: implemented, Codex findings fixed.**
   Uncommitted on `0837fa4`.
-- ▶ **Next:** commit approval; the backend dependencies below.
+- ✅ **iOS Firebase startup fix: implemented, pending native rebuild and
+  review.** Uncommitted on `a748d21`, on top of the uncommitted Expo SDK 58
+  upgrade.
+- ▶ **Next:** finish the SDK 58 upgrade (TypeScript errors below); rebuild
+  the iOS development client and verify push; commit approval; the backend
+  dependencies below.
+
+## iOS Firebase startup fix (2026-11-19)
+
+- **Symptom:** on iOS, Expo Router startup threw "No Firebase App
+  '[DEFAULT]' has been created" from `getMessaging()` in
+  `subscribeToFcmTokenRefresh` (`_layout.tsx` token-refresh effect).
+- **Cause (CONFIRMED by `expo prebuild` in a scratch copy):** the working
+  tree upgrades Expo SDK 57 → 58 / React Native 0.86 → 0.88 (uncommitted
+  `package.json`, `package-lock.json`; `eas.json` also adds a
+  `development-simulator` profile). SDK 58 starts React Native in
+  `SceneDelegate`; `@react-native-firebase/app` 26.4.0 cannot find its
+  AppDelegate anchor, warns, and skips `FirebaseApp.configure()`. The plist
+  bundle ID matches the iOS target (`com.lfaticketing.app`) and the plist is
+  copied into the app target.
+- **Native fix:** `plugins/withFirebaseAppDelegateConfigure.js` (registered in
+  `app.json` after the RNFirebase plugins) inserts `FirebaseApp.configure()`
+  before `super.application(...)`; idempotent; fails prebuild if its anchor
+  disappears (`docs/ARCHITECTURE.md` §1).
+- **Graceful degradation:** `getConfiguredMessaging()` in
+  `src/lib/notifications.ts` guards both `getMessaging()` call sites
+  (token refresh and `getFcmDeviceToken`); without Firebase it logs one
+  `[push]` warning and push becomes "no push" instead of crashing startup.
+  Token refresh and registration are unchanged when Firebase is configured.
+- **Checks:** Node suite 1,158/1,158 (new
+  `plugins/withFirebaseAppDelegateConfigure.test.mjs`, one new
+  `notifications.test.mjs` case, two existing source anchors re-pointed);
+  lint 0 errors, 2 existing warnings; `npx expo config` lists the plugin;
+  prebuild output contains `FirebaseApp.configure()`.
+  **TypeScript fails** (~45 errors, none in changed files): React Native 0.88
+  ref/type changes from the SDK upgrade (`TextInputType.focus`,
+  `ScrollView.scrollTo`, `measureInWindow`/`measureLayout`, ref props,
+  `useOnboardingGate` navigation ref, `SystemStateGate` linking callback).
+- **NOT VERIFIED:** Swift compile/link (no `pod install`/`xcodebuild` run),
+  app launch without the error, FCM token registration on a physical device,
+  token refresh. Installed development clients built before the SDK 58
+  upgrade must be replaced by a rebuilt one.
+- **Known gap (unchanged):** `app.config.js` does not treat
+  `development-simulator` as a staging profile, so its builds lack the
+  staging BLUE ATS exception.
 
 ## Confirmed payment retries and notice deletion (2026-11-18)
 
@@ -864,7 +908,8 @@ Runtime checks still owed for Phase 4:
 - **v3 carry-overs:** every screen is redesigned; the legacy `muted` colour
   remains in a few non-redesigned surfaces (phone-number field, password
   sheet, toasts, dialogs, CyberSource loading, maintenance screen).
-- **Platforms:** iOS runtime unverified; a debug dev client can fail on a very
+- **Platforms:** iOS runtime unverified (including the SDK 58 Firebase
+  startup fix, which needs a rebuilt development client); a debug dev client can fail on a very
   slow cold Metro bundle (tooling only).
 - **Web (dev):** the "Failed to handle initial notification" message is
   fixed (Batch 10). Remaining dev-only web warnings: the `pointerEvents`

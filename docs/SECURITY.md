@@ -440,6 +440,11 @@ frontend requirement.
   Firebase, and push degrades to "unavailable". Development and release builds
   keep the full integration; push behavior is verified only in those builds
   (`docs/ARCHITECTURE.md` §12).
+- A native build with no default Firebase app sends no device registration
+  at all (no token is obtained) and logs one diagnostic warning; it never
+  substitutes another token or changes the anonymous/authenticated decision.
+  Native Firebase initialization is a build-time concern
+  (`docs/ARCHITECTURE.md` §1).
 
 ### 2.11 Errors and logging
 - User-facing errors show the backend's own message (or the payment

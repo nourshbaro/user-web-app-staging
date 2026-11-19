@@ -10,7 +10,7 @@ test("FCM token-refresh subscription is native-only so web startup never touches
     source.indexOf("export async function getExpoPushToken("),
   );
   const guardIndex = subscribe.indexOf('if (Platform.OS !== "android" && Platform.OS !== "ios")');
-  const messagingIndex = subscribe.indexOf("onTokenRefresh(getMessaging(), onRefresh)");
+  const messagingIndex = subscribe.indexOf("getConfiguredMessaging()");
 
   assert.ok(guardIndex >= 0, "platform guard is missing");
   assert.ok(messagingIndex > guardIndex, "getMessaging() must only run after the platform guard");
@@ -49,7 +49,32 @@ test("expo-notifications is never evaluated in Expo Go, and nothing else imports
 test("Firebase messaging is only reached where the push runtime exists", () => {
   const subscribe = source.slice(source.indexOf("export function subscribeToFcmTokenRefresh("), source.indexOf("export async function getExpoPushToken("));
   const guardIndex = subscribe.indexOf("if (!pushRuntimeSupported)");
-  assert.ok(guardIndex >= 0 && guardIndex < subscribe.indexOf("onTokenRefresh(getMessaging(), onRefresh)"));
+  const messagingIndex = subscribe.indexOf("getConfiguredMessaging()");
+  assert.ok(messagingIndex >= 0, "token refresh must resolve messaging through the guarded helper");
+  assert.ok(guardIndex >= 0 && guardIndex < messagingIndex);
   const token = source.slice(source.indexOf("export async function getFcmDeviceToken("), source.indexOf("export function subscribeToFcmTokenRefresh("));
   assert.match(token, /if \(!Device\.isDevice \|\| !pushRuntimeSupported\) \{\s*return null;/);
+});
+
+test("a build without a default Firebase app degrades to no push instead of throwing at startup", () => {
+  const helper = source.slice(
+    source.indexOf("function getConfiguredMessaging("),
+    source.indexOf("export async function getFcmDeviceToken("),
+  );
+  assert.ok(helper.length > 0, "guarded messaging helper is missing");
+  // getMessaging() (which throws "No Firebase App '[DEFAULT]'") runs only inside the try.
+  assert.match(helper, /try \{\s*return getMessaging\(getApp\(\)\);\s*\} catch \(error\) \{/);
+  assert.match(helper, /console\.warn\(\s*"\[push\] Firebase is not configured/);
+  assert.match(helper, /return null;\s*\}\s*\}\s*$/);
+
+  // Every Firebase messaging call in this module goes through the helper.
+  const outsideHelper = source.replace(helper, "");
+  const outsideHelperCode = outsideHelper.split("\n").filter((line) => !/^\s*(\/\/|\/\*\*|\*)/.test(line)).join("\n");
+  assert.doesNotMatch(outsideHelperCode, /\bgetMessaging\(/);
+  assert.equal((outsideHelper.match(/getConfiguredMessaging\(\)/g) ?? []).length, 2);
+
+  const subscribe = source.slice(source.indexOf("export function subscribeToFcmTokenRefresh("), source.indexOf("export async function getExpoPushToken("));
+  assert.match(subscribe, /const messaging = getConfiguredMessaging\(\);\s*if \(!messaging\) return \(\) => \{\};\s*return onTokenRefresh\(messaging, onRefresh\);/);
+  const token = source.slice(source.indexOf("export async function getFcmDeviceToken("), source.indexOf("export function subscribeToFcmTokenRefresh("));
+  assert.match(token, /const messaging = getConfiguredMessaging\(\);\s*if \(!messaging\) return null;\s*return getFcmRegistrationToken\(messaging\);/);
 });

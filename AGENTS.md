@@ -7,7 +7,7 @@ Read this file before every task. It is intentionally short; details live in `do
 
 ## 1. What this repository is
 
-The **production** LFA Tickets consumer app: Expo SDK 57 / React Native 0.86 /
+The **production** LFA Tickets consumer app: Expo SDK 58 / React Native 0.88 /
 React 19 / TypeScript (strict) / Expo Router (file-based, `src/app`). It ships
 to iOS and Android (`com.lfaticketing.app`) and to web (Expo Router server
 output with an `/api` proxy route).

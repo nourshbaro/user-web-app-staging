@@ -598,7 +598,9 @@ so the session is locked (check My Tickets) and the cart is kept.
 ## 10. Device and push registration
 
 - FCM token from `@react-native-firebase/messaging` (`getFcmDeviceToken`),
-  only on physical devices with notification permission granted.
+  only on physical devices with notification permission granted, and only
+  when the native build has a default Firebase app; otherwise no token is
+  obtained and no `POST /devices` is sent (`docs/ARCHITECTURE.md` §12).
 - `sendDeviceToken` checks the current session: no token → anonymous
   `POST /devices` (`overrideAuthorizationToken: null`); token → authenticated
   `POST /devices` using the live token.
